@@ -1,5 +1,4 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
 from uuid import UUID
 
 
@@ -8,17 +7,6 @@ class ProductBase(BaseModel):
     price: float
     description: str
     stock: int
-
-
-class ProductCreate(ProductBase):
-    pass
-
-
-class ProductUpdate(BaseModel):
-    name: Optional[str] = None
-    price: Optional[float] = None
-    description: Optional[str] = None
-    stock: Optional[int] = None
 
 
 class ProductOut(ProductBase):

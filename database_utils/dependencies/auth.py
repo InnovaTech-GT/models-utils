@@ -161,7 +161,7 @@ async def get_current_user(
         # Convert string UUID back to UUID object for database query
         try:
             user_id = uuid.UUID(user_id_str)
-        except (ValueError, AttributeError) as e:
+        except (ValueError, AttributeError):
             logger.error(f"Invalid UUID format in token: {user_id_str}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -367,29 +367,6 @@ async def get_super_admin(
     )
 
     return user
-
-
-async def get_company_id(
-    user: "User" = Depends(get_current_user),
-) -> int:
-    """
-    Get the company ID of the authenticated user.
-
-    Args:
-        user: Current authenticated user (injected via dependency)
-
-    Returns:
-        int: Company ID associated with the user
-    """
-    logger.debug(
-        "Extracting company ID from user",
-        extra={
-            "user_id": user.id,
-            "company_id": user.company_id
-        }
-    )
-
-    return user.company_id
 
 
 def require_roles(allowed_roles: List[str]) -> Callable:

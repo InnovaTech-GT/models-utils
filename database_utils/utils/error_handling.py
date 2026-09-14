@@ -1,7 +1,7 @@
 # utils/error_handling.py
 
 from fastapi import HTTPException, status
-from typing import Callable, TypeVar, Any
+from typing import Callable, TypeVar
 from functools import wraps
 from loguru import logger
 

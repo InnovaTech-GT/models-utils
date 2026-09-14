@@ -8,16 +8,11 @@ including user ID, company ID, roles, permissions, request ID, and more.
 import logging
 import json
 import sys
-import time
 import traceback
 import uuid
-from datetime import datetime
-from typing import Any, Dict, Optional, Callable, Union
-from functools import wraps
+from typing import Optional, Union
 from contextvars import ContextVar
 
-from fastapi import Request
-from sqlalchemy.orm import Session
 from database_utils.utils.timezone_utils import now_gt
 
 # Context variables for request-scoped data
@@ -199,22 +194,6 @@ def clear_request_context() -> None:
     user_permissions_context.set(set())
 
 
-def get_request_context() -> Dict[str, Any]:
-    """
-    Get current request context as a dictionary.
-
-    Returns:
-        Dictionary containing current context values
-    """
-    return {
-        'request_id': request_id_context.get(),
-        'user_id': user_id_context.get(),
-        'company_id': company_id_context.get(),
-        'user_roles': user_roles_context.get(),
-        'user_permissions': list(user_permissions_context.get()),
-    }
-
-
 def log_with_context(logger: logging.Logger, level: str, message: str, **kwargs) -> None:
     """
     Log a message with additional context data.
@@ -246,86 +225,6 @@ def log_with_context(logger: logging.Logger, level: str, message: str, **kwargs)
         logging.setLogRecordFactory(old_factory)
 
 
-def log_endpoint_call(
-    logger: logging.Logger,
-    request: Request,
-    user_id: Optional[Union[int, uuid.UUID, str]] = None,
-    company_id: Optional[Union[int, uuid.UUID, str]] = None,
-    roles: Optional[list] = None
-) -> None:
-    """
-    Log an API endpoint call with full context.
-
-    Args:
-        logger: Logger instance
-        request: FastAPI Request object
-        user_id: Authenticated user ID (int, UUID, or string)
-        company_id: User's company ID (int, UUID, or string)
-        roles: User's roles
-    """
-    log_with_context(
-        logger,
-        'info',
-        f"Endpoint called: {request.method} {request.url.path}",
-        endpoint=request.url.path,
-        method=request.method,
-        client_ip=request.client.host if request.client else None,
-        user_agent=request.headers.get('user-agent'),
-        user_id=user_id,
-        company_id=company_id,
-        roles=roles,
-    )
-
-
-def log_database_operation(
-    logger: logging.Logger,
-    operation: str,
-    model: str,
-    record_id: Optional[Union[int, uuid.UUID, str]] = None,
-    **kwargs
-) -> None:
-    """
-    Log a database operation.
-
-    Args:
-        logger: Logger instance
-        operation: Type of operation (CREATE, READ, UPDATE, DELETE)
-        model: Model/table name
-        record_id: ID of the record being operated on (int, UUID, or string)
-        **kwargs: Additional context
-    """
-    log_with_context(
-        logger,
-        'info',
-        f"Database {operation}: {model}" + (f" (ID: {record_id})" if record_id else ""),
-        operation=operation,
-        model=model,
-        record_id=record_id,
-        **kwargs
-    )
-
-
-def log_performance(logger: logging.Logger, operation: str, duration_ms: float, **kwargs) -> None:
-    """
-    Log performance metrics for an operation.
-
-    Args:
-        logger: Logger instance
-        operation: Name of the operation
-        duration_ms: Duration in milliseconds
-        **kwargs: Additional context
-    """
-    level = 'warning' if duration_ms > 1000 else 'info'
-    log_with_context(
-        logger,
-        level,
-        f"Performance: {operation} took {duration_ms:.2f}ms",
-        operation=operation,
-        duration_ms=duration_ms,
-        **kwargs
-    )
-
-
 def log_business_operation(
     logger: logging.Logger,
     operation: str,
@@ -352,75 +251,6 @@ def log_business_operation(
         entity_id=entity_id,
         **kwargs
     )
-
-
-def timed_operation(logger: logging.Logger, operation_name: str) -> Callable:
-    """
-    Decorator to log the execution time of a function.
-
-    Args:
-        logger: Logger instance
-        operation_name: Name to use in the log message
-
-    Returns:
-        Decorator function
-
-    Example:
-        @timed_operation(logger, "fetch_clients")
-        async def get_clients(db: Session):
-            ...
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            start_time = time.time()
-            try:
-                result = await func(*args, **kwargs)
-                duration_ms = (time.time() - start_time) * 1000
-                log_performance(logger, operation_name, duration_ms)
-                return result
-            except Exception as e:
-                duration_ms = (time.time() - start_time) * 1000
-                log_with_context(
-                    logger,
-                    'error',
-                    f"Operation {operation_name} failed after {duration_ms:.2f}ms: {str(e)}",
-                    operation=operation_name,
-                    duration_ms=duration_ms,
-                    error=str(e),
-                    error_type=type(e).__name__
-                )
-                raise
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            start_time = time.time()
-            try:
-                result = func(*args, **kwargs)
-                duration_ms = (time.time() - start_time) * 1000
-                log_performance(logger, operation_name, duration_ms)
-                return result
-            except Exception as e:
-                duration_ms = (time.time() - start_time) * 1000
-                log_with_context(
-                    logger,
-                    'error',
-                    f"Operation {operation_name} failed after {duration_ms:.2f}ms: {str(e)}",
-                    operation=operation_name,
-                    duration_ms=duration_ms,
-                    error=str(e),
-                    error_type=type(e).__name__
-                )
-                raise
-
-        # Return the appropriate wrapper based on whether the function is async
-        import inspect
-        if inspect.iscoroutinefunction(func):
-            return async_wrapper
-        else:
-            return sync_wrapper
-
-    return decorator
 
 
 # Pre-configured loggers for different modules

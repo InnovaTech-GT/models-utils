@@ -2,7 +2,7 @@
 """
 JSON serialization utilities for handling datetime and other non-JSON-serializable types.
 """
-from typing import Any, Dict
+from typing import Any
 from datetime import datetime, date, time, timedelta
 from uuid import UUID
 from pydantic import BaseModel
@@ -63,19 +63,3 @@ def serialize_for_json(obj: Any) -> Any:
     # Return other types as-is (int, str, float, bool, None, etc.)
     return obj
 
-
-def pydantic_to_json_dict(model: BaseModel) -> Dict[str, Any]:
-    """
-    Convert a Pydantic model to a JSON-safe dictionary.
-
-    This is a convenience wrapper around serialize_for_json specifically
-    for Pydantic models. It uses Pydantic's built-in JSON serialization
-    which handles datetime and other complex types correctly.
-
-    Args:
-        model: Pydantic model instance
-
-    Returns:
-        JSON-serializable dictionary
-    """
-    return model.model_dump(mode='json')

@@ -1,6 +1,6 @@
 # schemas/email_verification.py
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
 
@@ -21,3 +21,4 @@ class ConfirmEmailValidate(BaseModel):
 class ResendConfirmationRequest(BaseModel):
     """Body for POST /confirm-email/resend."""
     email: EmailStr
+    locale: Literal["es", "en"] = "es"

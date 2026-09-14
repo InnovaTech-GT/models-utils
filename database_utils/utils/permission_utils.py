@@ -9,7 +9,7 @@ from fastapi import HTTPException, status, Request, Depends
 from database_utils.dependencies.auth import get_token_from_header
 
 if TYPE_CHECKING:
-    from database_utils.models.auth import User, Role, Permission
+    from database_utils.models.auth import User
 
 
 class PermissionChecker:
@@ -62,11 +62,6 @@ class PermissionChecker:
     def has_any_permission(user: User, permission_names: List[str]) -> bool:
         """Check if user has any of the specified permissions"""
         return any(PermissionChecker.has_permission(user, perm) for perm in permission_names)
-
-    @staticmethod
-    def has_all_permissions(user: User, permission_names: List[str]) -> bool:
-        """Check if user has all of the specified permissions"""
-        return all(PermissionChecker.has_permission(user, perm) for perm in permission_names)
 
     @staticmethod
     def get_user_by_id_with_roles(db: Session, user_id: UUID) -> Optional["User"]:
@@ -175,139 +170,11 @@ def require_permission(permission_name: str, get_db_func):
 class Permissions:
     """Centralized permission name constants"""
 
-    # Client permissions
-    CLIENTS_CREATE = "clients.create"
-    CLIENTS_READ = "clients.read"
-    CLIENTS_UPDATE = "clients.update"
-    CLIENTS_DELETE = "clients.delete"
-    CLIENTS_ALL = "clients.*"
-
-    # Order permissions
-    ORDERS_CREATE = "orders.create"
-    ORDERS_READ = "orders.read"
-    ORDERS_UPDATE = "orders.update"
-    ORDERS_DELETE = "orders.delete"
-    ORDERS_CHANGE_STATUS = "orders.change_status"
-    ORDERS_ALL = "orders.*"
-
-    # Product permissions
-    PRODUCTS_CREATE = "products.create"
-    PRODUCTS_READ = "products.read"
-    PRODUCTS_UPDATE = "products.update"
-    PRODUCTS_DELETE = "products.delete"
-    PRODUCTS_ALL = "products.*"
-
-    # Recurring order permissions
-    RECURRING_ORDERS_CREATE = "recurring_orders.create"
-    RECURRING_ORDERS_READ = "recurring_orders.read"
-    RECURRING_ORDERS_UPDATE = "recurring_orders.update"
-    RECURRING_ORDERS_DELETE = "recurring_orders.delete"
-    RECURRING_ORDERS_ALL = "recurring_orders.*"
-
-    # User management permissions
-    USERS_CREATE = "users.create"
-    USERS_READ = "users.read"
-    USERS_UPDATE = "users.update"
-    USERS_DELETE = "users.delete"
-    USERS_ALL = "users.*"
-
-    # Role and permission management (admin only)
-    ROLES_CREATE = "roles.create"
-    ROLES_READ = "roles.read"
-    ROLES_UPDATE = "roles.update"
-    ROLES_DELETE = "roles.delete"
-    ROLES_ALL = "roles.*"
-
-    PERMISSIONS_CREATE = "permissions.create"
-    PERMISSIONS_READ = "permissions.read"
-    PERMISSIONS_UPDATE = "permissions.update"
-    PERMISSIONS_DELETE = "permissions.delete"
-    PERMISSIONS_ALL = "permissions.*"
-
-    # Company settings (admin only)
-    COMPANY_READ = "company.read"
-    COMPANY_UPDATE = "company.update"
-    COMPANY_ALL = "company.*"
-
-    # Workflow permissions
-    WORKFLOWS_CREATE = "workflows.create"
-    WORKFLOWS_READ = "workflows.read"
-    WORKFLOWS_UPDATE = "workflows.update"
-    WORKFLOWS_DELETE = "workflows.delete"
-    WORKFLOWS_ALL = "workflows.*"
+    # Payment ledger permissions (doc 16 §1). Grants are copied by migration
+    # c1b_backfill from orders.update / orders.read / orders.revert_payment.
+    PAYMENTS_RECORD = "payments.record"
+    PAYMENTS_READ = "payments.read"
+    PAYMENTS_REFUND = "payments.refund"
 
     # Dashboard permissions
     DASHBOARD_READ = "dashboard.read"
-
-    # Special permissions
-    ADMIN_ALL = "*"  # Wildcard - grants all permissions
-
-
-def get_default_permissions() -> List[dict]:
-    """
-    Returns a list of default permissions to seed the database.
-    Each permission is a dict with 'name', 'resource', 'action', 'description'.
-    """
-    return [
-        # Client permissions
-        {"name": Permissions.CLIENTS_CREATE, "resource": "clients", "action": "create", "description": "Create new clients"},
-        {"name": Permissions.CLIENTS_READ, "resource": "clients", "action": "read", "description": "View client information"},
-        {"name": Permissions.CLIENTS_UPDATE, "resource": "clients", "action": "update", "description": "Update client information"},
-        {"name": Permissions.CLIENTS_DELETE, "resource": "clients", "action": "delete", "description": "Delete clients"},
-
-        # Order permissions
-        {"name": Permissions.ORDERS_CREATE, "resource": "orders", "action": "create", "description": "Create new orders"},
-        {"name": Permissions.ORDERS_READ, "resource": "orders", "action": "read", "description": "View order information"},
-        {"name": Permissions.ORDERS_UPDATE, "resource": "orders", "action": "update", "description": "Update order information"},
-        {"name": Permissions.ORDERS_DELETE, "resource": "orders", "action": "delete", "description": "Delete orders"},
-
-        # Product permissions
-        {"name": Permissions.PRODUCTS_CREATE, "resource": "products", "action": "create", "description": "Create new products"},
-        {"name": Permissions.PRODUCTS_READ, "resource": "products", "action": "read", "description": "View product information"},
-        {"name": Permissions.PRODUCTS_UPDATE, "resource": "products", "action": "update", "description": "Update product information"},
-        {"name": Permissions.PRODUCTS_DELETE, "resource": "products", "action": "delete", "description": "Delete products"},
-        {"name": "products.update_name", "resource": "products", "action": "update_name", "description": "Update product name"},
-        {"name": "products.update_price", "resource": "products", "action": "update_price", "description": "Update product price"},
-        {"name": "products.update_description", "resource": "products", "action": "update_description", "description": "Update product description"},
-
-        # Recurring order permissions
-        {"name": Permissions.RECURRING_ORDERS_CREATE, "resource": "recurring_orders", "action": "create", "description": "Create recurring orders"},
-        {"name": Permissions.RECURRING_ORDERS_READ, "resource": "recurring_orders", "action": "read", "description": "View recurring orders"},
-        {"name": Permissions.RECURRING_ORDERS_UPDATE, "resource": "recurring_orders", "action": "update", "description": "Update recurring orders"},
-        {"name": Permissions.RECURRING_ORDERS_DELETE, "resource": "recurring_orders", "action": "delete", "description": "Delete recurring orders"},
-        {"name": "recurring_orders.generate", "resource": "recurring_orders", "action": "generate", "description": "Manually generate orders from recurring templates"},
-
-        # User management permissions
-        {"name": Permissions.USERS_CREATE, "resource": "users", "action": "create", "description": "Create new users"},
-        {"name": Permissions.USERS_READ, "resource": "users", "action": "read", "description": "View user information"},
-        {"name": Permissions.USERS_UPDATE, "resource": "users", "action": "update", "description": "Update user information"},
-        {"name": Permissions.USERS_DELETE, "resource": "users", "action": "delete", "description": "Delete users"},
-
-        # Role management permissions
-        {"name": Permissions.ROLES_CREATE, "resource": "roles", "action": "create", "description": "Create new roles"},
-        {"name": Permissions.ROLES_READ, "resource": "roles", "action": "read", "description": "View role information"},
-        {"name": Permissions.ROLES_UPDATE, "resource": "roles", "action": "update", "description": "Update role information"},
-        {"name": Permissions.ROLES_DELETE, "resource": "roles", "action": "delete", "description": "Delete roles"},
-        {"name": "roles.assign_permissions", "resource": "roles", "action": "assign_permissions", "description": "Assign permissions to roles"},
-
-        # Permission management permissions
-        {"name": Permissions.PERMISSIONS_CREATE, "resource": "permissions", "action": "create", "description": "Create new permissions"},
-        {"name": Permissions.PERMISSIONS_READ, "resource": "permissions", "action": "read", "description": "View permission information"},
-        {"name": Permissions.PERMISSIONS_UPDATE, "resource": "permissions", "action": "update", "description": "Update permission information"},
-        {"name": Permissions.PERMISSIONS_DELETE, "resource": "permissions", "action": "delete", "description": "Delete permissions"},
-
-        # Workflow permissions
-        {"name": Permissions.WORKFLOWS_CREATE, "resource": "workflows", "action": "create", "description": "Create workflows"},
-        {"name": Permissions.WORKFLOWS_READ, "resource": "workflows", "action": "read", "description": "View workflows"},
-        {"name": Permissions.WORKFLOWS_UPDATE, "resource": "workflows", "action": "update", "description": "Update workflows"},
-        {"name": Permissions.WORKFLOWS_DELETE, "resource": "workflows", "action": "delete", "description": "Delete workflows"},
-
-        # Company settings permissions
-        {"name": Permissions.COMPANY_READ, "resource": "company", "action": "read", "description": "View company settings"},
-        {"name": Permissions.COMPANY_UPDATE, "resource": "company", "action": "update", "description": "Update company settings"},
-        {"name": "company.update_name", "resource": "company", "action": "update_name", "description": "Update company name"},
-        {"name": "company.update_email", "resource": "company", "action": "update_email", "description": "Update company email"},
-        {"name": "company.update_phone", "resource": "company", "action": "update_phone", "description": "Update company phone"},
-        {"name": "company.update_address", "resource": "company", "action": "update_address", "description": "Update company address"},
-        {"name": "company.update_tier", "resource": "company", "action": "update_tier", "description": "Update company subscription tier"},
-    ]

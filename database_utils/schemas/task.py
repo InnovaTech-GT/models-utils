@@ -2,13 +2,13 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
-import enum
 
-
-class TaskLinkedObjectType(str, enum.Enum):
-    CLIENT = "CLIENT"
-    ORDER = "ORDER"
-    RECURRING_ORDER = "RECURRING_ORDER"
+# Single source of truth — the schema previously duplicated this enum and
+# silently drifted when new members were added. NETWORK_NODE was removed from
+# the Python enum in Cycle 2 (revision c2d_graph_removal); the PG enum VALUE
+# stays forever (Postgres cannot DROP a label) but no schema/model code
+# references it anymore.
+from database_utils.models.crm import TaskLinkedObjectType
 
 
 class TaskAssigneeSimple(BaseModel):

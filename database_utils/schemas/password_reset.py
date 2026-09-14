@@ -1,12 +1,13 @@
 # schemas/password_reset.py
 from pydantic import BaseModel, EmailStr, constr
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 
 
 class PasswordResetRequestSchema(BaseModel):
     """Body for POST /password-reset/request."""
     email: EmailStr
+    locale: Literal["es", "en"] = "es"
 
 
 class PasswordResetValidate(BaseModel):
@@ -21,4 +22,4 @@ class PasswordResetValidate(BaseModel):
 class PasswordResetConfirmSchema(BaseModel):
     """Body for POST /password-reset/confirm."""
     token: str
-    new_password: constr(min_length=6)
+    new_password: constr(min_length=8)

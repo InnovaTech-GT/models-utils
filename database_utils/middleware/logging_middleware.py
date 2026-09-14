@@ -25,7 +25,6 @@ from database_utils.utils.logging_utils import (
     get_app_logger
 )
 from database_utils.utils.jwt_utils import decode_token
-from database_utils.utils.permission_utils import PermissionChecker
 from database_utils.utils.telemetry_utils import set_request_span_attributes
 
 
@@ -143,12 +142,10 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         # Process request and measure time
         start_time = time.time()
         response = None
-        error = None
 
         try:
             response = await call_next(request)
         except Exception as e:
-            error = e
             duration_ms = (time.time() - start_time) * 1000
 
             # Log error with full context
@@ -205,40 +202,3 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             response.headers["X-Request-ID"] = request_id
 
         return response
-
-
-def create_logging_middleware(
-    logger: Optional[logging.Logger] = None,
-    log_request_body: bool = False,
-    log_response_body: bool = False,
-) -> Callable:
-    """
-    Factory function to create logging middleware with custom settings.
-
-    Args:
-        logger: Custom logger to use
-        log_request_body: Whether to log request bodies
-        log_response_body: Whether to log response bodies
-
-    Returns:
-        Middleware factory function
-
-    Example:
-        from database_utils.middleware.logging_middleware import create_logging_middleware
-
-        app = FastAPI()
-        app.add_middleware(
-            LoggingMiddleware,
-            logger=my_custom_logger,
-            log_request_body=False
-        )
-    """
-    def middleware_factory(app: ASGIApp) -> LoggingMiddleware:
-        return LoggingMiddleware(
-            app,
-            logger=logger,
-            log_request_body=log_request_body,
-            log_response_body=log_response_body
-        )
-
-    return middleware_factory

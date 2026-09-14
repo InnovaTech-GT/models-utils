@@ -33,4 +33,3 @@ class RoleOut(RoleBase):
 
 class RoleWithPermissions(RoleOut):
     """Extended role model with full permission details"""
-    pass

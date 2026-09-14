@@ -2,18 +2,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
-from enum import Enum
-
-
-class TaskStateColor(str, Enum):
-    GRAY = "GRAY"
-    RED = "RED"
-    ORANGE = "ORANGE"
-    YELLOW = "YELLOW"
-    GREEN = "GREEN"
-    BLUE = "BLUE"
-    PURPLE = "PURPLE"
-    PINK = "PINK"
+from database_utils.models.crm import TaskStateColor
 
 
 class TaskStateBase(BaseModel):

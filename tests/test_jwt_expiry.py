@@ -5,7 +5,6 @@ old ACCESS_TOKEN_EXPIRE_MINUTES that no environment ever set (which left the
 114400-minute ~79-day default silently in effect).
 """
 import importlib
-import os
 
 import pytest
 

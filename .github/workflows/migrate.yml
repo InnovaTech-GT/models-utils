@@ -9,7 +9,10 @@ on:
     branches:
       - main
     paths:
-      - "alembic/versions/**"
+      # Widened from alembic/versions/** (doc 16 §2.0): env.py and seed changes
+      # must also trigger the prod migration job. Rule: every seed change ships
+      # with a (possibly no-op) revision.
+      - "alembic/**"
 
 jobs:
   migrate-prod:
