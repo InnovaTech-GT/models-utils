@@ -2,8 +2,8 @@
 
 ## Description
 
-Alembic-managed schema migrations for all models in this repo — 58 revisions in
-`alembic/versions/` (head: **`nat3_pylon_socks5`**) — plus the idempotent seed
+Alembic-managed schema migrations for all models in this repo — revisions in
+`alembic/versions/` (head: **`6e7506e57be9`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -140,6 +140,7 @@ from the start).
   tenant copies keep running — `product_id` items remain
   deprecated-but-honored during the rollback window.
 - **Free/Trial unlimited**: `t1_free_trial_unlimited` — data migration; merges `{max_users,max_products,max_clients} = -1` into Free/Trial `tier.features` and grants the full module list. Product decision: free tier has NO limits until further notice. `tier_seed.py` seeds fresh DBs the same way (now also writes `tier.modules`).
+- **Free/Trial deactivated (Recurrente paywall)**: `6e7506e57be9` (parent `pi1_payment_idem`) — data-only migration; sets `is_active = false` on the "Free" and "Trial" tiers. Uplink billing now requires Recurrente checkout for every company — no free tier/trial is offered. Rows are not deleted (existing companies/subscriptions may still reference them by FK); the unlimited-features policy above is unaffected. `tier_seed.py` seeds fresh DBs with `is_active: False` for both so a wiped local DB (`docker compose down -v && up --build`) can't resurrect them as assignable.
 - **Cycle 8 (topology-owned playbooks)**: `c8a_playbook_topology` —
   hand-written (not autogenerate), nc2a-style guarded/idempotent ops
   (`DROP … IF EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS`)

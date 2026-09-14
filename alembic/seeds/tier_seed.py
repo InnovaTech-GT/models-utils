@@ -144,7 +144,11 @@ def seed_tier_data(connection: Connection) -> None:
                 },
                 "modules": ALL_MODULES,
                 "stripe_price_id": None,
-                "is_active": True
+                # Recurrente paywall: no free tier. Seeded inactive so a fresh/wiped
+                # DB (empty tier table -> insert path below) can't resurrect it as
+                # assignable, mirroring alembic/versions/6e7506e57be9 for DBs that
+                # already had rows. See docs/billing.md (auth-erp).
+                "is_active": False
             },
             "Trial": {
                 "price": 0,  # $0.00
@@ -159,7 +163,8 @@ def seed_tier_data(connection: Connection) -> None:
                 },
                 "modules": ALL_MODULES,
                 "stripe_price_id": None,
-                "is_active": True
+                # Same as Free above — no trial tier anymore.
+                "is_active": False
             },
             "Basic": {
                 "price": 1999,  # $19.99
