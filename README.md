@@ -18,7 +18,7 @@ backends). Consumers — `backend-erp` (CRM API + provisioning worker), `auth-er
 and `cron-erp` — install it pinned by commit SHA:
 
 ```
-database-utils @ git+https://github.com/pel19072/models-utils.git@<commit-sha>
+database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<commit-sha>
 ```
 
 For the platform big picture (service map, request flow, release model), see the

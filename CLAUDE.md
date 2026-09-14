@@ -10,7 +10,7 @@ server, no port.
 **This is a critical dependency — changes affect `backend-erp`, `auth-erp`, and `cron-erp`.**
 
 Published to GitHub, consumed pinned by commit SHA:
-`database-utils @ git+https://github.com/pel19072/models-utils.git@<sha>`
+`database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>`
 
 Docs wiki: [docs/README.md](docs/README.md) · Navigation: [CODEBASE_INDEX.md](CODEBASE_INDEX.md)
 

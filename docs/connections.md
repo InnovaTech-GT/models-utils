@@ -23,7 +23,7 @@ tokens, backend-erp validates them via `jwt_utils`).
 
 | Consumer | How | What it uses |
 |---|---|---|
-| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/pel19072/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint) |
+| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint) |
 | `auth-erp` | same SHA-pinned dependency | Auth models/schemas, `jwt_utils`, **email service + templates**, invitation/verification/reset tokens, SaaS billing models |
 | `cron-erp` | pip dependency | RecurringOrder models for recurring order generation |
 | `frontend-erp` | none (indirect) | Consumes JSON shaped by these Pydantic schemas via backend proxies |
