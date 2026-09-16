@@ -1149,6 +1149,8 @@ class ProvisioningRun(Base):
             ),
         ),
         Index("ix_provisioning_run_service", "client_service_id", "created_at"),
+        # ng2: the company-wide run list (PR 9) is company_id = ? ORDER BY created_at.
+        Index("ix_provisioning_run_company_created", "company_id", "created_at"),
     )
 
 
