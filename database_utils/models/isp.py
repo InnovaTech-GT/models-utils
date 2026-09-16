@@ -273,6 +273,9 @@ _NETWORK_ACCESS_MODE_CHECK = "mode IN ('direct','vpn','tunnel','nat_zt','nat_pub
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
 _MGMT_PORT_CHECK = "mgmt_port IS NULL OR (mgmt_port BETWEEN 1 AND 65535)"
+# Figma redesign PR 8 (08-inventario §2.3): a lot row is at least one unit.
+# Zero is not "out of stock", it is a row that should have been deleted.
+_INVENTORY_QUANTITY_CHECK = "quantity >= 1"
 # whole-branch review I3: "gateway_host required for NAT mode" was previously
 # only enforced by NetworkAccessCreate's Pydantic validator — bypassable by
 # an UPDATE (direct -> nat_public on an existing row) or any future caller
@@ -298,7 +301,13 @@ _NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
 # per topology position via topology_device_type.inventory_item_id); EDGE =
 # per-subscriber CPE resolved from the client's assigned inventory. NULL =
 # passives/unclassified (splitters, patch panels, ...).
-DEVICE_CATEGORY_TIERS = ("CORE", "EDGE")
+# Figma redesign PR 8 (docs/design/plans/08-inventario.md §2.1): the axis grows
+# past network gear. CONSUMABLE (patch cords, fiber, distribution boxes), TOOL
+# (fusion splicers, scanners) and OTHER (SIM cards) are what "Inventario
+# general" means — they are stocked and issued to technicians but never sit on
+# a configuration path. CORE/EDGE keep their doc-25 meaning exactly; NULL still
+# means passive/unclassified plant (splitters, MUFAs, patch panels).
+DEVICE_CATEGORY_TIERS = ("CORE", "EDGE", "CONSUMABLE", "TOOL", "OTHER")
 
 # doc 25 §2.3: transports the generic netmiko CLI drivers speak (Phase 2).
 # Lowercase on purpose — these are driver keys, matching the playbook step
@@ -312,7 +321,12 @@ CLI_PROTOCOLS = ("ssh", "telnet")
 # (backend-erp utils/install_state.py owns the recompute).
 INSTALL_STATES = ("NOT_INSTALLED", "IN_PROGRESS", "INSTALLED")
 
-_DEVICE_CATEGORY_TIER_CHECK = "tier IN ('CORE','EDGE')"
+# NOTE: the pre-inv1 fragment ("tier IN ('CORE','EDGE')") is frozen byte-for-byte
+# inside nc2a_core_config.py — revisions are immutable, so inv1 drops and
+# recreates the constraint instead of editing that file.
+_DEVICE_CATEGORY_TIER_CHECK = (
+    "tier IN ('CORE','EDGE','CONSUMABLE','TOOL','OTHER')"
+)
 _CLI_PROTOCOL_CHECK = "cli_protocol IN ('ssh','telnet')"
 _INSTALL_STATE_CHECK = "install_state IN ('NOT_INSTALLED','IN_PROGRESS','INSTALLED')"
 
@@ -679,6 +693,15 @@ class DeviceType(Base):
     # 'generic_telnet'. Free string on purpose (netmiko's platform list is an
     # open set that grows with netmiko releases — never CHECK-bound it).
     cli_platform = Column(String(50), nullable=True)
+    # --- Figma redesign PR 8 (08-inventario §2.2) -----------------------------
+    # Serialized gear (ONU, router, OLT) is tracked one row per physical unit
+    # with a unique serial; consumables (patch cords, fiber by the metre) are
+    # tracked as lots with `inventory_item.quantity`. Default TRUE: every
+    # device type that exists today is serialized.
+    is_serialized = Column(Boolean, nullable=False, default=True, server_default='true')
+    # Display unit for non-serialized lots ("m", "u", "pz"). NULL for
+    # serialized types — the unit there is always "one device".
+    unit = Column(String(20), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -767,6 +790,15 @@ class InventoryItem(Base):
     # any later mismatch is a hard failure, never an auto-add.
     mgmt_host_key = Column(String, nullable=True)
 
+    # --- Figma redesign PR 8 (08-inventario §2.3) -----------------------------
+    # One row per LOT for non-serialized device types (one per device_type +
+    # location); always 1 for serialized gear. This is the whole non-serialized
+    # story — no stock table, no movements table: equipment_event is already the
+    # append-only ledger.
+    quantity = Column(Integer, nullable=False, default=1, server_default='1')
+    # Free-text display name for plant with no serial ("MUFA 1", "Router 563").
+    label = Column(String(120), nullable=True)
+
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -782,6 +814,13 @@ class InventoryItem(Base):
     )
     client_service_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("client_service.id", ondelete="SET NULL"), nullable=True
+    )
+    # "Con tecnico" custody (08-inventario §2.3). A vehicle warehouse is not a
+    # person and cannot answer "empleado asignado"; EquipmentEvent.technician_id
+    # is history, not current custody. SET NULL: an offboarded user leaves the
+    # item in inventory, unassigned.
+    custodian_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     # --- network graph (doc 35 §2.1, revision ng1_network_graph) --------------
     # The company's plant is a tree of inventory items. `network_attached` marks
@@ -806,6 +845,9 @@ class InventoryItem(Base):
     device_type = relationship("DeviceType", back_populates="items")
     warehouse = relationship("Warehouse", back_populates="items")
     client = relationship("Client", back_populates="equipment")
+    # No backref on User: "everything this technician holds" is a filtered
+    # query, not a collection anyone loads off a user row.
+    custodian = relationship("User", foreign_keys=[custodian_user_id])
     # Two FK paths now join inventory_item and client_service (this one, and
     # client_service.cpe_item_id pointing back) — both sides must name theirs.
     client_service = relationship(
@@ -857,6 +899,14 @@ class InventoryItem(Base):
             "ix_inventory_item_company_attached", "company_id",
             postgresql_where=text("network_attached"),
         ),
+        # Figma redesign PR 8 (08-inventario §2.3).
+        CheckConstraint(
+            _INVENTORY_QUANTITY_CHECK, name="ck_inventory_item_quantity_positive",
+        ),
+        # GET /inventory/summary groups on (company_id, device_type_id); the
+        # "Con tecnico" tab and the technician app filter on the custodian.
+        Index("ix_inventory_item_company_device_type", "company_id", "device_type_id"),
+        Index("ix_inventory_item_company_custodian", "company_id", "custodian_user_id"),
     )
 
 

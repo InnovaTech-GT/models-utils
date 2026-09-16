@@ -4,7 +4,7 @@ import importlib.util
 import pathlib
 import sys
 
-PASSIVE = {"SPLITTER", "SPLICE_CLOSURE", "PATCH_PANEL", "ANTENNA"}
+PASSIVE = {"SPLITTER", "SPLICE_CLOSURE", "PATCH_PANEL", "ANTENNA", "MUFA"}
 SRC = pathlib.Path(__file__).parent.parent / "alembic" / "seeds" / "isp_seed.py"
 
 
@@ -43,7 +43,8 @@ def test_ups_and_radio_stay_configurable():
 
 def test_every_category_declares_the_flag():
     for row in DEVICE_CATEGORIES:
-        assert len(row) == 5, f"{row[0]} is missing is_passive"
+        # inv1_general_inventory added the 6th element (lucide icon name).
+        assert len(row) == 6, f"{row[0]} is missing is_passive/icon"
         assert isinstance(row[4], bool)
 
 

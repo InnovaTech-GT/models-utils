@@ -502,7 +502,13 @@ RETIRED_TEMPLATE_KEYS = [
 # a tier yet — the pre-nc2a data signature) — never a DO UPDATE and never an
 # every-run UPDATE, so super-admin tier/name edits (including clearing a tier
 # back to NULL) survive every re-seed.
-# (key, display name, sort order, tier, is_passive)
+# Figma redesign PR 8 (docs/design/plans/08-inventario.md §2.1, revision
+# inv1_general_inventory): 6th element = the lucide icon name, and 9 new system
+# categories that make this an INVENTORY list rather than a network-gear list
+# (consumables, tools, SIM cards) plus MUFA. MUFA is a NEW key rather than a
+# rename of SPLICE_CLOSURE: `key` is immutable, PR 9 needs the Figma-level name,
+# and both stay passive/NULL-tier.
+# (key, display name, sort order, tier, is_passive, icon)
 #
 # is_passive (Cycle 10, doc 35 §2.3) marks SIGNAL-passive gear: it appears on a
 # service's configuration path and matters for troubleshooting, but nothing is
@@ -513,16 +519,41 @@ RETIRED_TEMPLATE_KEYS = [
 # UPS and RADIO are deliberately NOT passive: a UPS may well expose SNMP, and a
 # radio is an active link end. Marking them passive would silently exclude them
 # from provisioning forever.
+# The nine rows inv1_general_inventory owns, and the tier vocabulary that
+# predates it. Before inv1 the ck_device_category_tier CHECK only allows
+# CORE/EDGE/NULL, and this seed also runs at those older migration positions
+# (stepped upgrades, and after a downgrade) — so pre-inv1 the new rows are
+# skipped outright and a new-vocabulary tier is seeded as NULL. inv1 inserts
+# them properly on the way back up.
+_INV1_CATEGORY_KEYS = {
+    'MUFA', 'PATCH_CORD', 'FIBER_OPTIC', 'DISTRIBUTION_BOX', 'MODEM',
+    'SIM_CARD', 'SET_TOP_BOX', 'FUSION_SPLICER', 'BARCODE_SCANNER',
+}
+_PRE_INV1_TIERS = (None, 'CORE', 'EDGE')
+
 DEVICE_CATEGORIES = [
-    ('ROUTER', 'Router', 10, 'CORE', False), ('SWITCH', 'Switch', 20, 'CORE', False),
-    ('OLT', 'OLT', 30, 'CORE', False),
-    ('ONU', 'ONU / ONT', 40, 'EDGE', False), ('SPLITTER', 'Splitter', 50, None, True),
-    ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True),
-    ('PATCH_PANEL', 'Patch Panel', 70, None, True),
-    ('ACCESS_POINT', 'Access Point', 80, 'EDGE', False),
-    ('CPE_ROUTER', 'CPE Router', 90, 'EDGE', False), ('UPS', 'UPS', 100, None, False),
-    ('ANTENNA', 'Antenna', 110, None, True),
-    ('RADIO', 'Radio', 120, None, False), ('OTHER', 'Other', 130, None, False),
+    ('ROUTER', 'Router', 10, 'CORE', False, 'radio-tower'),
+    ('SWITCH', 'Switch', 20, 'CORE', False, 'network'),
+    ('OLT', 'OLT', 30, 'CORE', False, 'radio'),
+    ('ONU', 'ONU / ONT', 40, 'EDGE', False, 'house-wifi'),
+    ('SPLITTER', 'Splitter', 50, None, True, 'split'),
+    ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True, 'box'),
+    ('MUFA', 'MUFA', 65, None, True, 'box'),
+    ('PATCH_PANEL', 'Patch Panel', 70, None, True, 'gallery-thumbnails'),
+    ('ACCESS_POINT', 'Access Point', 80, 'EDGE', False, 'radio-tower'),
+    ('CPE_ROUTER', 'CPE Router', 90, 'EDGE', False, 'house-wifi'),
+    ('UPS', 'UPS', 100, None, False, 'activity'),
+    ('ANTENNA', 'Antenna', 110, None, True, 'antenna'),
+    ('RADIO', 'Radio', 120, None, False, 'radio'),
+    ('OTHER', 'Other', 130, 'OTHER', False, 'box'),
+    ('PATCH_CORD', 'Patch cords', 200, 'CONSUMABLE', False, 'cable'),
+    ('FIBER_OPTIC', 'Fibra optica', 210, 'CONSUMABLE', False, 'cable'),
+    ('DISTRIBUTION_BOX', 'Cajas de distribucion', 220, 'CONSUMABLE', False, 'box'),
+    ('MODEM', 'Modems', 230, 'EDGE', False, 'activity'),
+    ('SIM_CARD', 'Tarjetas SIM', 240, 'OTHER', False, 'smartphone'),
+    ('SET_TOP_BOX', 'Decodificadores', 250, 'EDGE', False, 'gallery-thumbnails'),
+    ('FUSION_SPLICER', 'Fusionadora de fibra', 300, 'TOOL', False, 'wrench'),
+    ('BARCODE_SCANNER', 'Escaner de codigos', 310, 'TOOL', False, 'scan-qr-code'),
 ]
 
 
@@ -755,24 +786,39 @@ def _seed_device_categories(connection: Connection) -> None:
         "WHERE table_name = 'device_category' AND column_name = 'tier'"
     )).scalar()
 
-    for key, name, sort_order, tier, _is_passive in DEVICE_CATEGORIES:
+    # Migration-position gate for the inv1 vocabulary: quantity is inv1's own
+    # column, so its presence means the widened CHECK is in place.
+    has_general_inventory = connection.execute(text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_name = 'inventory_item' AND column_name = 'quantity'"
+    )).scalar()
+
+    for key, name, sort_order, tier, _is_passive, icon in DEVICE_CATEGORIES:
+        if not has_general_inventory:
+            if key in _INV1_CATEGORY_KEYS:
+                continue
+            if tier not in _PRE_INV1_TIERS:
+                tier = None
         if has_tier:
             connection.execute(
                 text(
-                    "INSERT INTO device_category (id, key, name, sort_order, tier, is_active, is_system, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :tier, TRUE, TRUE, :created_at, :created_at) "
+                    "INSERT INTO device_category (id, key, name, sort_order, tier, icon, is_active, is_system, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :tier, :icon, TRUE, TRUE, :created_at, :created_at) "
                     "ON CONFLICT (key) DO NOTHING"
                 ),
-                {"key": key, "name": name, "sort_order": sort_order, "tier": tier, "created_at": now_gt()},
+                {"key": key, "name": name, "sort_order": sort_order, "tier": tier,
+                 "icon": icon, "created_at": now_gt()},
             )
         else:
+            # Pre-nc2a position: no tier column. `icon` has existed since c3b.
             connection.execute(
                 text(
-                    "INSERT INTO device_category (id, key, name, sort_order, is_active, is_system, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, TRUE, TRUE, :created_at, :created_at) "
+                    "INSERT INTO device_category (id, key, name, sort_order, icon, is_active, is_system, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :icon, TRUE, TRUE, :created_at, :created_at) "
                     "ON CONFLICT (key) DO NOTHING"
                 ),
-                {"key": key, "name": name, "sort_order": sort_order, "created_at": now_gt()},
+                {"key": key, "name": name, "sort_order": sort_order, "icon": icon,
+                 "created_at": now_gt()},
             )
 
     # Cycle 7 tier convergence for rows that predate nc2a: the nc2a backfill
@@ -790,8 +836,10 @@ def _seed_device_categories(connection: Connection) -> None:
             "SELECT COUNT(*) FROM device_category WHERE tier IS NOT NULL"
         )).scalar()
         if not any_classified:
-            for key, _name, _sort_order, tier, _passive in DEVICE_CATEGORIES:
+            for key, _name, _sort_order, tier, _passive, _icon in DEVICE_CATEGORIES:
                 if tier is None:
+                    continue
+                if not has_general_inventory and tier not in _PRE_INV1_TIERS:
                     continue
                 connection.execute(
                     text("UPDATE device_category SET tier = :tier WHERE key = :key AND tier IS NULL"),
@@ -813,7 +861,7 @@ def _seed_device_categories(connection: Connection) -> None:
             "SELECT COUNT(*) FROM device_category WHERE is_passive"
         )).scalar()
         if not any_passive:
-            for key, _name, _sort_order, _tier, is_passive in DEVICE_CATEGORIES:
+            for key, _name, _sort_order, _tier, is_passive, _icon in DEVICE_CATEGORIES:
                 if not is_passive:
                     continue
                 connection.execute(
