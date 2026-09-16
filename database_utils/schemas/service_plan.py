@@ -63,6 +63,9 @@ class ServicePlanBase(BaseModel):
     upload_mbps: Optional[int] = None
     data_cap_gb: Optional[int] = None
     price: float = 0.0
+    # Integer-cents price (money end to end). When present it wins over the
+    # legacy float `price`; the router dual-writes the other one.
+    price_cents: Optional[int] = None
     # cfg2: Figma "Servicio" grouping label; integer-cents install fee.
     service_group: Optional[str] = None
     installation_price_cents: Optional[int] = None
@@ -92,6 +95,7 @@ class ServicePlanUpdate(BaseModel):
     upload_mbps: Optional[int] = None
     data_cap_gb: Optional[int] = None
     price: Optional[float] = None
+    price_cents: Optional[int] = None
     service_group: Optional[str] = None
     installation_price_cents: Optional[int] = None
     is_active: Optional[bool] = None
