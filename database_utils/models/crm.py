@@ -355,6 +355,11 @@ class Order(Base):
             unique=True,
             postgresql_where=text("status <> 'CANCELLED' AND order_type = 'RECURRING' AND client_service_id IS NOT NULL"),
         ),
+        # pm1: the Pagos client-account aggregate (GET /clients/{id}/account)
+        # and the per-page `client_account` annotation on GET /orders/ group a
+        # tenant's orders by client. company_id alone made that a full scan of
+        # the company's ledger.
+        Index("ix_order_company_client", "company_id", "client_id"),
     )
 
 
@@ -700,6 +705,9 @@ class UploadedFileOwnerType(str, enum.Enum):
     TASK_CLOSEOUT = "TASK_CLOSEOUT"
     COLLECTION_VISIT = "COLLECTION_VISIT"
     CASH_SESSION = "CASH_SESSION"
+    # pm1: payment evidence ("Comprobante"). owner_id = payment.id, kind =
+    # PHOTO (PDFs ride PHOTO too — a second kind buys the UI nothing).
+    PAYMENT = "PAYMENT"
 
 
 class UploadedFileKind(str, enum.Enum):

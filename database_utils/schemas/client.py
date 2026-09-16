@@ -49,6 +49,22 @@ class ClientServiceBillingOut(BaseModel):
 
 class ClientAccountDetailOut(ClientAccountOut):
     services: List[ClientServiceBillingOut] = []
+    # --- Figma redesign PR 5 (05-pagos §3.2, master plan §2.2): PR 5 EXTENDS
+    # this schema rather than declaring a second account shape. All COMPUTED
+    # by backend-erp from Order + Payment + ClientService, never stored.
+    # "A cobrar" — balance of ACTIVE orders with payment_status PENDING|PARTIAL
+    # (a superset of overdue_cents, which only counts the past-due ones).
+    receivable_cents: int = 0
+    # "Saldo a favor". ALWAYS 0 and rendered as "Próximamente": there is no
+    # credit ledger and PaymentService rejects overpayment by design. The field
+    # exists so the card has a contract to read; do not compute it here without
+    # the client_credit table (05-pagos §2).
+    credit_cents: int = 0
+    # "Cada N de cada mes" — day-of-month of ClientService.next_generation_date.
+    next_payment_day: Optional[int] = None
+    recurrence: Optional[RecurrenceEnum] = None
+    # len(services) before any display truncation.
+    services_total: int = 0
 
 
 class ClientDeactivateIn(BaseModel):
