@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Table, Text, JSON, Uuid
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -219,6 +219,14 @@ class AuditLog(Base):
 
     # Relationships
     user = relationship("User")
+
+    __table_args__ = (
+        # al1: the activity timeline (07-registro-actividad) reads this table
+        # newest-first with skip/limit on every page load. Tenant scoping is an
+        # IN-subquery on user_id applied on top of this scan — see the
+        # revision for why there is no (user_id, created_at) composite.
+        Index("ix_audit_log_created_at", created_at.desc()),
+    )
 
 
 class UserInvitation(Base):
