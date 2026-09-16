@@ -1,7 +1,7 @@
 """cycle 5 phase 1 (identity-theft mitigation, "Capa 3"): per-device CWMP Inform-time credentials on acs_device_registration
 
 Revision ID: nc1c_cwmp_inform_credentials
-Revises: tk1_new_installation_v4
+Revises: 6e7506e57be9
 Create Date: 2026-09-14
 
 Adds the columns backing the Inform-direction CWMP credential (the CPE
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'nc1c_cwmp_inform_credentials'
-down_revision: Union[str, Sequence[str], None] = 'tk1_new_installation_v4'
+down_revision: Union[str, Sequence[str], None] = '6e7506e57be9'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
