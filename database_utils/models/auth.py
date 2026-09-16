@@ -159,6 +159,12 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     active = Column(Boolean, default=True, nullable=False)  # User activation/deactivation
     email_verified = Column(Boolean, default=False, nullable=False)  # Gates login until confirmed
+    # cfg1: Perfil / Empleados. No format validation here — Guatemalan
+    # (5698-5824) and international numbers must both fit.
+    phone = Column(String, nullable=True)
+    # ponytail: plain URL, no file table — promote to an uploaded_file FK the
+    # day avatar uploads actually ship.
+    photo_url = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
@@ -226,6 +232,7 @@ class UserInvitation(Base):
     token = Column(String, nullable=False, unique=True)  # UUID for invitation link
     status = Column(String, nullable=False, default="PENDING")  # PENDING, ACCEPTED, EXPIRED, REVOKED
     name = Column(String, nullable=True)  # Optional pre-fill by admin
+    phone = Column(String, nullable=True)  # cfg1: copied onto the User on accept
 
     # Foreign keys
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
