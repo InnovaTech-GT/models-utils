@@ -92,6 +92,11 @@ class TaskJobKind(str, enum.Enum):
     FAULT = "FAULT"
     CHANGE = "CHANGE"
     REMOVE = "REMOVE"
+    # tj1_task_job_kinds: the Figma "Tarea" chips have six types. SUSPEND and
+    # REMOVE are pure work orders — they do NOT drive billing (that lives on
+    # client_service), they only tell the technician what to go and do.
+    SUSPEND = "SUSPEND"
+    MAINTENANCE = "MAINTENANCE"
 
 
 class TaskLinkedObjectType(str, enum.Enum):
