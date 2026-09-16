@@ -75,6 +75,11 @@ class DeviceTypeBase(BaseModel):
     # Cycle 7 (doc 25 §2.2): netmiko platform id for the generic CLI drivers;
     # NULL -> 'generic' / 'generic_telnet'. Free string (open netmiko set).
     cli_platform: Optional[str] = None
+    # Figma redesign PR 8 (08-inventario §2.2): serialized gear is one row per
+    # physical unit (serial required); non-serialized types are lots counted by
+    # `inventory_item.quantity` and displayed in `unit` ("m", "u", "pz").
+    is_serialized: bool = True
+    unit: Optional[str] = None
 
 
 class DeviceTypeCreate(DeviceTypeBase):
@@ -91,6 +96,8 @@ class DeviceTypeUpdate(BaseModel):
     default_attributes: Optional[Dict[str, Any]] = None
     provisioning_enabled: Optional[bool] = None
     cli_platform: Optional[str] = None
+    is_serialized: Optional[bool] = None
+    unit: Optional[str] = None
 
 
 class DeviceTypeOut(DeviceTypeBase):
@@ -157,6 +164,17 @@ class InventoryItemBase(BaseModel):
     # device. Never conflated with mgmt_port, which stays the device's real
     # service port.
     nat_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    # --- Figma redesign PR 8 (08-inventario §2.3) ---
+    # Lot size. Always 1 for a serialized device type (the router 422s
+    # QUANTITY_NOT_ALLOWED otherwise); >1 only for consumables.
+    quantity: int = Field(default=1, ge=1)
+    # Display name for plant with no serial ("MUFA 1", "Router 563").
+    label: Optional[str] = None
+    # Current custody ("Con tecnico"). Ownership-checked by the router.
+    custodian_user_id: Optional[UUID] = None
+    # Integer cents, the money convention. `cost` (Float) stays accepted for
+    # the mobile app; the router mirrors one into the other.
+    cost_cents: Optional[int] = None
 
     @field_validator("cli_protocol")
     @classmethod
@@ -165,7 +183,9 @@ class InventoryItemBase(BaseModel):
 
 
 class InventoryItemCreate(InventoryItemBase):
-    pass
+    # The create form assigns the client and the service in the same call.
+    client_id: Optional[UUID] = None
+    client_service_id: Optional[UUID] = None
 
 
 class InventoryItemUpdate(BaseModel):
@@ -189,6 +209,10 @@ class InventoryItemUpdate(BaseModel):
     mgmt_port: Optional[int] = Field(default=None, ge=1, le=65535)
     cli_protocol: Optional[str] = None
     nat_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    quantity: Optional[int] = Field(default=None, ge=1)
+    label: Optional[str] = None
+    custodian_user_id: Optional[UUID] = None
+    cost_cents: Optional[int] = None
 
     @field_validator("cli_protocol")
     @classmethod
@@ -203,8 +227,32 @@ class InventoryItemOut(InventoryItemBase):
     client_id: Optional[UUID] = None
     client_service_id: Optional[UUID] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
     device_type: Optional[DeviceTypeOut] = None
     warehouse: Optional[WarehouseOut] = None
+    # --- Figma redesign PR 8 (08-inventario §2.3/§3.2) ---
+    # Plant-tree position (columns) + the flattened names the item sheet reads
+    # (backend-computed from OUTER joins, so every one of them is optional and
+    # a bare ORM object still serializes).
+    parent_id: Optional[UUID] = None
+    network_attached: bool = False
+    parent_label: Optional[str] = None
+    custodian_name: Optional[str] = None
+    client_name: Optional[str] = None
+    client_address: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    warehouse_address: Optional[str] = None
+    # Derived, NEVER stored: WAREHOUSE|TECHNICIAN|CLIENT|DEPLOYED|DAMAGED|NONE,
+    # computed by backend-erp utils/inventory_location.py::location_case() so
+    # the /inventory/summary aggregate and the ?location= filter cannot drift.
+    # Defaults to NONE so a raw ORM row still validates.
+    location: str = "NONE"
+    # EDGE-only ACS state (ONLINE|STALE|PRE_REGISTERED|QUARANTINED); CORE reads
+    # mgmt_last_check_ok below instead, passives have neither.
+    acs_state: Optional[str] = None
+    acs_registration_id: Optional[UUID] = None
+    # Newest equipment_event of type MAINTENANCE.
+    last_maintenance_at: Optional[datetime] = None
     # Cycle 7 (doc 25 §2.3): worker-stamped connectivity-check result — read-
     # only (stamped when a core_connectivity_check job reaches terminal state).
     mgmt_last_check_at: Optional[datetime] = None
@@ -234,3 +282,29 @@ class EquipmentEventOut(EquipmentEventCreate):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Inventory product summary (08-inventario §3.1) ---
+
+class InventoryProductSummaryOut(BaseModel):
+    """One row of `GET /inventory/summary`: a device type ("producto") with its
+    stock split by derived location. Computed by one grouped query in
+    backend-erp — nothing here is a column. A device type with no items is
+    returned with every count 0 (a newly created product must still appear)."""
+    device_type_id: UUID
+    name: str
+    vendor: Optional[str] = None
+    model: Optional[str] = None
+    category_key: str
+    category_name: str
+    category_tier: Optional[str] = None
+    category_icon: Optional[str] = None
+    is_passive: bool = False
+    is_serialized: bool = True
+    unit: Optional[str] = None
+    total: int = 0
+    in_warehouse: int = 0
+    with_technician: int = 0
+    with_client: int = 0
+    deployed: int = 0
+    damaged: int = 0

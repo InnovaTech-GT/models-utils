@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Table, Text, JSON, Uuid
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -159,6 +159,12 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     active = Column(Boolean, default=True, nullable=False)  # User activation/deactivation
     email_verified = Column(Boolean, default=False, nullable=False)  # Gates login until confirmed
+    # cfg1: Perfil / Empleados. No format validation here — Guatemalan
+    # (5698-5824) and international numbers must both fit.
+    phone = Column(String, nullable=True)
+    # ponytail: plain URL, no file table — promote to an uploaded_file FK the
+    # day avatar uploads actually ship.
+    photo_url = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
@@ -214,6 +220,14 @@ class AuditLog(Base):
     # Relationships
     user = relationship("User")
 
+    __table_args__ = (
+        # al1: the activity timeline (07-registro-actividad) reads this table
+        # newest-first with skip/limit on every page load. Tenant scoping is an
+        # IN-subquery on user_id applied on top of this scan — see the
+        # revision for why there is no (user_id, created_at) composite.
+        Index("ix_audit_log_created_at", created_at.desc()),
+    )
+
 
 class UserInvitation(Base):
     """User invitation system for admin-initiated user enrollment"""
@@ -226,6 +240,7 @@ class UserInvitation(Base):
     token = Column(String, nullable=False, unique=True)  # UUID for invitation link
     status = Column(String, nullable=False, default="PENDING")  # PENDING, ACCEPTED, EXPIRED, REVOKED
     name = Column(String, nullable=True)  # Optional pre-fill by admin
+    phone = Column(String, nullable=True)  # cfg1: copied onto the User on accept
 
     # Foreign keys
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)

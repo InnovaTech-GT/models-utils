@@ -33,3 +33,5 @@ class RoleOut(RoleBase):
 
 class RoleWithPermissions(RoleOut):
     """Extended role model with full permission details"""
+    # Figma "3 administradores" badge. Computed by auth-erp, 0 when not joined.
+    users_count: int = 0

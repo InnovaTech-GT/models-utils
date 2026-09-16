@@ -29,7 +29,10 @@ def test_install_states_constant():
 
 
 def test_device_category_tiers_constant():
-    assert isp.DEVICE_CATEGORY_TIERS == ("CORE", "EDGE")
+    # inv1_general_inventory widened the axis (08-inventario §2.1).
+    assert isp.DEVICE_CATEGORY_TIERS == (
+        "CORE", "EDGE", "CONSUMABLE", "TOOL", "OTHER"
+    )
 
 
 def test_cli_protocols_constant():
@@ -49,7 +52,10 @@ def test_check_fragments_cover_their_constants():
 
 def test_migration_fragments_match_model_fragments():
     nc2a = _load_nc2a()
-    assert nc2a._DEVICE_CATEGORY_TIER_CHECK == isp._DEVICE_CATEGORY_TIER_CHECK
+    # The tier fragment moved on with inv1_general_inventory: nc2a holds the
+    # frozen PRE-inv1 text (revisions are immutable), and inv1 is the copy that
+    # must still match the model — pinned in tests/test_general_inventory.py.
+    assert nc2a._DEVICE_CATEGORY_TIER_CHECK == "tier IN ('CORE','EDGE')"
     assert nc2a._CLI_PROTOCOL_CHECK == isp._CLI_PROTOCOL_CHECK
     assert nc2a._INSTALL_STATE_CHECK == isp._INSTALL_STATE_CHECK
 
@@ -81,13 +87,16 @@ def _seed_categories():
 
 def test_seed_tiers_are_check_legal_and_match_backfill():
     categories = _seed_categories()
-    by_key = {key: tier for key, _name, _sort, tier, _passive in categories}
-    assert all(t in (None, "CORE", "EDGE") for t in by_key.values())
+    by_key = {key: tier for key, _name, _sort, tier, _passive, _icon in categories}
+    assert all(t in (None,) + isp.DEVICE_CATEGORY_TIERS for t in by_key.values())
     assert {k for k, t in by_key.items() if t == "CORE"} == {"ROUTER", "SWITCH", "OLT"}
-    assert {k for k, t in by_key.items() if t == "EDGE"} == {"ONU", "CPE_ROUTER", "ACCESS_POINT"}
+    # inv1 added MODEM and SET_TOP_BOX to the EDGE side.
+    assert {k for k, t in by_key.items() if t == "EDGE"} == {
+        "ONU", "CPE_ROUTER", "ACCESS_POINT", "MODEM", "SET_TOP_BOX"
+    }
 
 
 def test_seed_onu_display_name_updated():
     categories = _seed_categories()
-    names = {key: name for key, name, _sort, _tier, _passive in categories}
+    names = {key: name for key, name, _sort, _tier, _passive, _icon in categories}
     assert names["ONU"] == "ONU / ONT"

@@ -63,6 +63,12 @@ class ServicePlanBase(BaseModel):
     upload_mbps: Optional[int] = None
     data_cap_gb: Optional[int] = None
     price: float = 0.0
+    # Integer-cents price (money end to end). When present it wins over the
+    # legacy float `price`; the router dual-writes the other one.
+    price_cents: Optional[int] = None
+    # cfg2: Figma "Servicio" grouping label; integer-cents install fee.
+    service_group: Optional[str] = None
+    installation_price_cents: Optional[int] = None
     is_active: bool = True
     provisioning_params: Optional[List[ProvisioningParam]] = None
     product_id: Optional[UUID] = None
@@ -89,6 +95,9 @@ class ServicePlanUpdate(BaseModel):
     upload_mbps: Optional[int] = None
     data_cap_gb: Optional[int] = None
     price: Optional[float] = None
+    price_cents: Optional[int] = None
+    service_group: Optional[str] = None
+    installation_price_cents: Optional[int] = None
     is_active: Optional[bool] = None
     provisioning_params: Optional[List[ProvisioningParam]] = None
     product_id: Optional[UUID] = None
@@ -105,5 +114,7 @@ class ServicePlanOut(ServicePlanBase):
     id: UUID
     company_id: UUID
     created_at: datetime
+    # Column since Cycle 1, never exposed until now (integer-cents money).
+    price_cents: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)

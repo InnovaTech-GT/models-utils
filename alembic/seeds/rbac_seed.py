@@ -96,6 +96,19 @@ PERMISSIONS_DATA = [
         {"name": "integrations.read", "resource": "integrations", "action": "read", "description": "View external API integrations"},
         {"name": "integrations.update", "resource": "integrations", "action": "update", "description": "Update external API integrations"},
         {"name": "integrations.delete", "resource": "integrations", "action": "delete", "description": "Delete external API integrations"},
+
+        # Mobile app access (cfg3_matrix_permissions). These are the Figma
+        # permission-matrix rows "App de técnico" / "App de cobrador" and are
+        # enforced server-side in backend-erp on top of the existing
+        # tasks.*/payments.* checks. Granted to TECHNICIAN / BILLING via
+        # isp_seed.ISP_ROLES; ADMIN and MANAGER converge automatically.
+        {"name": "mobile.technician", "resource": "mobile", "action": "technician", "description": "Acceso a la App de técnico"},
+        {"name": "mobile.collector", "resource": "mobile", "action": "collector", "description": "Acceso a la App de cobrador"},
+
+        # Activity log (cfg3_matrix_permissions). Replaces the ADMIN role gate
+        # on auth-erp's GET /audit-logs. Deliberately NOT in
+        # MANAGER_EXCLUDED_PERMISSIONS: MANAGER sees the activity log (Q3).
+        {"name": "audit_logs.read", "resource": "audit_logs", "action": "read", "description": "Ver el registro de actividad"},
 ]
 
 # Permission names withheld from the MANAGER auto-grants (initial seed AND

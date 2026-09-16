@@ -8,6 +8,7 @@ class InvitationCreate(BaseModel):
     """Schema for creating a user invitation"""
     email: EmailStr
     name: Optional[str] = None
+    phone: Optional[str] = None  # cfg1: copied onto the User on accept
     role_ids: List[UUID] = []
     locale: Literal["es", "en"] = "es"
 
