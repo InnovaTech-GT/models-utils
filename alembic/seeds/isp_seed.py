@@ -162,6 +162,9 @@ ISP_ROLES = {
             # Cycle 5 Phase 1: field techs register CPEs and read ACS device state.
             "acs_registrations.create", "acs_registrations.read",
             "acs_devices.read",
+            # cfg3: the technician mobile app. Row declared in
+            # rbac_seed.PERMISSIONS_DATA, granted here.
+            "mobile.technician",
         ],
     },
     "NOC": {
@@ -230,6 +233,9 @@ ISP_ROLES = {
             "client_services.generate",
             "dashboard.read",
             "insights.read",
+            # cfg3: the collector mobile app. Row declared in
+            # rbac_seed.PERMISSIONS_DATA, granted here.
+            "mobile.collector",
         ],
     },
 }
