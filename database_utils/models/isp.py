@@ -351,6 +351,14 @@ class ServicePlan(Base):
     # Money-in-cents shadow column (Cycle 1 dual-write; Float `price` drops in
     # Cycle 2). Nullable, no server_default — doc 16 §1/§2.2.
     price_cents = Column(BigInteger, nullable=True)
+    # cfg2: the Figma "Servicio" grouping label ("Fibra óptica", "Cable HFC").
+    # A group's status is derived (active = any(plan.is_active)), so it owns no
+    # attributes of its own.
+    # ponytail: free-text label, no service_offering table — promote to one the
+    # day a service needs its own price/description/contract terms.
+    service_group = Column(String(100), nullable=True)
+    # Integer cents, like every other money column. NULL or 0 => "Gratis".
+    installation_price_cents = Column(BigInteger, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     # Vendor-agnostic provisioning intent consumed as playbook variables
     # (doc 33). Rows: [{"key", "value", "description", "scope"}] where scope is
@@ -394,6 +402,8 @@ class ServicePlan(Base):
             "uq_service_plan_product", "product_id",
             unique=True, postgresql_where=text("product_id IS NOT NULL"),
         ),
+        # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
+        Index("ix_service_plan_company_group", "company_id", "service_group"),
     )
 
 
