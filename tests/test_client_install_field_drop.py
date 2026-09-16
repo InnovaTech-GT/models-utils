@@ -111,6 +111,8 @@ def test_client_out_services_rollup():
         company_id="00000000-0000-0000-0000-000000000002",
         name="x", tax_id=None, address=None, phone=None, email=None,
         contact=None, observations=None, advisor_id=None,
+        # cl1 made created_at a required Out field (it is a NOT NULL column).
+        created_at="2026-09-16T00:00:00Z",
     )
     assert out.services_total == 0 and out.services_installed == 0
 

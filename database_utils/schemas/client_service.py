@@ -126,6 +126,13 @@ class ClientServiceOut(ClientServiceBase):
     # None elsewhere means 'not computed', not 'no evidence'. from_attributes
     # falls back to the default when the ORM attribute is missing.
     activation_evidence: Optional[str] = None
+    # Figma redesign PR 3 (03-clientes §2.3): the detail sheet's "Num de
+    # serie" and "Estado ● En linea". Backend-COMPUTED from
+    # cpe_item_id -> InventoryItem.serial_number and the CPE's ACS
+    # registration freshness; None means no CPE / no ACS registration / not
+    # computed on this endpoint. Never stored, never on Create/Update.
+    cpe_serial_number: Optional[str] = None
+    cpe_online: Optional[bool] = None
 
     # --- Billing (read-only here; settable via ClientServiceCreate or the
     # dedicated ClientServiceBillingUpdate / generate / regenerate-charges

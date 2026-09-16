@@ -154,6 +154,16 @@ class Client(Base):
     # installation_status/installation_date dropped (cf1): install truth is
     # per-service (client_service.install_state); lists derive count rollups.
 
+    # Figma redesign PR 3 (cl1). `dpi` is the Guatemalan CUI — nullable, since
+    # every legacy row has none and the xlsx import may leave it empty; the
+    # unique index below is PARTIAL for exactly that reason (unlimited NULLs,
+    # unique per company where set, same DPI allowed across companies).
+    # deactivated_at NULL = active (Actuales tab), NOT NULL = Histórico and
+    # the "Fecha de baja" column.
+    dpi = Column(String, nullable=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+    deactivation_reason = Column(String, nullable=True)
+
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     advisor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     assigned_technician_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
@@ -171,6 +181,14 @@ class Client(Base):
     orders = relationship("Order", back_populates="client")
     recurring_orders = relationship("RecurringOrder", back_populates="client")
     custom_field_values = relationship("ClientCustomFieldValue", back_populates="client", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        # cl1. Partial so the (many) NULL-dpi rows never collide.
+        Index("uq_client_company_dpi", "company_id", "dpi", unique=True,
+              postgresql_where=text("dpi IS NOT NULL")),
+        # Both list tabs filter company_id + deactivated_at IS [NOT] NULL.
+        Index("ix_client_company_active", "company_id", "deactivated_at"),
+    )
 
 
 class Product(Base):
