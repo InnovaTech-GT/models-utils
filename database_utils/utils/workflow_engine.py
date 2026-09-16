@@ -945,9 +945,18 @@ def _execute_create_task(
       "assignee_source": "client_technician" | "fixed" | "none",   # default "none"
       "assignee_ids": ["<uuid>", ...],           # for "fixed"; also the fallback
                                                  #   list for "client_technician"
-      "client_id": "<uuid>",                     # for "client_technician"
+      "client_id": "<uuid>",                     # for "client_technician"; also
+                                                 #   overrides the resolved task.client_id
+      "job_kind": "INSTALL",                     # optional; TaskJobKind label
       "due_date_offset_days": 3                  # optional
     }
+
+    The explicit task FK columns (doc 04 §2.3) are resolved from the SAME
+    polymorphic link with the SAME precedence as the tk2_task_links backfill,
+    so an automation-created task is never a blank row on the Ordenes de
+    Trabajo table. A link pointing at a row that does not exist (or belongs to
+    another company) leaves the FK NULL rather than failing the step — the
+    polymorphic field has no FK and never guaranteed the target existed.
 
     Assignee resolution for "client_technician": the client's
     assigned_technician_id; if the client has none, fall back to the
@@ -958,8 +967,10 @@ def _execute_create_task(
     from datetime import timedelta
     from sqlalchemy import func
     from database_utils.models.auth import User
-    from database_utils.models.crm import Client, Task, TaskLinkedObjectType, TaskState
-    from database_utils.models.isp import ClientService
+    from database_utils.models.crm import (
+        Client, Task, TaskJobKind, TaskLinkedObjectType, TaskState,
+    )
+    from database_utils.models.isp import ClientService, DeviceType, InventoryItem
     from database_utils.utils.audit_utils import serialize_for_audit
 
     name = config.get("name")
@@ -991,6 +1002,49 @@ def _execute_create_task(
             config.get("linked_object_id"), "linked_object_id", "CREATE_TASK"
         )
 
+    # --- Explicit task FKs, resolved from the link (doc 04 §2.3) ---
+    task_client_id = _uuid_or_none(config.get("client_id"))  # explicit override
+    task_client_service_id = None
+    task_inventory_item_id = None
+    task_device_category_id = None
+    if linked_object_type == TaskLinkedObjectType.CLIENT:
+        task_client_id = task_client_id or linked_object_id
+    elif linked_object_type == TaskLinkedObjectType.CLIENT_SERVICE:
+        client_service = db.query(ClientService).filter(
+            ClientService.id == linked_object_id,
+            ClientService.company_id == company_id,
+        ).first()
+        if client_service is not None:
+            task_client_service_id = client_service.id
+            task_client_id = task_client_id or client_service.client_id
+    elif linked_object_type == TaskLinkedObjectType.INVENTORY_ITEM:
+        row = db.query(InventoryItem.id, DeviceType.category_id).join(
+            DeviceType, DeviceType.id == InventoryItem.device_type_id
+        ).filter(
+            InventoryItem.id == linked_object_id,
+            InventoryItem.company_id == company_id,
+        ).first()
+        if row is not None:
+            task_inventory_item_id, task_device_category_id = row
+
+    # One lookup serves both the FK (fk_task_client_id must be satisfiable)
+    # and the "client_technician" assignee resolution below.
+    client = None
+    if task_client_id is not None:
+        client = db.query(Client).filter(
+            Client.id == task_client_id, Client.company_id == company_id
+        ).first()
+        if client is None:
+            task_client_id = None
+
+    # --- Optional job kind ---
+    job_kind = None
+    if config.get("job_kind"):
+        try:
+            job_kind = TaskJobKind(str(config["job_kind"]))
+        except ValueError:
+            raise ValueError(f"CREATE_TASK: invalid job_kind {config['job_kind']!r}")
+
     # --- Position: end of the target column ---
     max_pos = db.query(func.max(Task.position)).filter(
         Task.task_state_id == task_state_id, Task.company_id == company_id
@@ -1019,28 +1073,9 @@ def _execute_create_task(
 
     wanted_ids: List[UUID] = []
     if assignee_source == "client_technician":
-        client_id = None
-        if config.get("client_id"):
-            try:
-                client_id = UUID(str(config["client_id"]))
-            except (ValueError, TypeError):
-                client_id = None
-        if (
-            client_id is None
-            and linked_object_type == TaskLinkedObjectType.CLIENT_SERVICE
-            and linked_object_id is not None
-        ):
-            client_service = db.query(ClientService).filter(
-                ClientService.id == linked_object_id,
-                ClientService.company_id == company_id,
-            ).first()
-            client_id = client_service.client_id if client_service else None
-        technician_id = None
-        if client_id is not None:
-            client = db.query(Client).filter(
-                Client.id == client_id, Client.company_id == company_id
-            ).first()
-            technician_id = client.assigned_technician_id if client else None
+        # `client` was already resolved above (explicit client_id, else the
+        # CLIENT/CLIENT_SERVICE link) — do not query it a second time.
+        technician_id = client.assigned_technician_id if client else None
         # Technician first; fixed list as fallback; else unassigned (dispatcher).
         wanted_ids = [technician_id] if technician_id else fixed_ids
     elif assignee_source == "fixed":
@@ -1070,6 +1105,11 @@ def _execute_create_task(
         due_date=due_date,
         linked_object_type=linked_object_type,
         linked_object_id=linked_object_id,
+        job_kind=job_kind,
+        client_id=task_client_id,
+        client_service_id=task_client_service_id,
+        inventory_item_id=task_inventory_item_id,
+        device_category_id=task_device_category_id,
         company_id=company_id,
         task_state_id=task_state_id,
         created_by=None,  # system-created (workflow engine), not a user

@@ -238,6 +238,21 @@ ISP_ROLES = {
             "mobile.collector",
         ],
     },
+    # tk2 (Figma redesign PR 4, master plan §2.7): the cobrador. Distinct from
+    # BILLING — a collector walks a route with cash, so the grant list is the
+    # minimum that lets the mobile app show "who owes what" and record the
+    # payment: NO order/plan creation, NO client edits.
+    "COLLECTOR": {
+        "description": "Field collector: collection routes, cash sessions, payment recording",
+        "permissions": [
+            "tasks.read",
+            "task_states.read",
+            "clients.read",
+            "payments.read", "payments.record",
+            "orders.read",
+            "client_services.read",
+        ],
+    },
 }
 
 # Cycle 2 amendment 14: 'network' -> 'topologies' (D5). The key 'network'
@@ -332,7 +347,11 @@ WORKFLOW_TEMPLATES = [
                  "linked_object_id": "{{trigger.resource_id}}",
                  "assignee_source": "client_technician",
                  "assignee_ids": "{{param:fixed_assignee_ids}}",
-                 "client_id": "{{trigger.after.client_id}}"}},
+                 "client_id": "{{trigger.after.client_id}}",
+                 # tk2 (doc 04 §2.5): without this the automation-created
+                 # task lands with job_kind NULL and renders as an untyped
+                 # row in the redesigned Ordenes de Trabajo table.
+                 "job_kind": "INSTALL"}},
         ],
         [{"from": "s1", "to": "s2"}],
     ),

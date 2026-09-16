@@ -127,11 +127,22 @@ class ServiceAvailability(str, enum.Enum):
 
 
 # Association table for many-to-many relationship between Task and User (assignees)
+# tk2_task_links: the Figma edit form assigns a technician AND a collector to
+# the same task, so the pair (task, user) needs a role. PK stays
+# (task_id, user_id) — one user holds one role on a task. Legacy rows are NULL
+# and are read as technicians.
+TASK_ASSIGNEE_ROLES = ("TECHNICIAN", "COLLECTOR")
+
 task_assignee = Table(
     'task_assignee',
     Base.metadata,
     Column('task_id', Uuid, ForeignKey('task.id', ondelete='CASCADE'), primary_key=True),
-    Column('user_id', Uuid, ForeignKey('user.id', ondelete='CASCADE'), primary_key=True)
+    Column('user_id', Uuid, ForeignKey('user.id', ondelete='CASCADE'), primary_key=True),
+    Column('role', String(20), nullable=True),
+    CheckConstraint(
+        "role IS NULL OR role IN ('TECHNICIAN','COLLECTOR')",
+        name="ck_task_assignee_role",
+    ),
 )
 
 
@@ -520,6 +531,11 @@ class ClientCustomFieldValue(Base):
     field_definition = relationship("CustomFieldDefinition", back_populates="client_values")
 
 
+# tk2_task_links: the four task-state semantics. Mirrored byte-for-byte by
+# ck_task_state_kind below and by the CHECK in the revision.
+TASK_STATE_KINDS = ("ASSIGNED", "IN_PROGRESS", "DONE", "CANCELLED")
+
+
 class TaskState(Base):
     __tablename__ = "task_state"
 
@@ -529,12 +545,25 @@ class TaskState(Base):
     name = Column(String, nullable=False)
     color = Column(Enum(TaskStateColor), nullable=False, default=TaskStateColor.GRAY, server_default='GRAY')
     position = Column(Integer, nullable=False, default=0)
+    # tk2_task_links (master plan §2.1): the semantic behind free-form column
+    # names. Actuales = kind NOT IN ('DONE','CANCELLED'); Historico = the
+    # complement; the KPI cards and the status chips bucket on it.
+    # CHECK-constrained string, not a PG enum (client_service.install_state
+    # precedent): an open set stays a cheap ALTER.
+    kind = Column(String(20), nullable=False, server_default="IN_PROGRESS")
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Relationships
     company = relationship("Company", back_populates="task_states")
     tasks = relationship("Task", back_populates="task_state", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('ASSIGNED','IN_PROGRESS','DONE','CANCELLED')",
+            name="ck_task_state_kind",
+        ),
+    )
 
 
 class Task(Base):
@@ -555,6 +584,26 @@ class Task(Base):
     scheduled_date = Column(Date, nullable=True)
     job_kind = Column(Enum(TaskJobKind), nullable=True)
 
+    # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
+    # device + parent node SIMULTANEOUSLY, which the single polymorphic
+    # linked_object_type/linked_object_id pair cannot hold. These explicit FKs
+    # are the source of truth for everything the Ordenes de Trabajo page
+    # reads; linked_object_* is kept in sync as a derived compat field for the
+    # mobile app, the xlsx export and existing consumers.
+    #   address: written ONLY when "Utilizar la direccion principal del
+    #   cliente" is unchecked — display is `task.address or client.address`.
+    #   inventory_item_id: planning intent ("the technician should install
+    #   THIS unit"), not the provisioning truth. NULL = pick from the warehouse.
+    client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client.id", ondelete="SET NULL"), nullable=True)
+    client_service_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client_service.id", ondelete="SET NULL"), nullable=True)
+    # RESTRICT: device_category is a platform-global, admin-curated table —
+    # deleting a category out from under open work orders is a data bug, not a
+    # cascade.
+    device_category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), nullable=True)
+    inventory_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
+    parent_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
+    address = Column(String, nullable=True)
+
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     task_state_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("task_state.id", ondelete="RESTRICT"), nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
@@ -565,6 +614,13 @@ class Task(Base):
     creator = relationship("User", foreign_keys=[created_by])
     assignees = relationship("User", secondary=task_assignee)
     closeout = relationship("TaskCloseout", back_populates="task", uselist=False, cascade="all, delete-orphan")
+    client = relationship("Client", foreign_keys=[client_id])
+    client_service = relationship("ClientService", foreign_keys=[client_service_id])
+    device_category = relationship("DeviceCategory", foreign_keys=[device_category_id])
+    # Two FKs into the same table: foreign_keys= is mandatory or SQLAlchemy
+    # cannot pick a join condition.
+    inventory_item = relationship("InventoryItem", foreign_keys=[inventory_item_id])
+    parent_item = relationship("InventoryItem", foreign_keys=[parent_item_id])
 
     __table_args__ = (
         # tecnicos "today" screen filter (routers/tasks.py `assignee_id` +
@@ -574,6 +630,11 @@ class Task(Base):
             "company_id", "scheduled_date",
             postgresql_where=text("scheduled_date IS NOT NULL"),
         ),
+        # tk2: the three predicates the redesigned list/KPI queries always add
+        # on top of company_id — client search, the type chips, due-date sort.
+        Index("ix_task_company_client", "company_id", "client_id"),
+        Index("ix_task_company_job_kind", "company_id", "job_kind"),
+        Index("ix_task_company_due_date", "company_id", "due_date"),
     )
 
 
