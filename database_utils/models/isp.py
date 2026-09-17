@@ -1443,9 +1443,15 @@ class AcsDeviceRegistration(Base):
     cwmp_cr_secret_ciphertext = Column(LargeBinary, nullable=True)
     cwmp_cr_dek_wrapped = Column(LargeBinary, nullable=True)
     cwmp_cr_kek_id = Column(String, nullable=True)
+    # fg1: human author of a pre-registration (single/bulk). NULL for the
+    # bootstrap/quarantine path and legacy rows. SET NULL keeps the row.
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
 
     company = relationship("Company", back_populates="acs_device_registrations")
     inventory_item = relationship("InventoryItem")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
 
     __table_args__ = (
         UniqueConstraint("oui", "serial_number", name="uq_acs_registration_identity"),

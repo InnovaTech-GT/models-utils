@@ -26,7 +26,7 @@ by backend-erp (and cron-erp for recurring orders).
 | `TaskState` (task_state) | Kanban column (`TaskStateColor`) |
 | `Task` (task) | Work item; assignees via `task_assignee` M2M; `TaskLinkedObjectType` CLIENT/ORDER/RECURRING_ORDER |
 | `TaskTemplate` (task_template) | Task blueprint |
-| `Integration` (integration) | External API connection — `IntegrationAuthType` NONE/API_KEY/BEARER_TOKEN/BASIC_AUTH |
+| `Integration` (integration) | External API connection — `IntegrationAuthType` NONE/API_KEY/BEARER_TOKEN/BASIC_AUTH; `enabled` (bool, default true — disabled = kept but refused by consumers) and `provider` (nullable tag, `WHATSAPP_BUSINESS` only; schemas type it as a `Literal`) since fg1 |
 
 ## Connections to Other Components
 

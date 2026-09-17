@@ -37,7 +37,9 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    - `UPDATE_FIELD` — mutate a field on the trigger entity
    - `CREATE_ENTITY` — create a related entity
    - `HTTP_REQUEST` — call an external `Integration` target; URLs are guarded
-     by `utils/ssrf.py` `validate_url_no_ssrf` (SEC-6)
+     by `utils/ssrf.py` `validate_url_no_ssrf` (SEC-6). A disabled integration
+     (`enabled = false`, fg1) fails the step with `Integration <id> is disabled`
+     before any request is built
    - `ENQUEUE_PROVISIONING` — two mutually exclusive modes, see
      [below](#enqueue_provisioning-two-modes)
    - `CREATE_ORDER` — creates an order with **service-plan resolution** and a

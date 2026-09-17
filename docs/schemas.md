@@ -50,8 +50,13 @@ matters when reading `__init__.py`:
 ## Key Implementation Details
 
 - `Out` schemas use `from_attributes=True` for ORM compatibility
-- Sensitive fields are excluded from `Out` schemas (e.g. `password_hash`,
-  integration `credentials`)
+- Sensitive fields are excluded from `Out` schemas (e.g. `password_hash`);
+  integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
+  `api_key`/`token`/`password` → `***`)
+- `integration` (fg1): `IntegrationCreate` gains `provider:
+  Optional[Literal["WHATSAPP_BUSINESS"]] = None` and `enabled: bool = True`;
+  `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
+  can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper
 - `order_item.product_id` is deprecated but still honored (catalog-merge
   rollback window — see [limitations.md](limitations.md))
