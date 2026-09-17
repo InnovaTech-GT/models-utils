@@ -29,8 +29,8 @@ Same feature branch + PR model as all other services. **Never push directly to `
 Branch naming: `{type}/{feature-id}/models-{description}` (e.g. `feat/tier-billing/models-subscription`)
 
 Database migrations:
-- **Development** = the LOCAL docker compose DB — the `migrate` compose service (built from this repo's `Dockerfile`) runs `alembic upgrade head` + seeds on every `docker compose up` (Railway dev was decommissioned)
-- **Production**: GitHub Actions (`.github/workflows/migrate.yml`) runs `alembic upgrade head` against prod `DB_URL` on push to `main` (alembic path filter)
+- **Local**: the docker compose `migrate` service (built from this repo's `Dockerfile`) runs `alembic upgrade head` + seeds on every `docker compose up`
+- **Railway development / production**: GitHub Actions (`.github/workflows/migrate.yml`) runs `alembic upgrade head` on push to `develop` (GitHub env `development`) or `main` (GitHub env `production`), each env's own `DB_URL` secret, `alembic/**` path filter
 
 ## Migration Workflow (Alembic)
 
