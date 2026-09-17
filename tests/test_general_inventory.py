@@ -144,7 +144,9 @@ def test_revision_and_seed_agree_on_the_new_categories():
     seed_rows = {row[0]: row for row in _seed().DEVICE_CATEGORIES}
     for key, name, sort_order, tier, is_passive, icon in inv1._NEW_CATEGORIES:
         assert key in seed_rows, f"{key} is in the revision but not the seed"
-        assert seed_rows[key] == (key, name, sort_order, tier, is_passive, icon)
+        # seed rows carry a 7th element (is_active, dc1_category_trim) the
+        # revision's own literal doesn't know about — compare the shared prefix.
+        assert seed_rows[key][:6] == (key, name, sort_order, tier, is_passive, icon)
 
 
 def test_mufa_is_a_new_passive_key_and_splice_closure_survives():
@@ -157,7 +159,7 @@ def test_mufa_is_a_new_passive_key_and_splice_closure_survives():
 
 
 def test_every_seeded_tier_is_check_legal_and_every_row_has_an_icon():
-    for key, _name, _sort, tier, _passive, icon in _seed().DEVICE_CATEGORIES:
+    for key, _name, _sort, tier, _passive, icon, _active in _seed().DEVICE_CATEGORIES:
         assert tier is None or tier in isp.DEVICE_CATEGORY_TIERS, key
         assert icon, f"{key} has no lucide icon"
 
