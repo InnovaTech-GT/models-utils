@@ -6,14 +6,8 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from database_utils.database import Base
 from ..utils.timezone_utils import now_gt
 
-from datetime import datetime
 import enum
 import uuid
-
-
-class WorkflowStatus(str, enum.Enum):
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
 
 
 class TriggerEventType(str, enum.Enum):
@@ -26,6 +20,11 @@ class StepActionType(str, enum.Enum):
     UPDATE_FIELD = "UPDATE_FIELD"
     CREATE_ENTITY = "CREATE_ENTITY"
     HTTP_REQUEST = "HTTP_REQUEST"
+    ENQUEUE_PROVISIONING = "ENQUEUE_PROVISIONING"
+    # Installation flow (doc 16 §5.2): DB enum values added by revision
+    # c1e_install_actions (ALTER TYPE ... ADD VALUE, irreversible).
+    CREATE_ORDER = "CREATE_ORDER"
+    CREATE_TASK = "CREATE_TASK"
 
 
 class ExecutionStatus(str, enum.Enum):
@@ -34,6 +33,32 @@ class ExecutionStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
+
+
+class WorkflowTemplate(Base):
+    """Installable workflow blueprint (ADR-007). Global rows (seeded); a company
+    'installs' one to materialize a Workflow + triggers + steps + edges with
+    parameters (task column IDs, playbook IDs, ...) resolved at install time.
+
+    definition JSON shape:
+    {
+      "parameters": [{"key": "install_state_id", "label": "...", "type": "task_state",
+                      "required": true}],
+      "triggers":   [ ...WorkflowTrigger fields with {{param}} placeholders... ],
+      "steps":      [ {"ref": "s1", ...WorkflowStep fields...} ],
+      "edges":      [ {"from": "s1", "to": "s2"} ]
+    }
+    """
+    __tablename__ = "workflow_template"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    key = Column(String, nullable=False, unique=True)  # "new-installation", "onu-replacement"
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    category = Column(String, nullable=True)  # "installation", "billing", "network"
+    definition = Column(JSON, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
 
 
 class Workflow(Base):
@@ -100,7 +125,15 @@ class WorkflowStep(Base):
 
     # Relationships
     workflow = relationship("Workflow", back_populates="steps")
-    step_executions = relationship("WorkflowStepExecution", back_populates="step", cascade="all, delete-orphan")
+    # Cycle 2 (run-history durability, doc 18 automations-ux §2 Fix B):
+    # deleting a step must NOT destroy its execution history — step_id is now
+    # nullable with ON DELETE SET NULL at the DB level (revision
+    # c2e_step_exec_snapshot). No ORM delete-orphan cascade here anymore;
+    # passive_deletes=True tells SQLAlchemy to let the DB's SET NULL handle it
+    # instead of emitting per-row UPDATE/DELETE statements on step deletion.
+    step_executions = relationship(
+        "WorkflowStepExecution", back_populates="step", passive_deletes=True,
+    )
 
 
 class WorkflowStepEdge(Base):
@@ -158,12 +191,20 @@ class WorkflowStepExecution(Base):
     status = Column(Enum(ExecutionStatus), nullable=False, default=ExecutionStatus.PENDING)
     result = Column(JSON, nullable=True)
     error = Column(String, nullable=True)
+    # Snapshot of step.name at execution time (revision c2e_step_exec_snapshot).
+    # Historical run views must render from this when the step itself has been
+    # deleted (step_id NULL) or renamed since — the run-detail view's
+    # degraded-mode fallback (doc 18 automations-ux §2 Fix B).
+    step_name = Column(String, nullable=True)
 
     execution_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("workflow_execution.id", ondelete="CASCADE"), nullable=False
     )
-    step_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("workflow_step.id", ondelete="CASCADE"), nullable=False
+    # Nullable + SET NULL (was NOT NULL/CASCADE): deleting a step must not
+    # erase its run history. step_name above is what historical views render
+    # once step_id is NULL.
+    step_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("workflow_step.id", ondelete="SET NULL"), nullable=True
     )
 
     # Relationships

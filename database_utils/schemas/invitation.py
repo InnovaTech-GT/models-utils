@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional, List
+from pydantic import BaseModel, EmailStr, ConfigDict, constr
+from typing import Literal, Optional, List
 from datetime import datetime
 from uuid import UUID
 
@@ -8,7 +8,9 @@ class InvitationCreate(BaseModel):
     """Schema for creating a user invitation"""
     email: EmailStr
     name: Optional[str] = None
+    phone: Optional[str] = None  # cfg1: copied onto the User on accept
     role_ids: List[UUID] = []
+    locale: Literal["es", "en"] = "es"
 
 
 class InvitationOut(BaseModel):
@@ -29,8 +31,7 @@ class InvitationAccept(BaseModel):
     """Schema for accepting an invitation"""
     token: str
     name: str
-    age: int
-    password: str
+    password: constr(min_length=8)
 
 
 class InvitationValidate(BaseModel):
@@ -38,6 +39,7 @@ class InvitationValidate(BaseModel):
     token: str
     valid: bool
     email: Optional[str] = None
+    name: Optional[str] = None  # inviter-provided display name, prefills the accept form
     company_name: Optional[str] = None
     expires_at: Optional[datetime] = None
     message: Optional[str] = None

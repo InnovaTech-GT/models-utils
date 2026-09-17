@@ -272,11 +272,16 @@ def serialize_for_audit(data: dict) -> dict:
     Returns:
         A new dictionary with all non-JSON-serializable values converted to str.
     """
+    import enum
     from uuid import UUID
     from datetime import datetime, date
     from decimal import Decimal
 
     def _convert(v):
+        # Enums first: str(StrEnum) is "ClassName.MEMBER", which breaks
+        # workflow field-condition matching (e.g. changed_to "SUCCEEDED").
+        if isinstance(v, enum.Enum):
+            return _convert(v.value)
         if isinstance(v, (UUID, datetime, date, Decimal)):
             return str(v)
         if isinstance(v, dict):

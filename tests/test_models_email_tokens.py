@@ -14,6 +14,17 @@ from database_utils.utils.password import hash_password
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 TestingSession = sessionmaker(bind=engine)
 
+# Scope create_all/drop_all to only the tables this test actually needs.
+# Base.metadata now includes Postgres-only DDL from unrelated models (e.g.
+# isp.py's TopologyPlaybook CHECK constraint uses the PG regex operator `~`,
+# Cycle 3 revision c3a_topology_purpose) that sqlite cannot parse — this test
+# only exercises User/Company/Tier/*Token, so it has no business creating the
+# rest of the schema.
+_TEST_TABLES = [
+    Tier.__table__, Company.__table__, User.__table__,
+    EmailVerificationToken.__table__, PasswordResetToken.__table__,
+]
+
 
 def _make_user(db):
     tier = Tier(name=f"T-{uuid.uuid4().hex[:8]}", price=0.0)
@@ -35,19 +46,19 @@ def _make_user(db):
 
 
 def test_user_defaults_to_email_unverified():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, tables=_TEST_TABLES)
     db = TestingSession()
     try:
         user = _make_user(db)
         db.commit()
         assert user.email_verified is False
     finally:
-        Base.metadata.drop_all(bind=engine)
+        Base.metadata.drop_all(bind=engine, tables=_TEST_TABLES)
         db.close()
 
 
 def test_email_verification_token_roundtrip():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, tables=_TEST_TABLES)
     db = TestingSession()
     try:
         user = _make_user(db)
@@ -63,12 +74,12 @@ def test_email_verification_token_roundtrip():
         assert fetched.used_at is None
         assert fetched.user_id == user.id
     finally:
-        Base.metadata.drop_all(bind=engine)
+        Base.metadata.drop_all(bind=engine, tables=_TEST_TABLES)
         db.close()
 
 
 def test_password_reset_token_roundtrip():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, tables=_TEST_TABLES)
     db = TestingSession()
     try:
         user = _make_user(db)
@@ -83,5 +94,5 @@ def test_password_reset_token_roundtrip():
         assert fetched is not None
         assert fetched.used_at is None
     finally:
-        Base.metadata.drop_all(bind=engine)
+        Base.metadata.drop_all(bind=engine, tables=_TEST_TABLES)
         db.close()

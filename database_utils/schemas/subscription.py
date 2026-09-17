@@ -18,6 +18,10 @@ class SubscriptionOut(BaseModel):
     tier_id: UUID
     company_id: UUID
     stripe_subscription_id: Optional[str]
+    # Recurrente integration — set by the subscription.create webhook.
+    recurrente_subscription_id: Optional[str] = None
+    card_last4: Optional[str] = None
+    card_brand: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

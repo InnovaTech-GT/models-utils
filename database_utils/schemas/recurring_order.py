@@ -3,27 +3,13 @@ from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
 from .client import ClientOut
-from enum import Enum
+from database_utils.models.crm import RecurrenceEnum, RecurringOrderStatus
 
 
 # Forward reference import
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .order import OrderOut
-
-
-class RecurrenceEnum(str, Enum):
-    DAILY = "DAILY"
-    WEEKLY = "WEEKLY"
-    MONTHLY = "MONTHLY"
-    YEARLY = "YEARLY"
-
-
-class RecurringOrderStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    PAUSED = "PAUSED"
-    INACTIVE = "INACTIVE"
-    CANCELLED = "CANCELLED"
 
 
 # ===================== Items =====================
@@ -122,3 +108,24 @@ class RegeneratePeriodResponse(BaseModel):
     failed_periods: List[MissingPeriod]
     success_count: int
     failure_count: int
+
+
+class DueBillingItemOut(BaseModel):
+    """Cycle 2 (doc 18 amendment 5): the cron contract-frozen response_model
+    for GET /recurring-orders/get-all-due. Both the client_service billing
+    engine pass and the residual legacy recurring_order pass serialize into
+    this shape — cron-erp reads only id/client.name/recurrence/
+    next_generation_date via .get(), so this reshape is contract-safe.
+    `source` is additive and cron-erp ignores it."""
+    id: UUID
+    client: Optional["_DueBillingClientOut"] = None
+    recurrence: RecurrenceEnum
+    next_generation_date: Optional[datetime] = None
+    source: str  # "client_service" | "recurring_order"
+
+
+class _DueBillingClientOut(BaseModel):
+    name: str
+
+
+DueBillingItemOut.model_rebuild()

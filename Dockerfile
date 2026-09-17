@@ -7,10 +7,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install the package (pulls SQLAlchemy, Alembic, psycopg2, etc.) plus the
 # working-tree source which carries the alembic/ migration scripts.
 COPY . .

@@ -8,12 +8,6 @@ from pydantic import BaseModel, Field
 T = TypeVar('T')
 
 
-class PaginationParams(BaseModel):
-    """Query parameters for pagination."""
-    page: int = Field(default=1, ge=1, description="Page number (starting from 1)")
-    page_size: int = Field(default=10, ge=1, le=100, description="Number of items per page")
-
-
 class PaginatedResponse(BaseModel, Generic[T]):
     """Generic paginated response model."""
     items: List[T] = Field(description="List of items for the current page")

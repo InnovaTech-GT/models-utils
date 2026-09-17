@@ -65,3 +65,20 @@ def test_equals_is_static_state_check():
         cond(operator="equals", value="CANCELLED"),
         {"status": "CANCELLED"}, {"status": "CANCELLED"},
     ) is True
+
+
+def test_explicit_playbook_mode_has_its_imports():
+    """Mode B namespaces author variables through input_key.
+
+    That call was added by doc 33 but the import only landed in the OTHER mode,
+    so every explicit-playbook enqueue NameError'd from fabaed9 until it was
+    found by a dead-code sweep. Compiling the function's module and asserting the
+    name resolves is the cheapest thing that fails if it regresses.
+    """
+    import inspect
+
+    from database_utils.utils import workflow_engine
+
+    src = inspect.getsource(workflow_engine._execute_enqueue_provisioning_explicit)
+    assert "input_key(" in src, "mode B should still namespace author variables"
+    assert "import input_key" in src, "input_key must be imported inside mode B"

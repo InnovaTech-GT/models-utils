@@ -1,21 +1,34 @@
 name: Alembic Migrate
 
-# Development DB is now LOCAL (docker compose `migrate` service) — there is no
-# remote dev migration job anymore. This workflow only migrates PRODUCTION on
-# merge to `main`. The Railway development environment was decommissioned.
+# Railway hosts two long-lived environments and each has its own Postgres:
+#   push to `develop` -> development DB (Railway `development` environment)
+#   push to `main`    -> production DB  (Railway `production` environment)
+# Same job either way; the GitHub environment picks the `DB_URL` secret. The
+# local docker compose DB is still migrated by the compose `migrate` service.
 
 on:
   push:
     branches:
+      - develop
       - main
     paths:
-      - "alembic/versions/**"
+      # Widened from alembic/versions/** (doc 16 §2.0): env.py and seed changes
+      # must also trigger the migration job. Rule: every seed change ships
+      # with a (possibly no-op) revision.
+      - "alembic/**"
+  # Manual re-run (e.g. a secret rotation or a failed run) for either DB.
+  workflow_dispatch:
 
 jobs:
-  migrate-prod:
-    name: Migrate production database
+  migrate:
+    name: Migrate ${{ github.ref_name == 'main' && 'production' || 'development' }} database
+    if: github.ref_name == 'main' || github.ref_name == 'develop'
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    # Never run two upgrades against the same DB at once.
+    concurrency:
+      group: migrate-${{ github.ref_name }}
+      cancel-in-progress: false
     env:
       DB_URL: ${{ secrets.DB_URL }}
 
@@ -31,5 +44,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
 
-      - name: Apply migrations (production)
+      - name: Apply migrations
         run: alembic upgrade head
