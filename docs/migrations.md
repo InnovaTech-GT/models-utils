@@ -15,10 +15,14 @@ PostgreSQL database across local development and production.
 
 - **Local development**: the `migrate` service in the root
   `docker-compose.yml` builds this repo's `Dockerfile` and runs
-  `alembic upgrade head` on every `docker compose up` (Railway dev was
-  decommissioned; local compose is the only dev migration path)
-- **Production**: GitHub Actions (`.github/workflows/migrate.yml`) runs
-  `alembic upgrade head` against the prod `secrets.DB_URL` on push to `main`.
+  `alembic upgrade head` on every `docker compose up`
+- **Railway development**: GitHub Actions (`.github/workflows/migrate.yml`)
+  runs `alembic upgrade head` against the `development` environment's
+  `secrets.DB_URL` (the Railway dev Postgres public URL) on push to `develop`
+- **Production**: the same workflow job runs against the `production`
+  environment's `secrets.DB_URL` on push to `main`. One job, environment
+  chosen by branch, a per-branch concurrency group, and `workflow_dispatch`
+  for manual re-runs.
   The workflow is path-filtered on `alembic/**` (widened to include `env.py`
   and seeds) — so **every seed change must ship with a possibly-no-op
   revision** to trigger it

@@ -25,8 +25,10 @@ docker compose down -v        # stop + wipe the local DB volume
 - Schema vs data: `migrate` creates tables/relationships; `load-prod-data.sh`
   copies production rows (data-only, excludes `alembic_version`).
 
-The former Railway *development* environment was decommissioned — the local
-compose stack is the only dev/staging environment.
+The Railway *development* environment is live again (it deploys every
+service's `develop` branch). Its Postgres is migrated by GitHub Actions on push
+to `develop` — see [migrations.md](migrations.md). The local compose DB is
+still migrated by the `migrate` service above.
 
 ## Standalone library development
 

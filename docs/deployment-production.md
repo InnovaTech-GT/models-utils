@@ -10,7 +10,7 @@ models-utils is never deployed as a service. "Deploying" it means two things:
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | PRs to `develop`/`main`, pushes to `main` | **Migration guard** (fails if `database_utils/models/**` changed without an `alembic/versions/**` file — protects the path-filtered prod migrate), ruff (advisory, `continue-on-error`), pytest on Python 3.12 |
-| `.github/workflows/migrate.yml` | Push to `main` with an `alembic/**` path filter (widened to include `env.py` and seeds) | Runs `alembic upgrade head` against the production `secrets.DB_URL` in the `production` GitHub environment |
+| `.github/workflows/migrate.yml` | Push to `main` (or `develop`, for the Railway dev DB) with an `alembic/**` path filter (widened to include `env.py` and seeds), or `workflow_dispatch` | Runs `alembic upgrade head` against `secrets.DB_URL` of the `production` (or `development`) GitHub environment |
 
 **Rule:** every seed change ships with a (possibly no-op) Alembic revision, so
 the path-filtered prod migration actually fires.
