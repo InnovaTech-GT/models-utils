@@ -87,7 +87,7 @@ def _seed_categories():
 
 def test_seed_tiers_are_check_legal_and_match_backfill():
     categories = _seed_categories()
-    by_key = {key: tier for key, _name, _sort, tier, _passive, _icon in categories}
+    by_key = {key: tier for key, _name, _sort, tier, _passive, _icon, _active in categories}
     assert all(t in (None,) + isp.DEVICE_CATEGORY_TIERS for t in by_key.values())
     assert {k for k, t in by_key.items() if t == "CORE"} == {"ROUTER", "SWITCH", "OLT"}
     # inv1 added MODEM and SET_TOP_BOX to the EDGE side.
@@ -98,5 +98,5 @@ def test_seed_tiers_are_check_legal_and_match_backfill():
 
 def test_seed_onu_display_name_updated():
     categories = _seed_categories()
-    names = {key: name for key, name, _sort, _tier, _passive, _icon in categories}
+    names = {key: name for key, name, _sort, _tier, _passive, _icon, _active in categories}
     assert names["ONU"] == "ONU / ONT"

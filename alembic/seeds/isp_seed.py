@@ -508,7 +508,15 @@ RETIRED_TEMPLATE_KEYS = [
 # (consumables, tools, SIM cards) plus MUFA. MUFA is a NEW key rather than a
 # rename of SPLICE_CLOSURE: `key` is immutable, PR 9 needs the Figma-level name,
 # and both stay passive/NULL-tier.
-# (key, display name, sort order, tier, is_passive, icon)
+# (key, display name, sort order, tier, is_passive, icon, is_active)
+#
+# is_active (2026-09-17, revision dc1_category_trim): the USER DECISION global
+# trim to the six product-backed categories (ROUTER, SWITCH, OLT, ONU,
+# FIBER_OPTIC, PATCH_CORD) that back backend-erp's default-products-per-tenant
+# seeding (utils/inventory_defaults.py). All 22 keys stay in this list — key
+# is immutable and RESTRICT FKs from device_type reference these rows — only
+# is_active flips. dc1_category_trim converges EXISTING rows; this column
+# only governs what a genuinely fresh insert gets.
 #
 # is_passive (Cycle 10, doc 35 §2.3) marks SIGNAL-passive gear: it appears on a
 # service's configuration path and matters for troubleshooting, but nothing is
@@ -532,28 +540,28 @@ _INV1_CATEGORY_KEYS = {
 _PRE_INV1_TIERS = (None, 'CORE', 'EDGE')
 
 DEVICE_CATEGORIES = [
-    ('ROUTER', 'Router', 10, 'CORE', False, 'radio-tower'),
-    ('SWITCH', 'Switch', 20, 'CORE', False, 'network'),
-    ('OLT', 'OLT', 30, 'CORE', False, 'radio'),
-    ('ONU', 'ONU / ONT', 40, 'EDGE', False, 'house-wifi'),
-    ('SPLITTER', 'Splitter', 50, None, True, 'split'),
-    ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True, 'box'),
-    ('MUFA', 'MUFA', 65, None, True, 'box'),
-    ('PATCH_PANEL', 'Patch Panel', 70, None, True, 'gallery-thumbnails'),
-    ('ACCESS_POINT', 'Access Point', 80, 'EDGE', False, 'radio-tower'),
-    ('CPE_ROUTER', 'CPE Router', 90, 'EDGE', False, 'house-wifi'),
-    ('UPS', 'UPS', 100, None, False, 'activity'),
-    ('ANTENNA', 'Antenna', 110, None, True, 'antenna'),
-    ('RADIO', 'Radio', 120, None, False, 'radio'),
-    ('OTHER', 'Other', 130, 'OTHER', False, 'box'),
-    ('PATCH_CORD', 'Patch cords', 200, 'CONSUMABLE', False, 'cable'),
-    ('FIBER_OPTIC', 'Fibra optica', 210, 'CONSUMABLE', False, 'cable'),
-    ('DISTRIBUTION_BOX', 'Cajas de distribucion', 220, 'CONSUMABLE', False, 'box'),
-    ('MODEM', 'Modems', 230, 'EDGE', False, 'activity'),
-    ('SIM_CARD', 'Tarjetas SIM', 240, 'OTHER', False, 'smartphone'),
-    ('SET_TOP_BOX', 'Decodificadores', 250, 'EDGE', False, 'gallery-thumbnails'),
-    ('FUSION_SPLICER', 'Fusionadora de fibra', 300, 'TOOL', False, 'wrench'),
-    ('BARCODE_SCANNER', 'Escaner de codigos', 310, 'TOOL', False, 'scan-qr-code'),
+    ('ROUTER', 'Router', 10, 'CORE', False, 'radio-tower', True),
+    ('SWITCH', 'Switch', 20, 'CORE', False, 'network', True),
+    ('OLT', 'OLT', 30, 'CORE', False, 'radio', True),
+    ('ONU', 'ONU / ONT', 40, 'EDGE', False, 'house-wifi', True),
+    ('SPLITTER', 'Splitter', 50, None, True, 'split', False),
+    ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True, 'box', False),
+    ('MUFA', 'MUFA', 65, None, True, 'box', False),
+    ('PATCH_PANEL', 'Patch Panel', 70, None, True, 'gallery-thumbnails', False),
+    ('ACCESS_POINT', 'Access Point', 80, 'EDGE', False, 'radio-tower', False),
+    ('CPE_ROUTER', 'CPE Router', 90, 'EDGE', False, 'house-wifi', False),
+    ('UPS', 'UPS', 100, None, False, 'activity', False),
+    ('ANTENNA', 'Antenna', 110, None, True, 'antenna', False),
+    ('RADIO', 'Radio', 120, None, False, 'radio', False),
+    ('OTHER', 'Other', 130, 'OTHER', False, 'box', False),
+    ('PATCH_CORD', 'Patch cords', 200, 'CONSUMABLE', False, 'cable', True),
+    ('FIBER_OPTIC', 'Fibra optica', 210, 'CONSUMABLE', False, 'cable', True),
+    ('DISTRIBUTION_BOX', 'Cajas de distribucion', 220, 'CONSUMABLE', False, 'box', False),
+    ('MODEM', 'Modems', 230, 'EDGE', False, 'activity', False),
+    ('SIM_CARD', 'Tarjetas SIM', 240, 'OTHER', False, 'smartphone', False),
+    ('SET_TOP_BOX', 'Decodificadores', 250, 'EDGE', False, 'gallery-thumbnails', False),
+    ('FUSION_SPLICER', 'Fusionadora de fibra', 300, 'TOOL', False, 'wrench', False),
+    ('BARCODE_SCANNER', 'Escaner de codigos', 310, 'TOOL', False, 'scan-qr-code', False),
 ]
 
 
@@ -793,7 +801,7 @@ def _seed_device_categories(connection: Connection) -> None:
         "WHERE table_name = 'inventory_item' AND column_name = 'quantity'"
     )).scalar()
 
-    for key, name, sort_order, tier, _is_passive, icon in DEVICE_CATEGORIES:
+    for key, name, sort_order, tier, _is_passive, icon, is_active in DEVICE_CATEGORIES:
         if not has_general_inventory:
             if key in _INV1_CATEGORY_KEYS:
                 continue
@@ -803,22 +811,22 @@ def _seed_device_categories(connection: Connection) -> None:
             connection.execute(
                 text(
                     "INSERT INTO device_category (id, key, name, sort_order, tier, icon, is_active, is_system, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :tier, :icon, TRUE, TRUE, :created_at, :created_at) "
+                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :tier, :icon, :is_active, TRUE, :created_at, :created_at) "
                     "ON CONFLICT (key) DO NOTHING"
                 ),
                 {"key": key, "name": name, "sort_order": sort_order, "tier": tier,
-                 "icon": icon, "created_at": now_gt()},
+                 "icon": icon, "is_active": is_active, "created_at": now_gt()},
             )
         else:
             # Pre-nc2a position: no tier column. `icon` has existed since c3b.
             connection.execute(
                 text(
                     "INSERT INTO device_category (id, key, name, sort_order, icon, is_active, is_system, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :icon, TRUE, TRUE, :created_at, :created_at) "
+                    "VALUES (gen_random_uuid(), :key, :name, :sort_order, :icon, :is_active, TRUE, :created_at, :created_at) "
                     "ON CONFLICT (key) DO NOTHING"
                 ),
                 {"key": key, "name": name, "sort_order": sort_order, "icon": icon,
-                 "created_at": now_gt()},
+                 "is_active": is_active, "created_at": now_gt()},
             )
 
     # Cycle 7 tier convergence for rows that predate nc2a: the nc2a backfill
@@ -836,7 +844,7 @@ def _seed_device_categories(connection: Connection) -> None:
             "SELECT COUNT(*) FROM device_category WHERE tier IS NOT NULL"
         )).scalar()
         if not any_classified:
-            for key, _name, _sort_order, tier, _passive, _icon in DEVICE_CATEGORIES:
+            for key, _name, _sort_order, tier, _passive, _icon, _active in DEVICE_CATEGORIES:
                 if tier is None:
                     continue
                 if not has_general_inventory and tier not in _PRE_INV1_TIERS:
@@ -861,7 +869,7 @@ def _seed_device_categories(connection: Connection) -> None:
             "SELECT COUNT(*) FROM device_category WHERE is_passive"
         )).scalar()
         if not any_passive:
-            for key, _name, _sort_order, _tier, is_passive, _icon in DEVICE_CATEGORIES:
+            for key, _name, _sort_order, _tier, is_passive, _icon, _active in DEVICE_CATEGORIES:
                 if not is_passive:
                     continue
                 connection.execute(

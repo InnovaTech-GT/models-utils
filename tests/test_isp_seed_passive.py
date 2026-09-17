@@ -41,11 +41,21 @@ def test_ups_and_radio_stay_configurable():
     assert by_key["RADIO"][4] is False
 
 
+def test_only_the_six_product_backed_categories_are_active():
+    """USER DECISION (revision dc1_category_trim): a fresh insert only
+    activates the six categories backend-erp seeds as default products."""
+    by_key = {row[0]: row for row in DEVICE_CATEGORIES}
+    active = {key for key, row in by_key.items() if row[6] is True}
+    assert active == {"ROUTER", "SWITCH", "OLT", "ONU", "FIBER_OPTIC", "PATCH_CORD"}
+
+
 def test_every_category_declares_the_flag():
     for row in DEVICE_CATEGORIES:
-        # inv1_general_inventory added the 6th element (lucide icon name).
-        assert len(row) == 6, f"{row[0]} is missing is_passive/icon"
+        # inv1_general_inventory added the 6th element (lucide icon name);
+        # dc1_category_trim added the 7th (is_active).
+        assert len(row) == 7, f"{row[0]} is missing is_passive/icon/is_active"
         assert isinstance(row[4], bool)
+        assert isinstance(row[6], bool)
 
 
 def test_the_classification_is_gated_like_the_tier_backfill():

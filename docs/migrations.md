@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`6e7506e57be9`**) — plus the idempotent seed
+`alembic/versions/` (head: **`dc1_category_trim`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -415,7 +415,7 @@ scrub as `nat2` is defensive rather than expected to fire.
 like `nat1`'s mode downgrade) — a `nat_zt` tenant on a downgraded schema has
 no proxy column left to read and fails closed on the transport channel.
 
-### `fg1_integration_enabled_regby` (2026-09-17, head)
+### `fg1_integration_enabled_regby` (2026-09-17)
 
 On `ng2_provisioning_run_list`. Figma Settings follow-ups, additive and hand-
 written (lock_timeout, idempotent guards, post-upgrade assertions, total
@@ -428,6 +428,21 @@ without losing credentials; backend-erp refuses disabled integrations),
 NULL — NULL for bootstrap/quarantine and legacy rows). The id is short on
 purpose: `alembic_version.version_num` is VARCHAR(32), and a longer id fails
 the version stamp after the DDL has run (the transaction rolls back).
+
+### `dc1_category_trim` (2026-09-17, head)
+
+On `fg1_integration_enabled_regby`. USER DECISION: the global device-category
+list is trimmed to the six keys backend-erp seeds as every new tenant's
+default products (`utils/inventory_defaults.py`) — ROUTER, SWITCH, OLT, ONU,
+FIBER_OPTIC, PATCH_CORD. The other 16 baseline keys are set `is_active =
+false`, never dropped — `device_type.category_id` is a RESTRICT FK and
+provisioning tasks reference categories by key, so a hard delete would break
+existing rows. Idempotent (plain `UPDATE ... WHERE key = ANY(...)`, safe to
+re-run), post-upgrade assertion that exactly the six are active and none of
+the sixteen are. `downgrade()` reactivates all 22 (the pre-trim state).
+`isp_seed.DEVICE_CATEGORIES` gained a 7th element (`is_active`) so a fresh
+insert on a brand-new database already lands in the trimmed state instead of
+depending on this migration ever having run against it.
 
 ## Key rules
 
