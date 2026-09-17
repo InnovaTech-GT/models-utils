@@ -1475,6 +1475,9 @@ def _execute_http_request(
     ).first()
     if not integration:
         raise ValueError(f"Integration {integration_id} not found for company {company_id}")
+    if not integration.enabled:
+        # fg1: a disabled ("disconnected") integration is never called out with.
+        raise ValueError(f"Integration {integration_id} is disabled")
 
     # Build URL
     path = config.get("path", "")
