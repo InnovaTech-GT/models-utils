@@ -686,6 +686,11 @@ class Integration(Base):
     # API_KEY:       {"header_name": "X-API-Key", "api_key": "sk-..."}
     # BEARER_TOKEN:  {"token": "eyJ..."}
     # BASIC_AUTH:    {"username": "admin", "password": "..."}
+    # fg1: disabled integrations keep their credentials but are refused by
+    # every consumer (provisioning job create + worker). provider = optional
+    # well-known tag for branded UI cards (today only "WHATSAPP_BUSINESS").
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    provider = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True

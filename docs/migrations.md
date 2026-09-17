@@ -395,7 +395,7 @@ cross-field validator and a mode-flipping UPDATE could bypass the Pydantic
 check entirely. Scrubs any pre-existing NAT row with no `gateway_host` back
 to `direct` before adding the constraint.
 
-### `nat3_pylon_socks5` (2026-08-17, head)
+### `nat3_pylon_socks5` (2026-08-17)
 
 On `nat2_gateway_host_check`. Adds `network_access.pylon_socks5` (String,
 nullable) — the tenant's own Pylon SOCKS5 endpoint — plus DB-level CHECK
@@ -410,6 +410,20 @@ scrub as `nat2` is defensive rather than expected to fire.
 `downgrade()` drops the column and its CHECK cleanly (no data-loss ambiguity
 like `nat1`'s mode downgrade) — a `nat_zt` tenant on a downgraded schema has
 no proxy column left to read and fails closed on the transport channel.
+
+### `fg1_integration_enabled_regby` (2026-09-17, head)
+
+On `ng2_provisioning_run_list`. Figma Settings follow-ups, additive and hand-
+written (lock_timeout, idempotent guards, post-upgrade assertions, total
+downgrade): `integration.enabled` (BOOLEAN NOT NULL DEFAULT true — "disconnect"
+without losing credentials; backend-erp refuses disabled integrations),
+`integration.provider` (VARCHAR NULL, backfilled `WHATSAPP_BUSINESS` where
+`base_url ILIKE '%graph.facebook.com%'`), and
+`acs_device_registration.created_by_user_id` (UUID NULL, FK
+`fk_acs_device_registration_created_by_user` → `"user"(id)` ON DELETE SET
+NULL — NULL for bootstrap/quarantine and legacy rows). The id is short on
+purpose: `alembic_version.version_num` is VARCHAR(32), and a longer id fails
+the version stamp after the DDL has run (the transaction rolls back).
 
 ## Key rules
 
