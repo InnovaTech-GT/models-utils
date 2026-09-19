@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`dc1_category_trim`**) — plus the idempotent seed
+`alembic/versions/` (head: **`iv1_insights_v2`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -75,7 +75,7 @@ from the start).
   `c2b_service_billing` (client_service absorbs recurring_order) →
   `c2c_topology_device_chain_playbook` → `c2d_graph_removal` → `c2e_step_exec_snapshot`
 - **Cycle 3**: `c3a_topology_purpose_playbooks`, `c3b_device_categories_global_table`
-- **Cycle 4 (insights)**: `c4a_insights_dashboards` → `c4b_drop_installation_address`
+- **Cycle 4 (insights)**: `c4a_insights_dashboards` → `c4b_drop_installation_address`; **Insights v2**: `iv1_insights_v2` (see below)
 - **Cycle 5 (network config)**: `nc1a` (five network tables + `ProvisioningJob`
   columns + `PENDING_INFORM` via `ALTER TYPE … ADD VALUE` + 17 permissions) →
   `nc1b` (append-only `device_action_log` trigger)
@@ -429,7 +429,7 @@ NULL — NULL for bootstrap/quarantine and legacy rows). The id is short on
 purpose: `alembic_version.version_num` is VARCHAR(32), and a longer id fails
 the version stamp after the DDL has run (the transaction rolls back).
 
-### `dc1_category_trim` (2026-09-17, head)
+### `dc1_category_trim` (2026-09-17)
 
 On `fg1_integration_enabled_regby`. USER DECISION: the global device-category
 list is trimmed to the six keys backend-erp seeds as every new tenant's
@@ -444,10 +444,30 @@ the sixteen are. `downgrade()` reactivates all 22 (the pre-trim state).
 insert on a brand-new database already lands in the trimmed state instead of
 depending on this migration ever having run against it.
 
+### `iv1_insights_v2` (2026-09-18, head)
+
+On `dc1_category_trim`. Insights v2 persistence (uplink-workspace spec
+`docs/superpowers/specs/2026-09-18-insights-v2-design.md` §5.1). Hand-written
+(autogenerate cannot see enum label additions), in ba1/tj1/pm1 house style:
+`SET lock_timeout = '5s'`, then `ALTER TYPE insightcharttype ADD VALUE IF NOT
+EXISTS 'LINE'` inside `op.get_context().autocommit_block()`, then
+`insight_dashboard.default_time_range` and `insight_chart.viz` as `JSON NULL`
+(`ADD COLUMN IF NOT EXISTS`). Post-upgrade assertions raise `RuntimeError` if
+the label is missing from `pg_enum` or either column is not `json` in
+`information_schema.columns`. No backfill: no v1 chart existed anywhere.
+
+`downgrade()` refuses (`RuntimeError`) while any `insight_chart.chart_type` is
+`LINE`, because the pre-v2 Python enum cannot load such a row. Otherwise it drops
+the two columns. The `LINE` label stays: a documented no-op, because PG cannot drop
+enum labels (precedents `c1e`, `nc1a`, `pm1`, `tj1`). Verified on PG 16 with
+upgrade → guarded downgrade → downgrade → re-upgrade on a scratch database.
+Guardrails: `tests/test_insights_v2.py`.
+
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
-  `ALTER TYPE ... ADD VALUE`, which has no downgrade, and `ng2_topology_drop`
+  `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
+  `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
   raises from `downgrade()` by design. `nat1_gateway_transport`'s `downgrade()`
   is conditionally reversible — it raises only while a `network_access` row is
   still in a NAT mode. Check each revision's `downgrade()` before assuming

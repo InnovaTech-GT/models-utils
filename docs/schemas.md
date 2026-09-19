@@ -22,7 +22,7 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 | Auth / tenancy | `user`, `company`, `role`, `permission`, `invitation`, `notification`, `audit_log`, `requests` (Login + flat company-only Signup), `email_verification`, `password_reset` |
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
 | CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `product` (legacy), `recurring_order` (legacy), `task`, `task_state`, `task_template`, `integration` |
-| ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4) |
+| ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
 | Network config (Cycle 5) | `acs_registration`, `device_credential`, `network_access`, `provisioning_settings` |
 | Workflow | `workflow`, `workflow_template` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
@@ -188,6 +188,26 @@ matters when reading `__init__.py`:
 >
 > No Pydantic schema exists for `ProvisioningRun` — backend-erp shapes the
 > `/automations/runs` response itself.
+
+### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
+
+- **`InsightChartSpec` is deleted.** Chart `spec` is an opaque `Dict[str, Any]`.
+  backend-erp owns query-spec v2 (`insights/spec.py`), validates it on every
+  write, and stores the normalized dump. Reads never re-validate, so a stale
+  spec cannot 500 a dashboard GET.
+- `viz: Optional[Dict[str, Any]]` on `InsightChartBase`/`InsightChartUpdate`,
+  and `default_time_range: Optional[Dict[str, Any]]` on
+  `InsightDashboardBase`/`InsightDashboardUpdate`. Both are opaque, and
+  backend-erp validates them.
+- `ordering` left `InsightChartBase`. It is `Optional[int] = None` on
+  `InsightChartCreate` (None means the backend assigns `max+1`, or the list index
+  for inline charts), optional on `InsightChartUpdate`, and a required `int` on
+  `InsightChartOut`.
+- PATCH semantics depend on `exclude_unset`: an explicit `viz: null` or
+  `default_time_range: null` is distinguishable from "not sent", and clears
+  the value. Pinned by `tests/test_insight_schemas_v2.py`.
+- The read wrappers that add `accessible` (`InsightChartView`,
+  `InsightDashboardView`) live in backend-erp, not here.
 
 ### Auth overhaul — request-schema changes (no DB migration)
 

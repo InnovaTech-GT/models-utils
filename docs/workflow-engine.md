@@ -146,7 +146,7 @@ concrete workflows — this powers the founder "install automation" flow.
 
 ## Tests
 
-`tests/` is 28 files / **252 tests**, all on in-memory SQLite
+`tests/` is 38 files / **375 tests**, all on in-memory SQLite
 (`pytest.ini`: `asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`).
 
 `tests/conftest.py` holds the shared `db` and `plant` fixtures. `plant` builds a
