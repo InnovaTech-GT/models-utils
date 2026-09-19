@@ -343,6 +343,7 @@ class InsightChartType(str, enum.Enum):
     NUMBER = "NUMBER"
     BAR = "BAR"
     PIE = "PIE"
+    LINE = "LINE"  # Insights v2 (iv1_insights_v2)
 
 
 # ---------------------------------------------------------------------------
@@ -1534,11 +1535,13 @@ class DeviceActionLog(Base):
 
 
 # ---------------------------------------------------------------------------
-# Insights (Cycle 4): tenant-defined dashboards of simple charts driven off
-# existing entities (clients, orders, client_services, ...). No new
-# analytics engine — `spec` names an entity/measure/dimension resolved by
-# backend-erp's insights service against existing tables. Available to every
-# tenant (no tier module gate).
+# Insights (Cycle 4, v2 since iv1_insights_v2): tenant-defined dashboards of
+# charts over existing entities. `spec` is an OPAQUE query-spec v2 JSON
+# ({"version": 2, "entity", "measures", "dimensions", "time", "filters",
+# "order", "limit"}) owned, validated and normalized by backend-erp's
+# insights/spec.py; models-utils never parses it. `viz` and
+# `default_time_range` are opaque JSON validated by backend-erp the same way.
+# Available to every tenant (no tier module gate).
 # ---------------------------------------------------------------------------
 
 class InsightDashboard(Base):
@@ -1550,6 +1553,9 @@ class InsightDashboard(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
     name = Column(String, nullable=False)
     ordering = Column(Integer, nullable=False, default=0, server_default='0')
+    # TimeRange JSON: {"preset": "..."} or {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"};
+    # NULL = no dashboard default. Validated by backend-erp on write.
+    default_time_range = Column(JSON, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1567,10 +1573,9 @@ class InsightDashboard(Base):
 
 
 class InsightChart(Base):
-    """One chart within a dashboard. `spec` (entity/measure/dimension/filters)
-    is resolved server-side against the existing schema — no company_id here,
-    tenant scope derives via dashboard_id (matches topology_device_type's
-    scoping-through-parent pattern)."""
+    """One chart within a dashboard. `spec` is an opaque query-spec v2 JSON
+    compiled server-side by backend-erp — no company_id here, tenant scope
+    derives via dashboard_id (scoping-through-parent)."""
     __tablename__ = "insight_chart"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1578,9 +1583,12 @@ class InsightChart(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
     title = Column(String, nullable=False)
     chart_type = Column(Enum(InsightChartType), nullable=False)
-    # {"entity": "client_service", "measure": "count", "dimension": "status",
-    #  "filters": {...}}
+    # Opaque QuerySpec v2 JSON, owned and validated by backend-erp
+    # (insights/spec.py); stored as its normalized dump.
     spec = Column(JSON, nullable=False)
+    # Viz JSON: {"width": 1|2|3, "stacked": bool}; NULL = defaults.
+    # Validated by backend-erp on write.
+    viz = Column(JSON, nullable=True)
     ordering = Column(Integer, nullable=False, default=0, server_default='0')
 
     dashboard_id: Mapped[uuid.UUID] = mapped_column(
