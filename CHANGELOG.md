@@ -5,6 +5,25 @@ All notable changes to the `database-utils` library will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-09-18
+
+Insights v2 persistence (feature `insights-v2`, spec
+`uplink-workspace/docs/superpowers/specs/2026-09-18-insights-v2-design.md` §5).
+
+### Added
+- `InsightChartType.LINE`.
+- `InsightDashboard.default_time_range` (JSON, nullable): the dashboard's default TimeRange, `{"preset": ...}` or `{"from", "to"}`.
+- `InsightChart.viz` (JSON, nullable): presentation settings `{"width": 1|2|3, "stacked": bool}`.
+- Alembic revision `iv1_insights_v2` (parent `dc1_category_trim`, **new head**). It is hand-written: `ALTER TYPE insightcharttype ADD VALUE IF NOT EXISTS 'LINE'` inside `autocommit_block()`, the two `ADD COLUMN IF NOT EXISTS ... JSON`, and post-upgrade assertions. `downgrade()` drops the two columns and keeps the enum label (PG cannot drop labels). It refuses while any chart still uses `LINE`.
+- `tests/test_insights_v2.py` (revision guardrails) and `tests/test_insight_schemas_v2.py` (schema pins).
+
+### Changed
+- `schemas/insight.py`: chart `spec` is now an opaque `Dict[str, Any]`. `viz` (`InsightChart*`) and `default_time_range` (`InsightDashboard*`) are opaque optional dicts. backend-erp owns query-spec v2 and validates all three on write.
+- `ordering` moves from `InsightChartBase` into `InsightChartCreate` (`Optional[int] = None`, meaning the backend assigns it), `InsightChartUpdate` and `InsightChartOut` (`int`, required).
+
+### Removed
+- `InsightChartSpec` (the v1 `{entity, measure, dimension, filters}` shape). **Breaking** for any consumer that imports it: backend-erp replaces its v1 insights code in the same re-pin.
+
 ## [1.17.0] - 2026-07-19
 
 ### Removed

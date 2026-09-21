@@ -129,6 +129,16 @@ nodes *are* `InventoryItem`s so there is **one catalog** and one identity.
 | `ProvisioningRun` (provisioning_run) | Cycle 10 — one service-path run: several devices, several playbooks. Snapshots the resolved `path`, the ordered `plan` and the variable `frames` at creation; children are created lazily, one at a time, leaf → root |
 | `ProvisioningJob` (provisioning_job) | Durable job queue row — `ProvisioningJobStatus`, `ProvisioningTrigger`; consumed by backend-erp's `provision-worker` process (SKIP LOCKED claiming). Cycle 10 adds `run_id`/`run_position`; **`run_id` NULL means a standalone job** (explicit-playbook, ACS reboot, connectivity probe) and nothing about those changed |
 
+### Insights (Cycle 4; v2 since `iv1_insights_v2`)
+
+| Model | Purpose |
+|---|---|
+| `InsightDashboard` (insight_dashboard) | A company's named collection of charts. UNIQUE (company_id, name). `default_time_range` (JSON, nullable) is the dashboard's default TimeRange, `{"preset": ...}` or `{"from", "to"}`, validated by backend-erp |
+| `InsightChart` (insight_chart) | One chart. `chart_type` is `InsightChartType` (`NUMBER`/`BAR`/`PIE`/`LINE`). `spec` (JSON, NOT NULL) is an opaque query-spec v2 owned by backend-erp. `viz` (JSON, nullable) is `{"width": 1\|2\|3, "stacked": bool}`. There is **no `company_id`**: tenant scope derives through `dashboard_id` → `insight_dashboard.company_id` |
+
+models-utils never parses `spec`, `viz` or `default_time_range`. Adding a
+presentation setting or a spec feature needs no migration.
+
 ## Connections to Other Components
 
 - **backend-erp**: primary consumer (ISP routers + the provisioning worker)

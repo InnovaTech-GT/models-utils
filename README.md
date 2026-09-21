@@ -1,7 +1,7 @@
 # models-utils (`database-utils`)
 
 Shared data layer of the **Uplink** ISP platform — a pip-installable Python library
-(package name `database-utils`, module `database_utils`, currently v1.13.0). It is
+(package name `database-utils`, module `database_utils`, currently v1.33.0). It is
 **not a running service**: it has no server, no port, and no entry point of its own.
 
 models-utils owns everything that must be identical across the platform's backends:

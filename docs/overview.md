@@ -29,7 +29,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    ([auth-models.md](auth-models.md)), CRM ([crm-models.md](crm-models.md)),
    ISP vertical ([isp-models.md](isp-models.md)), and workflow automation
    ([workflow-models.md](workflow-models.md)). The ISP module also holds the
-   Cycle 4 **insights** models (`InsightDashboard`, `InsightChart`) and the
+   Cycle 4 **insights** models (`InsightDashboard`, `InsightChart`; v2 adds `LINE`, `default_time_range` and `viz`) and the
    Cycle 5 **network-config** models (GenieACS/TR-069), the Cycle 7
    **core-config** columns (CORE/EDGE tiers, mgmt surface, install state) and the
    Cycle 10 **company network graph** — the `inventory_item` tree, the playbook
@@ -38,8 +38,8 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
 2. **Pydantic v2 schemas** — 42 modules shared between services
    ([schemas.md](schemas.md)).
-3. **Alembic migrations + idempotent seeds** — 55 revisions (head
-   `ng2_topology_drop`); RBAC, tier, and ISP catalog/template seeds run
+3. **Alembic migrations + idempotent seeds** — 77 revisions (head
+   `iv1_insights_v2`); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -66,7 +66,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 28 files, **252 tests** (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 38 files, **375 tests** (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and
