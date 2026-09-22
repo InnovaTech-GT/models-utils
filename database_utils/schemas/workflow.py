@@ -155,7 +155,11 @@ class WorkflowExecutionOut(BaseModel):
 
 class WorkflowStepExecutionOut(BaseModel):
     id: UUID
-    step_id: UUID
+    # Nullable since revision c2e_step_exec_snapshot: step_id is now
+    # ON DELETE SET NULL (a deleted step must not erase its run history).
+    # Historical run views render step_name below when this is None.
+    step_id: Optional[UUID] = None
+    step_name: Optional[str] = None
     status: ExecutionStatus
     result: Optional[dict] = None
     error: Optional[str] = None

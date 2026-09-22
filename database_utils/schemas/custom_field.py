@@ -3,17 +3,16 @@ from pydantic import BaseModel, field_validator, ConfigDict
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
-from enum import Enum
+from database_utils.models.crm import CustomFieldType
 
 
-class CustomFieldType(str, Enum):
-    TEXT = "TEXT"
-    NUMBER = "NUMBER"
-    EMAIL = "EMAIL"
-    PHONE = "PHONE"
-    URL = "URL"
-    DATE = "DATE"
-    BOOLEAN = "BOOLEAN"
+def _validate_field_key(v: Optional[str]) -> Optional[str]:
+    """field_key must be a valid identifier (alphanumeric and underscores)."""
+    if v is not None:
+        if not v.replace('_', '').isalnum():
+            raise ValueError('field_key must contain only alphanumeric characters and underscores')
+        return v.lower()
+    return v
 
 
 class CustomFieldDefinitionBase(BaseModel):
@@ -30,10 +29,7 @@ class CustomFieldDefinitionCreate(CustomFieldDefinitionBase):
     @field_validator('field_key')
     @classmethod
     def validate_field_key(cls, v: str) -> str:
-        # Ensure field_key is a valid identifier (alphanumeric and underscores)
-        if not v.replace('_', '').isalnum():
-            raise ValueError('field_key must contain only alphanumeric characters and underscores')
-        return v.lower()
+        return _validate_field_key(v)
 
 
 class CustomFieldDefinitionCreateInternal(CustomFieldDefinitionBase):
@@ -43,10 +39,7 @@ class CustomFieldDefinitionCreateInternal(CustomFieldDefinitionBase):
     @field_validator('field_key')
     @classmethod
     def validate_field_key(cls, v: str) -> str:
-        # Ensure field_key is a valid identifier (alphanumeric and underscores)
-        if not v.replace('_', '').isalnum():
-            raise ValueError('field_key must contain only alphanumeric characters and underscores')
-        return v.lower()
+        return _validate_field_key(v)
 
 
 class CustomFieldDefinitionUpdate(BaseModel):
@@ -59,11 +52,7 @@ class CustomFieldDefinitionUpdate(BaseModel):
     @field_validator('field_key')
     @classmethod
     def validate_field_key(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            if not v.replace('_', '').isalnum():
-                raise ValueError('field_key must contain only alphanumeric characters and underscores')
-            return v.lower()
-        return v
+        return _validate_field_key(v)
 
 
 class CustomFieldDefinitionOut(CustomFieldDefinitionBase):

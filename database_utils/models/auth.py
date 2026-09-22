@@ -1,12 +1,11 @@
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Table, Text, JSON, Uuid
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from database_utils.database import Base
 from ..utils.timezone_utils import now_gt
 
-from datetime import datetime
 from typing import Optional
 import uuid
 
@@ -48,6 +47,11 @@ class Tier(Base):
     features = Column(JSON, nullable=True)  # {"max_users": 10, "max_products": 100, "support": "basic"}
     modules = Column(JSON, nullable=True)  # ["core", "admin", "management", "automations"]
     stripe_price_id = Column(String, nullable=True)  # Stripe Price ID for future integration
+    # Recurrente integration (tenant-pays-Uplink checkout). NULL price id =
+    # tier not purchasable online yet (frontend shows it as coming soon).
+    recurrente_product_id = Column(String, nullable=True)
+    recurrente_price_id = Column(String, nullable=True)          # monthly price
+    recurrente_price_yearly_id = Column(String, nullable=True)   # yearly price
     is_active = Column(Boolean, default=True, nullable=False)  # Can be assigned to new companies
 
     # Relationships
@@ -68,6 +72,8 @@ class Company(Base):
     tier_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tier.id"), nullable=False)
     tax_id = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    # Recurrente customer id — created lazily on the company's first checkout.
+    recurrente_customer_id = Column(String, nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")
@@ -83,11 +89,32 @@ class Company(Base):
     payment_methods = relationship("PaymentMethod", back_populates="company", cascade="all, delete-orphan")
     task_states = relationship("TaskState", back_populates="company", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="company", cascade="all, delete-orphan")
+    # uplink-mobile integration (uf1/rs1)
+    uploaded_files = relationship("UploadedFile", back_populates="company", cascade="all, delete-orphan")
+    collection_routes = relationship("CollectionRoute", back_populates="company", cascade="all, delete-orphan")
+    cash_sessions = relationship("CashSession", back_populates="company", cascade="all, delete-orphan")
     task_templates = relationship("TaskTemplate", back_populates="company", cascade="all, delete-orphan")
     workflows = relationship("Workflow", back_populates="company", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="company", cascade="all, delete-orphan")
     roles = relationship("Role", back_populates="company", cascade="all, delete-orphan")
-    tier_change_requests = relationship("TierChangeRequest", back_populates="company", cascade="all, delete-orphan")
+    # ISP modules
+    service_plans = relationship("ServicePlan", back_populates="company", cascade="all, delete-orphan")
+    client_services = relationship("ClientService", back_populates="company", cascade="all, delete-orphan")
+    device_types = relationship("DeviceType", back_populates="company", cascade="all, delete-orphan")
+    warehouses = relationship("Warehouse", back_populates="company", cascade="all, delete-orphan")
+    inventory_items = relationship("InventoryItem", back_populates="company", cascade="all, delete-orphan")
+    # Cycle 2 D6: network_node_types/network_nodes rels removed with the graph
+    # (revision c2d_graph_removal); topologies (D5) is the replacement.
+    playbooks = relationship("Playbook", back_populates="company", cascade="all, delete-orphan")
+    provisioning_jobs = relationship("ProvisioningJob", back_populates="company", cascade="all, delete-orphan")
+    # Cycle 4: insights dashboards.
+    insight_dashboards = relationship("InsightDashboard", back_populates="company", cascade="all, delete-orphan")
+    # Cycle 5 Phase 1: network configuration (TR-069 / GenieACS).
+    device_credentials = relationship("DeviceCredential", back_populates="company", cascade="all, delete-orphan")
+    network_accesses = relationship("NetworkAccess", back_populates="company", cascade="all, delete-orphan")
+    acs_device_registrations = relationship("AcsDeviceRegistration", back_populates="company", cascade="all, delete-orphan")
+    provisioning_settings = relationship("ProvisioningSettings", back_populates="company", uselist=False, cascade="all, delete-orphan")
+    device_action_logs = relationship("DeviceActionLog", back_populates="company", cascade="all, delete-orphan")
 
 
 class Permission(Base):
@@ -132,13 +159,22 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     active = Column(Boolean, default=True, nullable=False)  # User activation/deactivation
     email_verified = Column(Boolean, default=False, nullable=False)  # Gates login until confirmed
+    # cfg1: Perfil / Empleados. No format validation here — Guatemalan
+    # (5698-5824) and international numbers must both fit.
+    phone = Column(String, nullable=True)
+    # ponytail: plain URL, no file table — promote to an uploaded_file FK the
+    # day avatar uploads actually ship.
+    photo_url = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     company = relationship("Company", back_populates="users")
-    clients = relationship("Client", back_populates="advisor", cascade="all, delete-orphan")
+    clients = relationship(
+        "Client", back_populates="advisor", cascade="all, delete-orphan",
+        foreign_keys="Client.advisor_id",
+    )
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     roles = relationship("Role", secondary=user_role, back_populates="users")
 
@@ -184,6 +220,14 @@ class AuditLog(Base):
     # Relationships
     user = relationship("User")
 
+    __table_args__ = (
+        # al1: the activity timeline (07-registro-actividad) reads this table
+        # newest-first with skip/limit on every page load. Tenant scoping is an
+        # IN-subquery on user_id applied on top of this scan — see the
+        # revision for why there is no (user_id, created_at) composite.
+        Index("ix_audit_log_created_at", created_at.desc()),
+    )
+
 
 class UserInvitation(Base):
     """User invitation system for admin-initiated user enrollment"""
@@ -196,6 +240,7 @@ class UserInvitation(Base):
     token = Column(String, nullable=False, unique=True)  # UUID for invitation link
     status = Column(String, nullable=False, default="PENDING")  # PENDING, ACCEPTED, EXPIRED, REVOKED
     name = Column(String, nullable=True)  # Optional pre-fill by admin
+    phone = Column(String, nullable=True)  # cfg1: copied onto the User on accept
 
     # Foreign keys
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -267,6 +312,12 @@ class Subscription(Base):
     stripe_subscription_id = Column(String, nullable=True, unique=True)
     stripe_customer_id = Column(String, nullable=True)
 
+    # Recurrente integration — set by the subscription.create webhook.
+    recurrente_subscription_id = Column(String, nullable=True, unique=True)
+    recurrente_checkout_id = Column(String, nullable=True)
+    card_last4 = Column(String, nullable=True)
+    card_brand = Column(String, nullable=True)
+
     # Relationships
     company = relationship("Company", back_populates="subscription")
     tier = relationship("Tier", back_populates="subscriptions")
@@ -335,6 +386,10 @@ class BillingInvoice(Base):
     stripe_invoice_id = Column(String, nullable=True, unique=True)
     stripe_payment_intent_id = Column(String, nullable=True)
 
+    # Recurrente integration — second idempotency layer for webhook-recorded
+    # charges (one invoice per Recurrente payment intent).
+    recurrente_intent_id = Column(String, nullable=True, unique=True)
+
     # Additional details
     billing_reason = Column(String, nullable=True)  # "subscription_cycle", "subscription_create", "manual"
     notes = Column(Text, nullable=True)
@@ -345,32 +400,13 @@ class BillingInvoice(Base):
     marked_paid_by = relationship("User", foreign_keys=[marked_paid_by_user_id])
 
 
-class TierChangeRequest(Base):
-    """Request by a company admin to change the company's subscription tier.
-    Requires superadmin approval before the tier is actually changed."""
-    __tablename__ = "tier_change_request"
+class BillingWebhookEvent(Base):
+    """Idempotency log for Recurrente webhook deliveries — PK is the svix-id
+    delivery header, so a redelivered event is a no-op (oficina precedent)."""
+    __tablename__ = "billing_webhook_event"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    svix_id = Column(String, primary_key=True)
+    event_type = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
 
-    # Who is requesting and for which company
-    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-    requested_by_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
 
-    # Tier details
-    current_tier_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tier.id"), nullable=False)
-    requested_tier_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tier.id"), nullable=False)
-    reason = Column(Text, nullable=True)
-
-    # Review
-    status = Column(String, nullable=False, default="PENDING")  # PENDING, APPROVED, REJECTED
-    reviewed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
-    reviewed_at = Column(DateTime(timezone=True), nullable=True)
-    note = Column(Text, nullable=True)  # Superadmin note on approval/rejection
-
-    # Relationships
-    company = relationship("Company", back_populates="tier_change_requests")
-    requested_by = relationship("User", foreign_keys=[requested_by_user_id])
-    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
-    current_tier = relationship("Tier", foreign_keys=[current_tier_id])
-    requested_tier = relationship("Tier", foreign_keys=[requested_tier_id])

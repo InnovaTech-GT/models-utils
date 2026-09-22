@@ -14,11 +14,6 @@ class AuditLogBase(BaseModel):
     ip_address: Optional[str] = None
 
 
-class AuditLogCreate(AuditLogBase):
-    """Schema for creating an audit log entry"""
-    user_id: Optional[UUID] = None
-
-
 class AuditLogOut(AuditLogBase):
     """Schema for audit log output"""
     id: UUID

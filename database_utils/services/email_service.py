@@ -1,10 +1,38 @@
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
-from typing import Dict, Any
+from typing import Any, Dict
 from loguru import logger
 import aiosmtplib
 
 from database_utils.utils.email_templates import render_email
+
+
+# Localized subjects for the Uplink transactional emails that carry a locale.
+# Unknown locales fall back to Spanish (the platform default).
+_UPLINK_SUBJECTS: Dict[str, Dict[str, str]] = {
+    "confirmation": {
+        "es": "Confirma tu correo — Uplink",
+        "en": "Confirm your email — Uplink",
+    },
+    "invitation": {
+        "es": "Invitación a {company_name} — Uplink",
+        "en": "Invitation to {company_name} — Uplink",
+    },
+    "password_reset": {
+        "es": "Restablecer contraseña — Uplink",
+        "en": "Reset your password — Uplink",
+    },
+    "welcome": {
+        "es": "Bienvenido a Uplink",
+        "en": "Welcome to Uplink",
+    },
+}
+
+
+def _localized_subject(kind: str, locale: str, **fmt: Any) -> str:
+    subjects = _UPLINK_SUBJECTS[kind]
+    template = subjects.get(locale) or subjects["es"]
+    return template.format(**fmt)
 
 
 class EmailService(ABC):
@@ -12,68 +40,71 @@ class EmailService(ABC):
 
     @abstractmethod
     async def send_invitation_email(
-        self, to_email: str, invitation_link: str, company_name: str, invited_by: str
+        self, to_email: str, invitation_link: str, company_name: str, invited_by: str,
+        locale: str = "es",
     ) -> bool:
         """Send invitation email to new user"""
-        pass
 
     @abstractmethod
-    async def send_welcome_email(self, to_email: str, user_name: str) -> bool:
+    async def send_welcome_email(
+        self, to_email: str, user_name: str, locale: str = "es"
+    ) -> bool:
         """Send welcome email after user accepts invitation"""
-        pass
 
     @abstractmethod
     async def send_payment_receipt(
         self, to_email: str, invoice_data: Dict[str, Any]
     ) -> bool:
         """Send payment receipt"""
-        pass
 
     @abstractmethod
     async def send_confirmation_email(
-        self, to_email: str, confirmation_link: str, user_name: str
+        self, to_email: str, confirmation_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
         """Send signup confirmation email; login is blocked until this link is clicked."""
-        pass
 
     @abstractmethod
     async def send_password_reset_email(
-        self, to_email: str, reset_link: str, user_name: str
+        self, to_email: str, reset_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
         """Send password reset email with a short-lived reset link."""
-        pass
 
     @abstractmethod
     async def send_payment_failed_email(
         self, to_email: str, company_name: str, invoice_data: Dict[str, Any]
     ) -> bool:
         """Send notice that an automatic subscription charge could not be processed."""
-        pass
 
     @abstractmethod
     async def send_join_request_decision_email(
         self, to_email: str, user_name: str, company_name: str, approved: bool
     ) -> bool:
         """Notify a join-request requester that an admin approved or rejected them."""
-        pass
 
 
 class MockEmailService(EmailService):
     """Mock email service for development/testing - logs to console"""
 
     async def send_invitation_email(
-        self, to_email: str, invitation_link: str, company_name: str, invited_by: str
+        self, to_email: str, invitation_link: str, company_name: str, invited_by: str,
+        locale: str = "es",
     ) -> bool:
         logger.info(
-            f"[MOCK EMAIL] Invitation sent to {to_email}\n"
+            f"[MOCK EMAIL] Invitation sent to {to_email} (locale={locale})\n"
             f"Company: {company_name}\n"
             f"Invited by: {invited_by}\n"
             f"Link: {invitation_link}"
         )
         return True
 
-    async def send_welcome_email(self, to_email: str, user_name: str) -> bool:
-        logger.info(f"[MOCK EMAIL] Welcome email sent to {to_email} ({user_name})")
+    async def send_welcome_email(
+        self, to_email: str, user_name: str, locale: str = "es"
+    ) -> bool:
+        logger.info(
+            f"[MOCK EMAIL] Welcome email sent to {to_email} ({user_name}, locale={locale})"
+        )
         return True
 
     async def send_payment_receipt(
@@ -87,19 +118,21 @@ class MockEmailService(EmailService):
         return True
 
     async def send_confirmation_email(
-        self, to_email: str, confirmation_link: str, user_name: str
+        self, to_email: str, confirmation_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
         logger.info(
-            f"[MOCK EMAIL] Confirmation email sent to {to_email} ({user_name})\n"
+            f"[MOCK EMAIL] Confirmation email sent to {to_email} ({user_name}, locale={locale})\n"
             f"Link: {confirmation_link}"
         )
         return True
 
     async def send_password_reset_email(
-        self, to_email: str, reset_link: str, user_name: str
+        self, to_email: str, reset_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
         logger.info(
-            f"[MOCK EMAIL] Password reset email sent to {to_email} ({user_name})\n"
+            f"[MOCK EMAIL] Password reset email sent to {to_email} ({user_name}, locale={locale})\n"
             f"Link: {reset_link}"
         )
         return True
@@ -163,17 +196,21 @@ class SMTPEmailService(EmailService):
             return False
 
     async def send_invitation_email(
-        self, to_email: str, invitation_link: str, company_name: str, invited_by: str
+        self, to_email: str, invitation_link: str, company_name: str, invited_by: str,
+        locale: str = "es",
     ) -> bool:
         html = render_email(
-            "invitation.html", invitation_link=invitation_link,
+            "invitation.html", locale=locale, invitation_link=invitation_link,
             company_name=company_name, invited_by=invited_by,
         )
-        return await self._send(to_email, f"You've been invited to join {company_name}", html)
+        subject = _localized_subject("invitation", locale, company_name=company_name)
+        return await self._send(to_email, subject, html)
 
-    async def send_welcome_email(self, to_email: str, user_name: str) -> bool:
-        html = render_email("welcome.html", user_name=user_name)
-        return await self._send(to_email, "Welcome!", html)
+    async def send_welcome_email(
+        self, to_email: str, user_name: str, locale: str = "es"
+    ) -> bool:
+        html = render_email("welcome.html", locale=locale, user_name=user_name)
+        return await self._send(to_email, _localized_subject("welcome", locale), html)
 
     async def send_payment_receipt(
         self, to_email: str, invoice_data: Dict[str, Any]
@@ -188,18 +225,23 @@ class SMTPEmailService(EmailService):
         return await self._send(to_email, "Payment Receipt", html)
 
     async def send_confirmation_email(
-        self, to_email: str, confirmation_link: str, user_name: str
+        self, to_email: str, confirmation_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
         html = render_email(
-            "confirmation.html", user_name=user_name, confirmation_link=confirmation_link
+            "confirmation.html", locale=locale, user_name=user_name,
+            confirmation_link=confirmation_link,
         )
-        return await self._send(to_email, "Confirm your account", html)
+        return await self._send(to_email, _localized_subject("confirmation", locale), html)
 
     async def send_password_reset_email(
-        self, to_email: str, reset_link: str, user_name: str
+        self, to_email: str, reset_link: str, user_name: str,
+        locale: str = "es",
     ) -> bool:
-        html = render_email("password_reset.html", user_name=user_name, reset_link=reset_link)
-        return await self._send(to_email, "Reset your password", html)
+        html = render_email(
+            "password_reset.html", locale=locale, user_name=user_name, reset_link=reset_link
+        )
+        return await self._send(to_email, _localized_subject("password_reset", locale), html)
 
     async def send_payment_failed_email(
         self, to_email: str, company_name: str, invoice_data: Dict[str, Any]

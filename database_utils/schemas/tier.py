@@ -34,6 +34,9 @@ class TierOut(TierBase):
     id: UUID
     created_at: datetime
     stripe_price_id: Optional[str] = None
+    recurrente_product_id: Optional[str] = None
+    recurrente_price_id: Optional[str] = None
+    recurrente_price_yearly_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,5 +51,8 @@ class TierPublic(BaseModel):
     modules: Optional[list] = None
     features: Optional[dict] = None
     is_active: bool
+    # True when the tier can be bought via hosted Recurrente checkout
+    # (recurrente_price_id set) — the endpoint stamps it; never the raw id.
+    purchasable: bool = False
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,7 +1,7 @@
 # utils/jwt_utils.py
 import jwt
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 from fastapi import HTTPException
 from database_utils.schemas.user import UserOut

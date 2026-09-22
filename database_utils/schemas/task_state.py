@@ -1,25 +1,20 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
+from typing import Literal, Optional, List
 from uuid import UUID
 from datetime import datetime
-from enum import Enum
+from database_utils.models.crm import TaskStateColor
 
-
-class TaskStateColor(str, Enum):
-    GRAY = "GRAY"
-    RED = "RED"
-    ORANGE = "ORANGE"
-    YELLOW = "YELLOW"
-    GREEN = "GREEN"
-    BLUE = "BLUE"
-    PURPLE = "PURPLE"
-    PINK = "PINK"
+# tk2_task_links: mirrors TASK_STATE_KINDS / ck_task_state_kind. A Literal
+# (not an enum) because the column is a CHECK-constrained string — an
+# unknown value must 422 at the API, never reach the CHECK.
+TaskStateKind = Literal["ASSIGNED", "IN_PROGRESS", "DONE", "CANCELLED"]
 
 
 class TaskStateBase(BaseModel):
     name: str
     color: TaskStateColor = TaskStateColor.GRAY
     position: int = 0
+    kind: TaskStateKind = "IN_PROGRESS"
 
 
 class TaskStateCreate(TaskStateBase):
@@ -30,6 +25,7 @@ class TaskStateUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[TaskStateColor] = None
     position: Optional[int] = None
+    kind: Optional[TaskStateKind] = None
 
 
 class TaskStateOut(TaskStateBase):

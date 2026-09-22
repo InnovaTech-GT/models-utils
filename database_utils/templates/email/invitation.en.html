@@ -1,0 +1,16 @@
+{% extends "base_uplink.html" %}
+{% block lang %}en{% endblock %}
+{% block title %}Invitation to {{ company_name }} — Uplink{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 16px 0; font-size:22px; font-weight:700; color:#1e1b4b;">You've been invited to {{ company_name }}</h1>
+<p style="margin:0 0 24px 0; font-size:15px; line-height:1.6; color:#374151;"><strong>{{ invited_by }}</strong> has invited you to join <strong>{{ company_name }}</strong> on Uplink. Accept the invitation to create your password and get access.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 24px auto;">
+  <tr>
+    <td align="center" style="border-radius:8px; background-color:#6366F1;">
+      <a href="{{ invitation_link }}" style="display:inline-block; padding:12px 28px; font-size:15px; font-weight:700; color:#ffffff; text-decoration:none; border-radius:8px;">Accept invitation</a>
+    </td>
+  </tr>
+</table>
+<p style="margin:0; font-size:13px; line-height:1.6; color:#6b7280;">If the button doesn't work, copy and paste this URL into your browser:<br><a href="{{ invitation_link }}" style="color:#6366F1; word-break:break-all;">{{ invitation_link }}</a></p>
+{% endblock %}
+{% block footer %}This invitation expires in 7 days. If you weren't expecting it, you can ignore this email.{% endblock %}
