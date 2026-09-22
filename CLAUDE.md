@@ -37,13 +37,13 @@ Database migrations:
 Use the **erp-migration** skill — it covers the full ordered cycle automatically.
 
 Correct order:
-1. Create feature branch from `main`
+1. Create feature branch from an up-to-date `origin/develop` (gitflow — never from `main`; only `hotfix/*` does)
 2. Edit model + schema + bump `version` in `setup.cfg`
 3. Generate revision: `alembic revision --autogenerate -m "description"`
 4. Commit and push feature branch
-5. Compose into `develop` (erp-release); the local `migrate` compose service applies the revision on `docker compose up`
+5. Compose into `develop` (erp-release) and push — the "Alembic Migrate" workflow applies the revision to the Railway `development` Postgres; **wait for it to succeed before pushing the backends**. Locally, the `migrate` compose service applies it on `docker compose up`
 6. Pin consuming services (`backend-erp`, `auth-erp`) to the branch commit SHA in their `requirements.txt`
-7. After E2E passes locally, merge PR to `main` — GitHub Actions migrates the prod DB
+7. After E2E passes on Railway development, merge the `develop` → `main` release PR — GitHub Actions migrates the prod DB
 
 ## Key Directories
 
