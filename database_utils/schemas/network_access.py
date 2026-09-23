@@ -129,6 +129,12 @@ class NetworkAccessUpdate(BaseModel):
 class NetworkAccessOut(NetworkAccessBase):
     id: UUID
     company_id: UUID
+    # Tenant TR-069 inform credentials (read-only here: backend-erp generates
+    # both, so neither Create nor Update accepts them). The username is
+    # display-safe; the password surfaces only as a boolean and the bcrypt
+    # hash never leaves the model (mirrors DeviceCredential.has_secret).
+    acs_username: Optional[str] = None
+    has_acs_password: bool = False
     created_at: datetime
     updated_at: datetime
 
