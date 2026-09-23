@@ -1450,6 +1450,19 @@ class AcsDeviceRegistration(Base):
         Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
 
+    # per-device CWMP Inform-time credentials (identity-theft mitigation,
+    # "Capa 3" of the CPE security proposal): the OPPOSITE direction of
+    # cwmp_cr_* above — this is what the CPE must present TO GenieACS when
+    # it informs, so that knowing a serial/OUI (public, printed on a label)
+    # is no longer enough to impersonate a device. No username column: the
+    # username side of GenieACS's AUTH() check is the device's own reported
+    # DeviceID.SerialNumber, nothing to store. Issued lazily on first
+    # getPassword lookup, same envelope-encryption scheme as cwmp_cr_*
+    # (AAD = f"{company_id}:{registration_id}").
+    cwmp_inform_secret_ciphertext = Column(LargeBinary, nullable=True)
+    cwmp_inform_dek_wrapped = Column(LargeBinary, nullable=True)
+    cwmp_inform_kek_id = Column(String, nullable=True)
+
     company = relationship("Company", back_populates="acs_device_registrations")
     inventory_item = relationship("InventoryItem")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
