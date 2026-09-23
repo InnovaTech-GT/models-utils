@@ -209,6 +209,15 @@ matters when reading `__init__.py`:
 - The read wrappers that add `accessible` (`InsightChartView`,
   `InsightDashboardView`) live in backend-erp, not here.
 
+### Tenant ACS credentials (1.34.0, revision `nc1d_acs_tenant_credentials`) — `network_access` schema changes
+
+- `NetworkAccessOut` gains `acs_username: Optional[str]` and `has_acs_password: bool`,
+  both read-only. The bcrypt hash never serializes (same rule as
+  `DeviceCredentialOut.has_secret`).
+- `NetworkAccessCreate` and `NetworkAccessUpdate` accept neither: backend-erp
+  generates the username from the company and issues the password. Pinned by
+  `tests/test_network_access_acs_credentials.py`.
+
 ### Auth overhaul — request-schema changes (no DB migration)
 
 Company-only signup with locale-aware transactional email:

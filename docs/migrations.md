@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`iv1_insights_v2`**) — plus the idempotent seed
+`alembic/versions/` (head: **`nc1d_acs_tenant_credentials`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -78,7 +78,8 @@ from the start).
 - **Cycle 4 (insights)**: `c4a_insights_dashboards` → `c4b_drop_installation_address`; **Insights v2**: `iv1_insights_v2` (see below)
 - **Cycle 5 (network config)**: `nc1a` (five network tables + `ProvisioningJob`
   columns + `PENDING_INFORM` via `ALTER TYPE … ADD VALUE` + 17 permissions) →
-  `nc1b` (append-only `device_action_log` trigger)
+  `nc1b` (append-only `device_action_log` trigger); **tenant ACS credentials**:
+  `nc1d_acs_tenant_credentials` (see below)
 - **Cycle 7 (core config)**: `nc2a_core_config` — hand-written (not
   autogenerate), additive, guarded/idempotent with in-migration assertions:
   `device_category.tier` (+ key-based backfill, ONU → 'ONU / ONT' rename),
@@ -444,7 +445,7 @@ the sixteen are. `downgrade()` reactivates all 22 (the pre-trim state).
 insert on a brand-new database already lands in the trimmed state instead of
 depending on this migration ever having run against it.
 
-### `iv1_insights_v2` (2026-09-18, head)
+### `iv1_insights_v2` (2026-09-18)
 
 On `dc1_category_trim`. Insights v2 persistence (uplink-workspace spec
 `docs/superpowers/specs/2026-09-18-insights-v2-design.md` §5.1). Hand-written
@@ -462,6 +463,28 @@ the two columns. The `LINE` label stays: a documented no-op, because PG cannot d
 enum labels (precedents `c1e`, `nc1a`, `pm1`, `tj1`). Verified on PG 16 with
 upgrade → guarded downgrade → downgrade → re-upgrade on a scratch database.
 Guardrails: `tests/test_insights_v2.py`.
+
+### `nc1d_acs_tenant_credentials` (2026-09-23, head)
+
+On `iv1_insights_v2`. Tenant-scoped TR-069 inform credentials (plan 23
+F1.0/F1.1, uplink-workspace `docs/isp-platform/23-network-config-implementation-plan.md`).
+Adds `network_access.acs_username` (String, nullable, globally unique via
+`uq_network_access_acs_username`) and `network_access.acs_password_hash`
+(String, nullable, bcrypt), plus `ck_network_access_acs_credentials_kind`
+(`kind = 'acs' OR (acs_username IS NULL AND acs_password_hash IS NULL)`).
+Same shape as `nat3_pylon_socks5` (plain `add_column` plus
+`create_*_constraint`). Purely additive: every existing row stays NULL/NULL,
+so no scrub is needed before the CHECK (contrast nat2/nat3). The revision id
+stays under 32 characters because `alembic_version.version_num` is
+`VARCHAR(32)`: a longer id applies every DDL statement and then fails on the
+final version stamp. Unrelated to `nc1c_cwmp_inform_credentials` (per-device
+credentials on branch `feature/capa3-fault-isolation`, not in `develop`): the
+name only follows the phase-1 numbering.
+
+`downgrade()` drops both constraints and both columns (issued credentials are
+lost, and a downgraded backend has no code path reading them). Verified on PG 16
+with upgrade → downgrade → re-upgrade on a scratch table, including the CHECK
+and unique behaviour. Guardrails: `tests/test_network_access_acs_credentials.py`.
 
 ## Key rules
 
