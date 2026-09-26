@@ -7,7 +7,10 @@ import pytest
 from database_utils.models.isp import (
     DeviceCategory, DeviceType, InventoryItem, NetworkAccess,
 )
-from database_utils.utils.transport import resolve_endpoint
+from database_utils.utils.transport import (
+    default_outbound_access,
+    resolve_endpoint,
+)
 
 
 def _company_id(db):
@@ -152,3 +155,87 @@ def test_only_the_default_outbound_row_is_consulted(db):
     endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
     assert error is None
     assert endpoint.host == "10.1.5.37"
+
+
+# --- vpn (canon C17, revision vpn1_vpn_socks5) -----------------------------
+
+def test_vpn_dials_mgmt_host_directly_through_the_hub_proxy(db):
+    """The one property that distinguishes vpn from NAT_MODES: the hub has a
+    real kernel route into the tenant LAN, so the target stays the DEVICE's own
+    address and vpn_socks5 is only the proxy hop. gateway_host/nat_port are not
+    involved and are not required."""
+    cid = _company_id(db)
+    _access(db, cid, "vpn", vpn_socks5="hub.example:1080")
+    item = _item(db, cid, mgmt_host="192.168.88.1", mgmt_port=2222, nat_port=None)
+    endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
+    assert error is None
+    assert (endpoint.host, endpoint.port, endpoint.proxy, endpoint.mode) == (
+        "192.168.88.1", 2222, "hub.example:1080", "vpn",
+    )
+    # spec N1: the item is never rewritten.
+    assert (item.mgmt_host, item.mgmt_port) == ("192.168.88.1", 2222)
+
+
+def test_vpn_falls_back_to_the_driver_default_port(db):
+    cid = _company_id(db)
+    _access(db, cid, "vpn", vpn_socks5="hub.example:1080")
+    item = _item(db, cid, mgmt_host="192.168.88.1", mgmt_port=None)
+    endpoint, error = resolve_endpoint(db, item, cid, default_port=23)
+    assert error is None
+    assert (endpoint.port, endpoint.proxy) == (23, "hub.example:1080")
+
+
+def test_vpn_without_a_provisioned_hub_fails_closed(db):
+    """VPN_NOT_PROVISIONED stays reachable with ck_network_access_vpn_socks5 in
+    place: the CHECK only demands NOT NULL, and an empty string commits."""
+    cid = _company_id(db)
+    _access(db, cid, "vpn", vpn_socks5="")
+    item = _item(db, cid, mgmt_host="192.168.88.1")
+    endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
+    assert endpoint is None
+    assert error == "VPN_NOT_PROVISIONED"
+
+
+def test_vpn_never_falls_through_to_a_direct_dial(db):
+    """canon R23: a non-direct tenant with an unresolvable target is a step
+    failure. A silent direct dial would send the worker at a private address
+    from wherever it happens to be running."""
+    cid = _company_id(db)
+    _access(db, cid, "vpn", vpn_socks5="hub.example:1080")
+    item = _item(db, cid, mgmt_host="  ")
+    endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
+    assert endpoint is None
+    assert error == "MGMT_HOST_NOT_SET"
+
+
+# --- the additive kind rename (revision na1_kind_outbound) -----------------
+
+def test_the_resolver_still_reads_a_legacy_olt_row(db):
+    """na1 widened the CHECK instead of swapping it, so 'olt' remains a legal
+    stored value. A service running against a database migrated ahead of it —
+    or before the migrate job's UPDATE lands — must still find the row, or
+    every provisioning job silently resolves to mode='direct'."""
+    cid = _company_id(db)
+    _access(db, cid, "nat_public", gateway_host="200.9.9.9", kind="olt")
+    item = _item(db, cid, nat_port=2201)
+    assert default_outbound_access(db, cid) is not None
+    endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
+    assert error is None
+    assert endpoint.host == "200.9.9.9"
+
+
+def test_an_acs_row_is_never_the_outbound_default(db):
+    """uq_network_access_default is per (company_id, kind), so a tenant holds
+    one default ACS row AND one default outbound row. Picking the ACS one would
+    resolve every dial against the wrong transport."""
+    cid = _company_id(db)
+    _access(db, cid, "nat_public", gateway_host="1.2.3.4", kind="acs", name="acs-row")
+    assert default_outbound_access(db, cid) is None
+
+
+def test_a_non_default_row_is_invisible_to_the_resolver(db):
+    """is_default is the whole selector. A tenant's first row created without it
+    is a row nothing reads — the most likely way the create form goes wrong."""
+    cid = _company_id(db)
+    _access(db, cid, "direct", is_default=False, name="secondary")
+    assert default_outbound_access(db, cid) is None
