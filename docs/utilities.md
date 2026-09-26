@@ -35,7 +35,7 @@ library, never the reverse).
 | `order_typing.py` | Order type/classification helpers |
 | `json_utils.py` | JSON serialization helpers |
 | `email_templates.py` | Jinja2 rendering of the email templates (see [email-service.md](email-service.md)) |
-| `error_handling.py` | Error-handling helpers |
+| `error_handling.py` | `handle_exceptions` — wraps an async handler, re-raises `HTTPException`, converts anything else to a 500. Logs argument **types and keyword names only, never values**: every decorated handler receives its request body and the Capa 3 bodies carry plaintext secrets |
 | `exception_handlers.py` | Standardized FastAPI exception handlers |
 | `logging_utils.py` | Loguru structured JSON logging setup |
 | `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services |

@@ -25,8 +25,15 @@ def _normalize_serial(v: str) -> str:
 
 
 def _normalize_oui(v: Optional[str]) -> Optional[str]:
-    if v is None or v == "":
-        return v
+    # Blank -> None, never ''. Returning '' split the "no OUI" key space in two:
+    # `uq_acs_registration_serial_no_oui` (ac1) is partial on `oui IS NULL`, and
+    # `uq_acs_registration_identity` treats NULLs as distinct, so (NULL,'SN1')
+    # and ('','SN1') both committed and two tenants could claim one serial —
+    # defeating the exact index ac1 added to stop that. backend-erp's
+    # routers/acs.py carried a local `or None` wrapper plus an `oui == ""`
+    # tolerance filter for this and named models-utils as the real fix site.
+    if v is None or v.strip() == "":
+        return None
     o = v.strip().upper()
     if not re.match(_OUI_PATTERN, o):
         raise ValueError(f"oui must match {_OUI_PATTERN} (6 hex chars) or be empty")
