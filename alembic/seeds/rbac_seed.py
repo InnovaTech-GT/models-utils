@@ -119,6 +119,7 @@ MANAGER_EXCLUDED_PERMISSIONS = (
     "orders.revert_payment",
     "payments.refund",
     "client_services.adopt",  # ba1: brownfield adoption is ADMIN-only
+    "device_credentials.reveal",  # ac1: reading a plaintext secret is ADMIN/NOC
 )
 _MANAGER_EXCLUDED_SQL = ", ".join(f"'{n}'" for n in MANAGER_EXCLUDED_PERMISSIONS)
 

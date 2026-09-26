@@ -90,6 +90,13 @@ def test_admin_only_exclusions_agree():
     # legacy ADMIN-only keys must never fall out of the exclusion list
     assert "orders.revert_payment" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
     assert "payments.refund" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
+    # ac1 (Capa 3): revealing a stored plaintext secret is withheld from the
+    # MANAGER auto-inherit. _seed_permissions cross-joins every ISP_PERMISSIONS
+    # name onto global ADMIN *and* MANAGER minus ADMIN_ONLY_PERMISSIONS, so
+    # dropping the name from EITHER tuple silently hands every tenant manager
+    # the tenant's ACS password.
+    assert "device_credentials.reveal" in isp_seed.ADMIN_ONLY_PERMISSIONS
+    assert "device_credentials.reveal" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
 
 
 def test_adopt_not_granted_to_isp_base_roles():

@@ -54,6 +54,9 @@ class NetworkAccessBase(BaseModel):
     # ('tunnel' is the reserved canon C10 edge-agent mode and carries no
     # column requirement of its own).
     vpn_socks5: Optional[str] = None
+    # ac1 (Capa 3, decision 8): per-tenant CWMP Inform authentication gate.
+    # Meaningful only on the kind='acs' row; default OFF, and OFF means ALLOW.
+    acs_auth_required: bool = False
 
     @field_validator("kind")
     @classmethod
@@ -85,6 +88,10 @@ class NetworkAccessBase(BaseModel):
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
         if self.mode == "vpn" and not (self.vpn_socks5 or "").strip():
             raise ValueError("vpn_socks5 is required when mode is 'vpn'")
+        # Mirrors ck_network_access_acs_auth_required so the API answers 422
+        # instead of letting the DB CHECK surface as a 500.
+        if self.acs_auth_required and self.kind != "acs":
+            raise ValueError("acs_auth_required is only valid when kind is 'acs'")
         return self
 
 
@@ -108,6 +115,10 @@ class NetworkAccessUpdate(BaseModel):
     gateway_host: Optional[str] = None
     pylon_socks5: Optional[str] = None
     vpn_socks5: Optional[str] = None
+    # Flipping the Capa 3 gate. Whether the target row is kind='acs' is not
+    # visible here (same merged-row blind spot as the mode checks above), so
+    # that half is the DB CHECK's and the router's.
+    acs_auth_required: Optional[bool] = None
 
     @field_validator("kind")
     @classmethod

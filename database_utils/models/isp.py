@@ -309,6 +309,13 @@ _NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
 # requirement, which is why the mode CHECK needed no change for either name.
 _NETWORK_ACCESS_VPN_CHECK = "mode != 'vpn' OR vpn_socks5 IS NOT NULL"
 
+# ac1 (Capa 3): the per-tenant CWMP Inform authentication gate is only
+# meaningful on an `acs` row — /internal/inform-auth joins the tenant's default
+# kind='acs' row and no other. Expressing decision 8's "default OFF" as a DB
+# constraint (NOT NULL server_default false) plus this CHECK means no code path
+# can arm the gate on the wrong row, including a raw UPDATE.
+_NETWORK_ACCESS_ACS_AUTH_CHECK = "kind = 'acs' OR acs_auth_required = false"
+
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
 # Same c3a/c3b/nc1a precedent: every new value set is a CHECK-constrained
@@ -1322,6 +1329,15 @@ class NetworkAccess(Base):
     mgmt_subnets = Column(JSON, nullable=True)
     # Phase-4 per-tenant ACS escape hatch — nullable from day one, unused until P4.
     acs_base_url = Column(String, nullable=True)
+    # ac1 (Capa 3, decision 8): does this tenant's CPEs have to prove a shared
+    # secret at CWMP Inform? OFF by default, and off means ALLOW — a tenant
+    # that never enrols behaves exactly as before, and so does a serial with no
+    # acs_device_registration row. Both are required or auto-discovery and
+    # quarantine break. Meaningful only on the kind='acs' row
+    # (ck_network_access_acs_auth_required).
+    acs_auth_required = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # spec N1/§8: the tenant gateway's address on the path WE dial — a
     # ZeroTier address under nat_zt, a public IP or DDNS hostname under
     # nat_public. Deliberately String, not INET: a nat_zt value is RFC1918 and
@@ -1370,6 +1386,10 @@ class NetworkAccess(Base):
         ),
         CheckConstraint(
             _NETWORK_ACCESS_VPN_CHECK, name="ck_network_access_vpn_socks5"
+        ),
+        CheckConstraint(
+            _NETWORK_ACCESS_ACS_AUTH_CHECK,
+            name="ck_network_access_acs_auth_required",
         ),
         # Exactly one default path per tenant PER KIND (one default ACS, one
         # default outbound). na1_kind_outbound rewrites the kind VALUE in
@@ -1496,6 +1516,22 @@ class AcsDeviceRegistration(Base):
 
     __table_args__ = (
         UniqueConstraint("oui", "serial_number", name="uq_acs_registration_identity"),
+        # The UNIQUE above does NOT constrain rows whose oui is NULL (Postgres
+        # treats NULLs as distinct), and `oui` IS nullable — _normalize_oui
+        # (schemas/acs_registration.py) returns None unchanged for an omitted
+        # OUI, so NULL-oui rows are ordinary API output. Without this index two
+        # tenants can both pre-register the same serial: the router's 409 check
+        # is check-then-insert with no DB backstop, and once Capa 3 ships the
+        # inform-auth lookup's .first() would hand one tenant's CWMP password
+        # to the other's CPE. sqlite_where mirrors postgresql_where, the
+        # uq_network_access_default precedent.
+        Index(
+            "uq_acs_registration_serial_no_oui",
+            "serial_number",
+            unique=True,
+            postgresql_where=text("oui IS NULL"),
+            sqlite_where=text("oui IS NULL"),
+        ),
     )
 
     @property
