@@ -289,10 +289,12 @@ _NETWORK_ACCESS_NAT_GATEWAY_CHECK = (
 _NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
 
 
-# tun1: mirrors _NETWORK_ACCESS_PYLON_CHECK's shape, narrowed to 'tunnel'.
+# vpn1: mirrors _NETWORK_ACCESS_PYLON_CHECK's shape, narrowed to 'vpn'.
 # Unlike nat_zt, this mode never touches gateway_host — it dials
 # item.mgmt_host directly through the hub's SOCKS5 proxy (see transport.py).
-_NETWORK_ACCESS_TUNNEL_CHECK = "mode != 'tunnel' OR tunnel_socks5 IS NOT NULL"
+# 'tunnel' stays reserved for canon C10's edge agent and imposes no column
+# requirement, which is why the mode CHECK needed no change for either name.
+_NETWORK_ACCESS_VPN_CHECK = "mode != 'vpn' OR vpn_socks5 IS NOT NULL"
 
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
@@ -1322,12 +1324,19 @@ class NetworkAccess(Base):
     pylon_socks5 = Column(String, nullable=True)
 
 
-    # spec 2026-09-16 (tunnel mode): the tenant's own WireGuard-hub SOCKS5
-    # listener, "host:port". Unlike pylon_socks5/gateway_host under NAT_MODES,
-    # this mode dials item.mgmt_host DIRECTLY — the hub has a real kernel
-    # route into the tenant's private network via WireGuard, not a single
-    # port-mapped gateway. NULL on every non-tunnel row.
-    tunnel_socks5 = Column(String, nullable=True)
+    # spec 2026-09-16 (canon C17 `vpn`, revision vpn1_vpn_socks5): the tenant's
+    # own WireGuard-hub SOCKS5 listener, "host:port". Unlike
+    # pylon_socks5/gateway_host under NAT_MODES, this mode dials item.mgmt_host
+    # DIRECTLY — the hub has a real kernel route into the tenant's private
+    # network via WireGuard, not a single port-mapped gateway. NULL on every
+    # non-vpn row.
+    #
+    # Unlike pylon_socks5 (a Railway-INTERNAL address, see above) this is an
+    # EXTERNAL public host:port on a VPS, and microsocks ships with no auth —
+    # the hub's listener MUST be firewalled to Railway's egress or anyone who
+    # learns the address gets a route into the tenant LAN. Prerequisite, not
+    # code: see docs/network-models.md.
+    vpn_socks5 = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1346,7 +1355,7 @@ class NetworkAccess(Base):
             _NETWORK_ACCESS_PYLON_CHECK, name="ck_network_access_pylon_socks5"
         ),
         CheckConstraint(
-            _NETWORK_ACCESS_TUNNEL_CHECK, name="ck_network_access_tunnel_socks5"
+            _NETWORK_ACCESS_VPN_CHECK, name="ck_network_access_vpn_socks5"
         ),
         # Exactly one default path per tenant PER KIND (one default ACS, one
         # default OLT).

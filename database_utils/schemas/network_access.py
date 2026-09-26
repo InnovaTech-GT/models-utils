@@ -43,9 +43,11 @@ class NetworkAccessBase(BaseModel):
     # "host:port". Required only for nat_zt — nat_public has no proxy hop.
     pylon_socks5: Optional[str] = None
 
-    # tunnel mode: the tenant's own WireGuard-hub SOCKS5 listener,
-    # "host:port". Required only for tunnel — direct/vpn/nat_* don't use it.
-    tunnel_socks5: Optional[str] = None
+    # canon C17 `vpn`: the tenant's own WireGuard-hub SOCKS5 listener,
+    # "host:port". Required only for vpn — direct/tunnel/nat_* don't use it
+    # ('tunnel' is the reserved canon C10 edge-agent mode and carries no
+    # column requirement of its own).
+    vpn_socks5: Optional[str] = None
 
     @field_validator("kind")
     @classmethod
@@ -72,8 +74,8 @@ class NetworkAccessBase(BaseModel):
             raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode == "nat_zt" and not (self.pylon_socks5 or "").strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
-        if self.mode == "tunnel" and not (self.tunnel_socks5 or "").strip():
-            raise ValueError("tunnel_socks5 is required when mode is 'tunnel'")
+        if self.mode == "vpn" and not (self.vpn_socks5 or "").strip():
+            raise ValueError("vpn_socks5 is required when mode is 'vpn'")
         return self
 
 
@@ -90,7 +92,7 @@ class NetworkAccessUpdate(BaseModel):
     acs_base_url: Optional[str] = None
     gateway_host: Optional[str] = None
     pylon_socks5: Optional[str] = None
-    tunnel_socks5: Optional[str] = None
+    vpn_socks5: Optional[str] = None
 
     @field_validator("kind")
     @classmethod
@@ -124,14 +126,24 @@ class NetworkAccessUpdate(BaseModel):
         # `mode` (being set to a NAT mode) and a blank `gateway_host` are
         # submitted together in the same request — the exact "direct ->
         # nat_public with no gateway_host" tenant flow the review flagged.
-        # The DB CHECK is what closes every other path.
+        # The DB CHECK is what closes every other path, EXCEPT two that only
+        # backend-erp's router can (it is the only layer that sees the merged
+        # row) and which it closes as GATEWAY_HOST_REQUIRED /
+        # PYLON_SOCKS5_REQUIRED / VPN_SOCKS5_REQUIRED:
+        #   * PATCH {"mode": "vpn"} alone — legal when the row already holds a
+        #     vpn_socks5, an IntegrityError when it does not. Requiring the
+        #     column here would forbid the legal case, so this validator must
+        #     NOT be tightened.
+        #   * PATCH {"vpn_socks5": ""} on an existing vpn row — '' is NOT
+        #     NULL, so the CHECK passes, the row commits, and NetworkAccessOut
+        #     then refuses to serialize it, poisoning every later GET.
         if self.mode is not None and self.mode in NAT_MODES:
             if self.gateway_host is not None and not self.gateway_host.strip():
                 raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode is not None and self.mode == "nat_zt" and self.pylon_socks5 is not None and not self.pylon_socks5.strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
-        if self.mode is not None and self.mode == "tunnel" and self.tunnel_socks5 is not None and not self.tunnel_socks5.strip():
-            raise ValueError("tunnel_socks5 is required when mode is 'tunnel'")
+        if self.mode is not None and self.mode == "vpn" and self.vpn_socks5 is not None and not self.vpn_socks5.strip():
+            raise ValueError("vpn_socks5 is required when mode is 'vpn'")
         return self
 
 

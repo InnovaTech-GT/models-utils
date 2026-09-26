@@ -18,11 +18,12 @@ def _company_id(db):
     return uuid.uuid4()
 
 
-def _access(db, company_id, mode, gateway_host=None, is_default=True, name=None, pylon_socks5=None):
+def _access(db, company_id, mode, gateway_host=None, is_default=True, name=None,
+            pylon_socks5=None, vpn_socks5=None, kind="olt"):
     row = NetworkAccess(
-        id=uuid.uuid4(), name=name or f"na-{mode}", kind="olt",
+        id=uuid.uuid4(), name=name or f"na-{mode}", kind=kind,
         mode=mode, is_default=is_default, gateway_host=gateway_host,
-        pylon_socks5=pylon_socks5, company_id=company_id,
+        pylon_socks5=pylon_socks5, vpn_socks5=vpn_socks5, company_id=company_id,
     )
     db.add(row)
     db.commit()
@@ -132,8 +133,10 @@ def test_nat_without_a_nat_port_fails_closed(db):
 def test_vpn_mode_with_no_mgmt_host_fails_closed_and_never_falls_through(db):
     # canon R23, rewritten (spec §9 step 4): a non-direct tenant with an
     # unresolvable target is a step failure, never a direct dial.
+    # vpn_socks5 is supplied because ck_network_access_vpn_socks5 (vpn1) now
+    # requires it — the "no proxy" case is VPN_NOT_PROVISIONED, tested below.
     cid = _company_id(db)
-    _access(db, cid, "vpn")
+    _access(db, cid, "vpn", vpn_socks5="hub.example:1080")
     item = _item(db, cid, mgmt_host=None)
     endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
     assert endpoint is None

@@ -33,7 +33,7 @@ from database_utils.models.isp import NAT_MODES, NetworkAccess
 class ResolvedEndpoint:
     host: str
     port: int
-    proxy: Optional[str]   # SOCKS5 "host:port" for nat_zt, else None
+    proxy: Optional[str]   # SOCKS5 "host:port" for nat_zt and vpn, else None
     mode: str
 
 
@@ -98,17 +98,21 @@ def resolve_endpoint(
                 return None, "PYLON_NOT_PROVISIONED"
         return ResolvedEndpoint(gateway_host, int(item.nat_port), proxy, mode), None
 
-    if mode == "tunnel":
+    if mode == "vpn":
         # Unlike NAT_MODES, this dials item.mgmt_host DIRECTLY — the hub has
         # a real kernel route into the tenant's private network via
         # WireGuard (validated 2026-09-15/16 against a live MikroTik gateway
-        # + CPE), not a single port-mapped gateway. tunnel_socks5 is only
-        # the proxy hop, mirroring nat_zt's PYLON_NOT_PROVISIONED shape but
-        # with its own code (spec 2026-09-16) so the two failures stay
-        # diagnostically distinct, same reasoning as N12's split.
-        proxy = (access.tunnel_socks5 or "").strip() or None
+        # + CPE), not a single port-mapped gateway. vpn_socks5 is only the
+        # proxy hop, mirroring nat_zt's PYLON_NOT_PROVISIONED shape but with
+        # its own code (canon C17) so the two failures stay diagnostically
+        # distinct, same reasoning as N12's split.
+        #
+        # VPN_NOT_PROVISIONED stays reachable even with
+        # ck_network_access_vpn_socks5 in place: the CHECK only demands NOT
+        # NULL, so an empty string commits and lands here.
+        proxy = (access.vpn_socks5 or "").strip() or None
         if proxy is None:
-            return None, "TUNNEL_NOT_PROVISIONED"
+            return None, "VPN_NOT_PROVISIONED"
         host = (item.mgmt_host or "").strip()
         if not host:
             return None, "MGMT_HOST_NOT_SET"
