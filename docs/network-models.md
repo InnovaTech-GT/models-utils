@@ -25,8 +25,8 @@ pre-baked chain.
 | Model | Table | Key Fields | Purpose |
 |-------|-------|-----------|---------|
 | `DeviceCredential` | `device_credential` | name, kind (CHECK: CREDENTIAL_KINDS), username, `secret_ciphertext`/`dek_wrapped`/`kek_id`, fingerprint, binding FKs (inventory_item/device_type/network_access) | Envelope-encrypted per-tenant device secret (canon C1/C19). Secret never round-trips — Out schema exposes only `has_secret` + fingerprint |
-| `NetworkAccess` | `network_access` | name, kind (CHECK: acs\|olt), mode (CHECK: direct\|vpn\|tunnel\|nat_zt\|nat_public), is_default, mgmt_subnets (JSON CIDRs), acs_base_url, **`gateway_host`** (String, nullable — NAT transport, 2026-08-13), **`pylon_socks5`** (String, nullable — per-tenant Pylon SOCKS5 endpoint, 2026-08-17) | Per-tenant transport config (canon C9). `mgmt_subnets`-based longest-prefix match was never implemented; `transport.py::resolve_endpoint` reads only the default `kind='olt'` row — see below |
-| `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE |
+| `NetworkAccess` | `network_access` | name, kind (CHECK: acs\|olt\|outbound — `olt` is the pre-`na1` spelling), mode (CHECK: direct\|vpn\|tunnel\|nat_zt\|nat_public), is_default, mgmt_subnets (JSON CIDRs), acs_base_url, **`gateway_host`** (String, nullable — NAT transport, 2026-08-13), **`pylon_socks5`** (String, nullable — per-tenant Pylon SOCKS5 endpoint, 2026-08-17), **`vpn_socks5`** (String, nullable — per-tenant WireGuard-hub SOCKS5 listener, `vpn1`, 2026-09-25), **`acs_auth_required`** (Boolean NOT NULL default false — Capa 3 gate, `ac1`, 2026-09-25) | Per-tenant transport config (canon C9). `mgmt_subnets`-based longest-prefix match was never implemented; `transport.py::resolve_endpoint` reads only the default outbound row — see below |
+| `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE — plus the partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` (`ac1`), because the two-column UNIQUE does NOT cover NULL-oui rows |
 | `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval | Tenant provisioning enable gate — a per-tenant singleton (canon C6). Absence of a row = DISABLED (fail-safe) |
 | `DeviceActionLog` | `device_action_log` | actor_kind, actor_user_id, device_kind, device_identity, action, before_data/after_data (secret-redacted JSON), provisioning_job_id | Append-only device audit trail (canon C14). No `updated_at`; immutability enforced by a Postgres `BEFORE UPDATE OR DELETE` trigger (nc1b) |
 
@@ -349,6 +349,96 @@ A follow-up revision, `nat2_gateway_host_check`, adds `ck_network_access_nat_gat
 
 **`nat_zt` is dial-capable as of `nat3_pylon_socks5` (2026-08-17).** Doc 34 OV17 retracted the original shared-fleet-Pylon design: one Pylon `refract` process joins exactly one ZeroTier network, so a single Pylon cannot serve `nat_zt` for more than one tenant — it's one Pylon Railway service per tenant. `network_access.pylon_socks5` carries each tenant's own Pylon SOCKS5 endpoint (replacing the earlier `PYLON_SOCKS5` worker env var, spec N4 — retracted), and `database_utils/utils/transport.py::resolve_endpoint` reads it off the tenant's `NetworkAccess` row, failing closed with `PYLON_NOT_PROVISIONED` if it's blank/NULL. `nat_public` remains fully implemented and dial-capable — see [utilities.md](utilities.md) for `resolve_endpoint`'s full resolution logic.
 
+## `vpn` transport (`vpn1_vpn_socks5`, 2026-09-25)
+
+Canon C17's mode, finally implemented — as an external WireGuard-hub VPS rather
+than the in-container userspace wireproxy C17 specced. Authored by Mario Cano
+as `tunnel`/`tunnel_socks5` and renamed on merge, because `tunnel` is canon
+C10's edge-agent relay and must stay reserved (it remains in backend-erp's
+`_UNSHIPPED_MODES`, and it owns no column and no CHECK of its own).
+
+| Table | New column | Purpose |
+|---|---|---|
+| `network_access` | `vpn_socks5` (String, nullable, CHECK-required when `mode='vpn'`) | The tenant's own WireGuard-hub SOCKS5 listener, `"host:port"` |
+
+The mode's distinguishing property: unlike `NAT_MODES` it dials
+`item.mgmt_host` **directly**, because the hub has a real kernel route into the
+tenant's private network over WireGuard rather than a single port-mapped
+gateway. `vpn_socks5` is only the proxy hop; `gateway_host`/`nat_port` are not
+involved and are not required. Blank/NULL proxy fails closed with
+`VPN_NOT_PROVISIONED`, which stays reachable with the CHECK in place because the
+CHECK only demands NOT NULL and an empty string commits.
+
+**Prerequisite, not code — the hub's firewall.** `pylon_socks5` is a
+Railway-INTERNAL address (`pylon-acme.railway.internal:1080`). `vpn_socks5` is
+an **external, public** `host:port` on a VPS, and `microsocks` ships with no
+authentication. The listener MUST be restricted to Railway's egress, or anyone
+who learns the address has a route into the tenant's LAN. No WireGuard hub
+exists yet at the time this shipped: the code path is complete and unit-tested,
+but the live dial is deferred.
+
+## Capa 3 — per-tenant CWMP Inform authentication (`ac1_acs_tenant_auth`, 2026-09-25)
+
+A CPE identifies itself to GenieACS by serial number alone, which is printed on
+the device label, so tenant attribution rested on public information. Capa 3
+adds credential proof. Tenant attribution itself stays serial-derived (GenieACS
+is not patched); the password only authenticates it.
+
+| Table | New column / index | Purpose |
+|---|---|---|
+| `network_access` | `acs_auth_required` (Boolean NOT NULL, `server_default false`) + CHECK `ck_network_access_acs_auth_required` (`kind = 'acs' OR acs_auth_required = false`) | The per-tenant switch. Default-OFF as a DB constraint; OFF means **ALLOW**, and the gate is only meaningful on the tenant's default `kind='acs'` row |
+| `acs_device_registration` | partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` | Multi-tenancy. `uq_acs_registration_identity` is a plain two-column UNIQUE and Postgres treats NULLs as distinct, while `oui` is nullable and `_normalize_oui` returns `None` unchanged for an omitted OUI — so `(NULL, serial)` could repeat and the inform-auth lookup's `.first()` could hand one tenant's CWMP password to another tenant's CPE |
+| `permission` | row `device_credentials.reveal` + NOC grant | Reading back a stored plaintext secret. ADMIN via the convergent seed; MANAGER withheld (the name is in BOTH `isp_seed.ADMIN_ONLY_PERMISSIONS` and `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`) |
+
+The credential itself needs **no new columns**: it is an ordinary
+`DeviceCredential` row of `kind='HTTP_BASIC'` bound via `network_access_id` to
+the tenant's `kind='acs'` row (canon C19), with `username` NULL because the
+CWMP username is the per-device serial. The accept-both rotation window is a
+**second** such row — `informPassword` = newest, `informPendingPassword` =
+second-newest, rotation is create-new -> roll out -> delete-old, and
+`POST /{id}/rotate` (which overwrites in place) is simply not used for this
+credential. Hence no `pending_*` columns, and deliberately **no** partial unique
+index on `(company_id, network_access_id)`: it would forbid the second row.
+
+> `ponytail:` more than two `HTTP_BASIC` credentials bound to one `acs` row is
+> undefined — only two AUTH branches exist in the `cwmp.auth` expression, so the
+> two newest win. Add a constraint only if a tenant actually trips it.
+
+### Secret storage: which primitive, and why (the rule to follow)
+
+**Can the system ever need the original value back?**
+
+- **No -> bcrypt.** Human login passwords (`User.password`): Uplink does the
+  comparison itself, so a one-way hash is both sufficient and correct.
+- **Yes -> `encrypt_secret` envelope AES-256-GCM** (`database_utils/utils/crypto.py`).
+  Machine credentials: SSH, SNMP, WireGuard, TR-069 — including this CWMP Inform
+  password. Something outside Uplink performs the comparison, so Uplink must be
+  able to reproduce the plaintext.
+
+That is one rule with two branches, not an inconsistency, and it is why the
+`device_credentials.reveal` endpoint can exist at all — a deliberate,
+permission-gated, audited exception to the write-only-secrets canon in
+backend-erp's `routers/device_credentials.py`.
+
+**Why the bcrypt variant was dropped.** An earlier branch
+(`feat/network-config/acs-tenant-credentials`, revision `nc1d`) stored a bcrypt
+hash of the tenant password, to standardize on the same utilities used for
+`User.password`. It cannot work: the comparison does not happen in Uplink, it
+happens inside GenieACS via `AUTH(username, password)`, which needs the expected
+**plaintext** — Basic does `authentication["password"] === e[3]` and Digest feeds
+the plaintext into the digest computation. There is no hand-GenieACS-a-hash
+hook, and patching GenieACS is explicitly out of scope (attribution stays
+serial-derived). bcrypt is also mutually exclusive with the reveal endpoint by
+construction. `nc1d` was never merged. Luis Sactic's column shape informed the
+final design.
+
+**The gate fails OPEN, by design.** An EXT fault or timeout in the `cwmp.auth`
+expression yields null, and the expression's mandatory `ELSE true` makes that
+ALLOW. So a backend outage silently disables Capa 3 rather than bricking the
+fleet — the opposite tradeoff from failing closed, and the deliberate one: the
+alternative drops every CPE of every tenant during a blip. Deleting the
+`cwmp.auth` Mongo document is the emergency brake (live within 5s, no deploy).
+
 ## Open value sets (CHECK-constrained strings, not PG enums)
 
 Following the c3a/c3b precedent, driver-bounded value sets are CHECK-constrained
@@ -357,7 +447,9 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 
 - `CREDENTIAL_KINDS`: SSH, TELNET, SNMP_COMMUNITY, TR069_CONNECTION_REQUEST, HTTP_BASIC,
   HTTP_BEARER, WIREGUARD, AGENT
-- `NETWORK_ACCESS_KINDS`: acs, olt · `NETWORK_ACCESS_MODES`: direct, vpn, tunnel, nat_zt, nat_public
+- `NETWORK_ACCESS_KINDS`: acs, outbound (the WRITE set) · `_NETWORK_ACCESS_KINDS_READ`
+  adds the legacy `olt` spelling, which `ck_network_access_kind` still accepts
+  (`na1_kind_outbound` is additive) · `NETWORK_ACCESS_MODES`: direct, vpn, tunnel, nat_zt, nat_public
   (`NAT_MODES` = nat_zt, nat_public — 2026-08-13, `nat1_gateway_transport`, see the NAT transport
   section above)
 - **Cycle 7**: `DEVICE_CATEGORY_TIERS`: CORE, EDGE · `CLI_PROTOCOLS`: ssh, telnet ·

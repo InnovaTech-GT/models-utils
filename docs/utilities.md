@@ -21,7 +21,7 @@ library, never the reverse).
 | `network_graph.py` | The **only** place the company plant tree is walked (Cycle 10, doc 35 §3) — see below |
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
 | `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5) — see below |
-| `transport.py` | NAT transport resolver, `resolve_endpoint()` (2026-08-13, doc 34 canon R23 rewrite) — see below |
+| `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE`. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
 | `audit_utils.py` | `log_create_operation` / `log_update_operation` / `log_delete_operation` / `log_custom_operation` helpers writing `AuditLog` rows |
@@ -200,7 +200,7 @@ is still individually unique under `uq_provisioning_job_company_idem`), carry
 routers before `create_run`, exactly as they are today — and the workflow-engine
 path still does not call them (see [limitations.md](limitations.md)).
 
-### `transport.py` (NAT transport, 2026-08-13)
+### `transport.py` (transport resolution, 2026-08-13; `vpn` 2026-09-25)
 
 The one place that turns an `InventoryItem` plus its tenant's `NetworkAccess`
 row into the address a driver actually dials. Lives here (not in backend-erp)
@@ -209,13 +209,15 @@ instead of three drifting copies.
 
 | Name | Behaviour |
 |---|---|
-| `ResolvedEndpoint` | Frozen dataclass: `host`, `port`, `proxy` (SOCKS5 `host:port` for `nat_zt`, else `None`), `mode` |
-| `resolve_endpoint(db, item, company_id, default_port, access=None)` | Returns `(endpoint, None)` or `(None, error_code)`. Reads only the company's **default** `kind='olt'` `NetworkAccess` row (or the caller-supplied `access`) — no longest-prefix match, no per-device override; `network_access.mgmt_subnets` is deliberately not read |
+| `ResolvedEndpoint` | Frozen dataclass: `host`, `port`, `proxy` (SOCKS5 `host:port` for `nat_zt` and `vpn`, else `None`), `mode` |
+| `default_outbound_access(db, company_id)` | The tenant's default outbound `NetworkAccess` row — `kind IN ('outbound','olt')` and `is_default`. **Public on purpose:** backend-erp's `cli.py` driver and the provisioning worker each carried a byte-identical private copy of this query, each docstring claiming to be the canonical one; they import this instead. `'olt'` is the pre-`na1_kind_outbound` spelling, accepted for the length of the additive rename |
+| `resolve_endpoint(db, item, company_id, default_port, access=None)` | Returns `(endpoint, None)` or `(None, error_code)`. Reads only the company's **default** outbound `NetworkAccess` row via `default_outbound_access` (or the caller-supplied `access`) — no longest-prefix match, no per-device override; `network_access.mgmt_subnets` is deliberately not read |
 
 Resolution:
 - `mode in NAT_MODES` (`nat_zt`, `nat_public`): target is always `(access.gateway_host, item.nat_port)`, **never** `item.mgmt_host`. Missing `gateway_host` or `nat_port` → `NAT_MAPPING_NOT_SET`.
 - `mode == 'nat_zt'` additionally reads `access.pylon_socks5` — the tenant's own Pylon SOCKS5 endpoint (revision `nat3_pylon_socks5`, 2026-08-17). It is a column on the tenant's `NetworkAccess` row, not a function argument: the parameter was removed because a stray test-fixture value could leak a proxy across tenants. If the column is blank/NULL, resolution fails closed with `PYLON_NOT_PROVISIONED`. `nat_public` remains fully dial-capable, and `nat_zt` is now dial-capable too once the tenant's `pylon_socks5` is set — see doc 34 OV17: one Pylon process joins exactly one ZeroTier network, so there is no shared fleet proxy, only one Pylon Railway service per tenant.
-- Every mode NOT in `NAT_MODES` (`direct`, `vpn`, `tunnel` — and no default row at all) falls through to the SAME branch: `(item.mgmt_host, item.mgmt_port or default_port)`. This is not fail-closed for those modes — nothing distinguishes a `vpn` row that genuinely has a live tunnel to `item.mgmt_host` from one that doesn't. The only check on that branch is that `mgmt_host` itself is non-empty → `MGMT_HOST_NOT_SET`.
+- `mode == 'vpn'` (canon C17, revision `vpn1_vpn_socks5`, 2026-09-25) has its **own** branch and is the one non-NAT mode that is fail-closed. Unlike `NAT_MODES` it dials `item.mgmt_host` **directly** — the tenant's WireGuard hub holds a real kernel route into the tenant LAN, so there is no port-mapped gateway to substitute — and `access.vpn_socks5` is only the proxy hop. Blank/NULL proxy → `VPN_NOT_PROVISIONED`; blank `mgmt_host` → `MGMT_HOST_NOT_SET`. `VPN_NOT_PROVISIONED` stays reachable with `ck_network_access_vpn_socks5` in place, because the CHECK only demands NOT NULL and an empty string commits.
+- Every remaining mode (`direct`, `tunnel` — and no default row at all) falls through to the SAME branch: `(item.mgmt_host, item.mgmt_port or default_port)`. This is not fail-closed for those modes — nothing distinguishes a `vpn` row that genuinely has a live tunnel to `item.mgmt_host` from one that doesn't. The only check on that branch is that `mgmt_host` itself is non-empty → `MGMT_HOST_NOT_SET`.
 - `access` supplied by the caller (skipping the internal query) is rejected with `TRANSPORT_UNAVAILABLE` if `access.company_id != company_id` — a cross-tenant guard, since nothing else here re-validates a caller-supplied row.
 
 Error-code vocabulary `resolve_endpoint` can return (spec N12):
@@ -224,6 +226,7 @@ Error-code vocabulary `resolve_endpoint` can return (spec N12):
 |---|---|
 | `NAT_MAPPING_NOT_SET` | `mode in NAT_MODES` and `gateway_host` or `item.nat_port` is missing |
 | `PYLON_NOT_PROVISIONED` | `mode == 'nat_zt'` and `access.pylon_socks5` is blank/NULL |
+| `VPN_NOT_PROVISIONED` | `mode == 'vpn'` and `access.vpn_socks5` is blank/NULL |
 | `TRANSPORT_UNAVAILABLE` | a caller-supplied `access` row belongs to a different `company_id` |
 | `MGMT_HOST_NOT_SET` | a non-NAT mode (or no default row) with an empty `item.mgmt_host` |
 
@@ -233,15 +236,17 @@ the path to it — doc 34 §1.3), and NAT modes **fail closed** — doc 34 canon
 R23 was rewritten specifically because its original predicate ("does this
 company hold a non-`direct` row") is satisfied vacuously by a NAT tenant
 stored as `mode='direct'`. The precise scope of "fails closed", accurately:
-only `nat_zt`/`nat_public` are actually fail-closed on a missing config
-(`gateway_host`, `nat_port`, or the `nat_zt` proxy) — none of those inputs
-ever exist on the item, so there is nothing to fall back to. `vpn`/`tunnel`/
-`direct` are NOT separately validated; they all fall through to the same
-`item.mgmt_host` branch as `direct` always has, and that branch only errors
-if `mgmt_host` itself is empty (`MGMT_HOST_NOT_SET`) — a `vpn`-mode row with
-a populated `mgmt_host` resolves successfully even though nothing here
-confirms a VPN actually routes to it. Callers must surface any returned
-error code as a step failure. See `tests/test_transport_resolver.py`.
+`nat_zt`/`nat_public` are fail-closed on a missing config (`gateway_host`,
+`nat_port`, or the `nat_zt` proxy) and `vpn` is fail-closed on a missing
+`vpn_socks5` — none of those inputs ever exist on the item, so there is
+nothing to fall back to. `tunnel`/`direct` are NOT separately validated; they
+fall through to the same `item.mgmt_host` branch as `direct` always has, and
+that branch only errors if `mgmt_host` itself is empty
+(`MGMT_HOST_NOT_SET`). What the resolver still cannot know for `vpn` is
+whether the hub's route actually reaches `mgmt_host` — a populated proxy and
+a populated `mgmt_host` resolve successfully either way; only the driver's
+connect attempt settles it. Callers must surface any returned error code as a
+step failure. See `tests/test_transport_resolver.py`.
 
 ## Related packages
 

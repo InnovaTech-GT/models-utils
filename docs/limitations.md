@@ -20,6 +20,35 @@
   a separate, later destructive-change release (all consuming code already
   removed from every service — this is purely the drop-after-prod rule).
 
+## Transport and Capa 3 (2026-09-25) — shipped limitations
+
+- **`ck_network_access_kind` still accepts the legacy `olt` value.**
+  `na1_kind_outbound` was deliberately additive (widen the CHECK, rewrite the
+  rows) because `NetworkAccessOut` validates `kind` on READ, so narrowing before
+  every service is redeployed would 500 every `network_access` read. Narrowing
+  to `('acs','outbound')` is a trailing no-data revision NEXT cycle, together
+  with dropping `'olt'` from `_NETWORK_ACCESS_KINDS_READ` and from
+  `default_outbound_access`'s filter. Until then an extra legal-but-unused value
+  is the cost. `ponytail:` skip it entirely if nobody minds.
+- **No WireGuard hub exists yet.** The `vpn` code path is complete and unit
+  tested, but nothing has ever dialled through a real hub. `vpn_socks5` also
+  differs from `pylon_socks5` in a way that is a security prerequisite, not a
+  code change: it is an **external, public** address and `microsocks` has no
+  auth by default, so the hub's listener must be firewalled to Railway's egress.
+  See [network-models.md](network-models.md).
+- **Nothing expires a credential rotation window.** The accept-both window is
+  two `DeviceCredential` rows and closing it is a manual delete of the older
+  row. There is no reaper, and more than two `HTTP_BASIC` rows bound to one
+  `acs` row is undefined (only two AUTH branches exist; the two newest win).
+- **The Capa 3 gate fails OPEN.** An EXT fault or timeout, or an absent
+  `cwmp.auth` document, is ALLOW. Deliberate — the alternative drops every CPE
+  of every tenant during a backend blip — but it means a backend outage silently
+  disables the gate rather than announcing itself.
+- **`oui = ''` rows are left alone.** `ac1`'s new partial UNIQUE covers
+  `oui IS NULL` only. An earlier draft converted `''` to NULL; that was dropped
+  because the conversion is what would have *created* the duplicate risk it was
+  meant to close, and `''` is already covered by `uq_acs_registration_identity`.
+
 ## The network graph (Cycle 10, doc 35 §10) — shipped limitations
 
 These are known and accepted, not oversights. They are the price of the model
