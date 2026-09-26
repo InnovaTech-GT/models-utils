@@ -19,7 +19,7 @@ def _company_id(db):
 
 
 def _access(db, company_id, mode, gateway_host=None, is_default=True, name=None,
-            pylon_socks5=None, vpn_socks5=None, kind="olt"):
+            pylon_socks5=None, vpn_socks5=None, kind="outbound"):
     row = NetworkAccess(
         id=uuid.uuid4(), name=name or f"na-{mode}", kind=kind,
         mode=mode, is_default=is_default, gateway_host=gateway_host,
@@ -143,7 +143,7 @@ def test_vpn_mode_with_no_mgmt_host_fails_closed_and_never_falls_through(db):
     assert error == "MGMT_HOST_NOT_SET"
 
 
-def test_only_the_default_olt_row_is_consulted(db):
+def test_only_the_default_outbound_row_is_consulted(db):
     cid = _company_id(db)
     _access(db, cid, "direct", is_default=True, name="the-default")
     _access(db, cid, "nat_public", gateway_host="200.9.9.9",

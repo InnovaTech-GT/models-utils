@@ -1,7 +1,8 @@
 # schemas/network_access.py
 """
 Network access (Cycle 5 Phase 1, canon C9): per-tenant transport configuration,
-multiple rows per tenant keyed by `kind` (acs|olt). Plan:
+multiple rows per tenant keyed by `kind` (acs|outbound; 'olt' is the
+pre-na1_kind_outbound spelling, still readable). Plan:
 docs/isp-platform/23-network-config-implementation-plan.md §2.2.
 
 CIDR validation (valid networks) lives here in the schema, not the DB — same
@@ -14,7 +15,12 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 
-from database_utils.models.isp import NETWORK_ACCESS_KINDS, NETWORK_ACCESS_MODES, NAT_MODES
+from database_utils.models.isp import (
+    NETWORK_ACCESS_KINDS,
+    _NETWORK_ACCESS_KINDS_READ,
+    NETWORK_ACCESS_MODES,
+    NAT_MODES,
+)
 
 
 def _validate_subnets(v: Optional[List[str]]) -> Optional[List[str]]:
@@ -52,8 +58,11 @@ class NetworkAccessBase(BaseModel):
     @field_validator("kind")
     @classmethod
     def validate_kind(cls, v: str) -> str:
-        if v not in NETWORK_ACCESS_KINDS:
-            raise ValueError(f"kind must be one of {sorted(NETWORK_ACCESS_KINDS)}")
+        # The READ set, because NetworkAccessOut inherits this validator and a
+        # legacy 'olt' row must still serialize (na1_kind_outbound is additive).
+        # NetworkAccessCreate overrides this with the strict WRITE set.
+        if v not in _NETWORK_ACCESS_KINDS_READ:
+            raise ValueError(f"kind must be one of {sorted(_NETWORK_ACCESS_KINDS_READ)}")
         return v
 
     @field_validator("mode")
@@ -80,7 +89,13 @@ class NetworkAccessBase(BaseModel):
 
 
 class NetworkAccessCreate(NetworkAccessBase):
-    pass
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, v: str) -> str:
+        """Strict: nothing new may be written as the legacy 'olt' spelling."""
+        if v not in NETWORK_ACCESS_KINDS:
+            raise ValueError(f"kind must be one of {sorted(NETWORK_ACCESS_KINDS)}")
+        return v
 
 
 class NetworkAccessUpdate(BaseModel):

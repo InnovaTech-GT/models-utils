@@ -37,15 +37,26 @@ class ResolvedEndpoint:
     mode: str
 
 
-def _default_olt_access(db, company_id) -> Optional[NetworkAccess]:
-    """The tenant's default 'olt'-kind transport row. This is the same row the
+def default_outbound_access(db, company_id) -> Optional[NetworkAccess]:
+    """The tenant's default outbound transport row. This is the same row the
     canon C19 credential resolver already needs, so callers should pass it on
-    rather than querying twice."""
+    rather than querying twice.
+
+    PUBLIC on purpose: backend-erp's cli driver and provisioning worker each
+    carried their own byte-identical copy of this query, each docstring
+    claiming to be the canonical one. Three copies is how the kind string
+    drifts; they import this instead.
+
+    'olt' is accepted alongside 'outbound' for the length of the additive
+    rename (revision na1_kind_outbound widened the CHECK and rewrote the rows,
+    but a service can be reading a database migrated ahead of it). Drop it in
+    the cycle that narrows _NETWORK_ACCESS_KIND_CHECK.
+    """
     return (
         db.query(NetworkAccess)
         .filter(
             NetworkAccess.company_id == company_id,
-            NetworkAccess.kind == "olt",
+            NetworkAccess.kind.in_(("outbound", "olt")),
             NetworkAccess.is_default.is_(True),
         )
         .first()
@@ -69,7 +80,7 @@ def resolve_endpoint(
     when omitted it is queried here.
     """
     if access is None:
-        access = _default_olt_access(db, company_id)
+        access = default_outbound_access(db, company_id)
     elif access.company_id != company_id:
         # Whole-branch review I4: a caller-supplied `access` row is trusted
         # verbatim — nothing here confirmed it belongs to `company_id`. In a

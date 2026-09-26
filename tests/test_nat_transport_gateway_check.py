@@ -20,7 +20,7 @@ def test_db_check_rejects_a_nat_row_with_no_gateway_host(db):
     # UPDATE through NetworkAccessUpdate (or any future non-Pydantic caller)
     # would take before this migration.
     row = NetworkAccess(
-        id=uuid.uuid4(), name="bad", kind="olt", mode="nat_public",
+        id=uuid.uuid4(), name="bad", kind="outbound", mode="nat_public",
         gateway_host=None, company_id=uuid.uuid4(),
     )
     db.add(row)
@@ -30,7 +30,7 @@ def test_db_check_rejects_a_nat_row_with_no_gateway_host(db):
 
 def test_db_check_allows_a_nat_row_with_a_gateway_host(db):
     row = NetworkAccess(
-        id=uuid.uuid4(), name="ok", kind="olt", mode="nat_public",
+        id=uuid.uuid4(), name="ok", kind="outbound", mode="nat_public",
         gateway_host="200.9.9.9", company_id=uuid.uuid4(),
     )
     db.add(row)
@@ -78,7 +78,7 @@ def test_resolve_endpoint_refuses_an_access_row_from_another_company(db):
     victim_company = uuid.uuid4()
     attacker_company = uuid.uuid4()
     victim_access = NetworkAccess(
-        id=uuid.uuid4(), name="victim-gw", kind="olt", mode="nat_public",
+        id=uuid.uuid4(), name="victim-gw", kind="outbound", mode="nat_public",
         is_default=True, gateway_host="200.9.9.9", company_id=victim_company,
     )
     db.add(victim_access)
