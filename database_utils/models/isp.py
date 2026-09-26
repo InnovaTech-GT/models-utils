@@ -289,6 +289,11 @@ _NETWORK_ACCESS_NAT_GATEWAY_CHECK = (
 _NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
 
 
+# tun1: mirrors _NETWORK_ACCESS_PYLON_CHECK's shape, narrowed to 'tunnel'.
+# Unlike nat_zt, this mode never touches gateway_host — it dials
+# item.mgmt_host directly through the hub's SOCKS5 proxy (see transport.py).
+_NETWORK_ACCESS_TUNNEL_CHECK = "mode != 'tunnel' OR tunnel_socks5 IS NOT NULL"
+
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
 # Same c3a/c3b/nc1a precedent: every new value set is a CHECK-constrained
@@ -1316,6 +1321,14 @@ class NetworkAccess(Base):
     # nat_public (which dials the gateway over plain egress, no proxy hop).
     pylon_socks5 = Column(String, nullable=True)
 
+
+    # spec 2026-09-16 (tunnel mode): the tenant's own WireGuard-hub SOCKS5
+    # listener, "host:port". Unlike pylon_socks5/gateway_host under NAT_MODES,
+    # this mode dials item.mgmt_host DIRECTLY — the hub has a real kernel
+    # route into the tenant's private network via WireGuard, not a single
+    # port-mapped gateway. NULL on every non-tunnel row.
+    tunnel_socks5 = Column(String, nullable=True)
+
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -1331,6 +1344,9 @@ class NetworkAccess(Base):
         ),
         CheckConstraint(
             _NETWORK_ACCESS_PYLON_CHECK, name="ck_network_access_pylon_socks5"
+        ),
+        CheckConstraint(
+            _NETWORK_ACCESS_TUNNEL_CHECK, name="ck_network_access_tunnel_socks5"
         ),
         # Exactly one default path per tenant PER KIND (one default ACS, one
         # default OLT).

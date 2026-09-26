@@ -43,6 +43,10 @@ class NetworkAccessBase(BaseModel):
     # "host:port". Required only for nat_zt — nat_public has no proxy hop.
     pylon_socks5: Optional[str] = None
 
+    # tunnel mode: the tenant's own WireGuard-hub SOCKS5 listener,
+    # "host:port". Required only for tunnel — direct/vpn/nat_* don't use it.
+    tunnel_socks5: Optional[str] = None
+
     @field_validator("kind")
     @classmethod
     def validate_kind(cls, v: str) -> str:
@@ -68,6 +72,8 @@ class NetworkAccessBase(BaseModel):
             raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode == "nat_zt" and not (self.pylon_socks5 or "").strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
+        if self.mode == "tunnel" and not (self.tunnel_socks5 or "").strip():
+            raise ValueError("tunnel_socks5 is required when mode is 'tunnel'")
         return self
 
 
@@ -84,6 +90,7 @@ class NetworkAccessUpdate(BaseModel):
     acs_base_url: Optional[str] = None
     gateway_host: Optional[str] = None
     pylon_socks5: Optional[str] = None
+    tunnel_socks5: Optional[str] = None
 
     @field_validator("kind")
     @classmethod
@@ -123,6 +130,8 @@ class NetworkAccessUpdate(BaseModel):
                 raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode is not None and self.mode == "nat_zt" and self.pylon_socks5 is not None and not self.pylon_socks5.strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
+        if self.mode is not None and self.mode == "tunnel" and self.tunnel_socks5 is not None and not self.tunnel_socks5.strip():
+            raise ValueError("tunnel_socks5 is required when mode is 'tunnel'")
         return self
 
 
