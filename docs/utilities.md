@@ -200,53 +200,79 @@ is still individually unique under `uq_provisioning_job_company_idem`), carry
 routers before `create_run`, exactly as they are today — and the workflow-engine
 path still does not call them (see [limitations.md](limitations.md)).
 
-### `transport.py` (transport resolution, 2026-08-13; `vpn` 2026-09-25)
+### `transport.py` (transport resolution, 2026-08-13; transport axis `tr1_transport_axis`, 2026-09-26)
 
-The one place that turns an `InventoryItem` plus its tenant's `NetworkAccess`
-row into the address a driver actually dials. Lives here (not in backend-erp)
-so `cli.py`, `ping.py`, and any future TCP driver share one implementation
-instead of three drifting copies.
+The one place that turns an `InventoryItem` plus its tenant's
+`ProvisioningSettings` row into the address a driver actually dials. Lives here
+(not in backend-erp) so `cli.py`, `ping.py`, and any future TCP driver share one
+implementation instead of three drifting copies.
+
+The configuration is **two orthogonal fields**, not one cross-product enum
+(`tr1_transport_axis` replaced `network_access.mode` with them):
+
+```
+dial_target   'device' | 'gateway'    whose address do we dial
+proxy_kind    'none'   | 'socks5'     is there a hop, and of what sort
+```
 
 | Name | Behaviour |
 |---|---|
-| `ResolvedEndpoint` | Frozen dataclass: `host`, `port`, `proxy` (SOCKS5 `host:port` for `nat_zt` and `vpn`, else `None`), `mode` |
-| `default_outbound_access(db, company_id)` | The tenant's default outbound `NetworkAccess` row — `kind == 'outbound'` and `is_default`. **Public on purpose:** backend-erp's `cli.py` driver and the provisioning worker each carried a byte-identical private copy of this query, each docstring claiming to be the canonical one; they import this instead. `'olt'` was the pre-`na1_kind_outbound` spelling and is no longer a legal value anywhere |
-| `resolve_endpoint(db, item, company_id, default_port, access=None)` | Returns `(endpoint, None)` or `(None, error_code)`. Reads only the company's **default** outbound `NetworkAccess` row via `default_outbound_access` (or the caller-supplied `access`) — no longest-prefix match, no per-device override; `network_access.mgmt_subnets` is deliberately not read |
+| `ResolvedEndpoint` | Frozen dataclass: `host`, `port`, `proxy` (SOCKS5 `host:port` when `proxy_kind='socks5'`, else `None`), `dial_target` (`'device'`/`'gateway'`) |
+| `company_provisioning_settings(db, company_id)` | The tenant's `provisioning_settings` singleton, or `None` when it has never been created (canon C6 — absence means provisioning DISABLED). **Public on purpose**, and the successor to `default_outbound_access`: backend-erp's `cli.py` driver and the provisioning worker each carried a byte-identical private copy of the old `network_access` lookup, each docstring claiming to be the canonical one; they import this instead |
+| `resolve_endpoint(db, item, company_id, default_port, settings=None)` | Returns `(endpoint, None)` or `(None, error_code)`. Reads the company's one `provisioning_settings` row (or the caller-supplied `settings`) — no longest-prefix match and no per-device override. The multi-row, per-CIDR `mgmt_subnets` resolver the old table existed for was never implemented and is **abandoned, not deferred** |
 
-Resolution:
-- `mode in NAT_MODES` (`nat_zt`, `nat_public`): target is always `(access.gateway_host, item.nat_port)`, **never** `item.mgmt_host`. Missing `gateway_host` or `nat_port` → `NAT_MAPPING_NOT_SET`.
-- `mode == 'nat_zt'` additionally reads `access.pylon_socks5` — the tenant's own Pylon SOCKS5 endpoint (revision `nat3_pylon_socks5`, 2026-08-17). It is a column on the tenant's `NetworkAccess` row, not a function argument: the parameter was removed because a stray test-fixture value could leak a proxy across tenants. If the column is blank/NULL, resolution fails closed with `PYLON_NOT_PROVISIONED`. `nat_public` remains fully dial-capable, and `nat_zt` is now dial-capable too once the tenant's `pylon_socks5` is set — see doc 34 OV17: one Pylon process joins exactly one ZeroTier network, so there is no shared fleet proxy, only one Pylon Railway service per tenant.
-- `mode == 'vpn'` (canon C17, revision `vpn1_vpn_socks5`, 2026-09-25) has its **own** branch and is the one non-NAT mode that is fail-closed. Unlike `NAT_MODES` it dials `item.mgmt_host` **directly** — the tenant's WireGuard hub holds a real kernel route into the tenant LAN, so there is no port-mapped gateway to substitute — and `access.vpn_socks5` is only the proxy hop. Blank/NULL proxy → `VPN_NOT_PROVISIONED`; blank `mgmt_host` → `MGMT_HOST_NOT_SET`. `VPN_NOT_PROVISIONED` stays reachable with `ck_network_access_vpn_socks5` in place, because the CHECK only demands NOT NULL and an empty string commits.
-- Every remaining mode (`direct`, `tunnel` — and no default row at all) falls through to the SAME branch: `(item.mgmt_host, item.mgmt_port or default_port)`. This is not fail-closed for those modes — nothing distinguishes a `vpn` row that genuinely has a live tunnel to `item.mgmt_host` from one that doesn't. The only check on that branch is that `mgmt_host` itself is non-empty → `MGMT_HOST_NOT_SET`.
-- `access` supplied by the caller (skipping the internal query) is rejected with `TRANSPORT_UNAVAILABLE` if `access.company_id != company_id` — a cross-tenant guard, since nothing else here re-validates a caller-supplied row.
+Resolution is the three lines in the module docstring:
+
+```
+host  = gateway_host if dial_target == 'gateway' else item.mgmt_host
+port  = item.nat_port if dial_target == 'gateway' else (item.mgmt_port or default_port)
+proxy = proxy_address if proxy_kind == 'socks5' else None
+```
+
+- `dial_target == 'gateway'`: the target is always `(settings.gateway_host, item.nat_port)`, **never** `item.mgmt_host`. A missing `gateway_host` or `nat_port` → `NAT_MAPPING_NOT_SET`.
+- `dial_target == 'device'`: `(item.mgmt_host, item.mgmt_port or default_port)`. A blank `mgmt_host` → `MGMT_HOST_NOT_SET`.
+- `proxy_kind == 'socks5'`: `settings.proxy_address` is the hop, on either dial target. Blank/NULL → `PROXY_NOT_PROVISIONED`. The hub TECHNOLOGY is not recorded and is none of the resolver's business — a Railway-internal ZeroTier/Pylon proxy, an external WireGuard-hub VPS and a future Tailscale exit node are the same thing here, which is why the old `PYLON_NOT_PROVISIONED`/`VPN_NOT_PROVISIONED` pair collapsed into one code.
+- **No `provisioning_settings` row** → `device` + `none`, the legitimate public-IP case and the pre-existing default. Not a bypass: a tenant with no row also has provisioning DISABLED (canon C6), so no job reaches a driver.
+- `settings` supplied by the caller (skipping the internal query) is rejected with `TRANSPORT_UNAVAILABLE` if `settings.company_id != company_id` — a cross-tenant guard, since nothing else here re-validates a caller-supplied row.
+
+The four combinations, and the operator scenario each is:
+
+| `dial_target` | `proxy_kind` | scenario | old `mode` |
+|---|---|---|---|
+| `device` | `none` | the devices have public IPs | `direct` |
+| `gateway` | `none` | NAT + port map to a public IP | `nat_public` |
+| `gateway` | `socks5` | NAT + port map reached via ZeroTier | `nat_zt` |
+| `device` | `socks5` | a hub with managed routes into the LAN: WireGuard, ZeroTier or any other | `vpn` — and the ZeroTier variant of this row had **no** `mode` value at all, which is why the axis was split |
 
 Error-code vocabulary `resolve_endpoint` can return (spec N12):
 
 | Code | When |
 |---|---|
-| `NAT_MAPPING_NOT_SET` | `mode in NAT_MODES` and `gateway_host` or `item.nat_port` is missing |
-| `PYLON_NOT_PROVISIONED` | `mode == 'nat_zt'` and `access.pylon_socks5` is blank/NULL |
-| `VPN_NOT_PROVISIONED` | `mode == 'vpn'` and `access.vpn_socks5` is blank/NULL |
-| `TRANSPORT_UNAVAILABLE` | a caller-supplied `access` row belongs to a different `company_id` |
-| `MGMT_HOST_NOT_SET` | a non-NAT mode (or no default row) with an empty `item.mgmt_host` |
+| `NAT_MAPPING_NOT_SET` | `dial_target == 'gateway'` and `gateway_host` or `item.nat_port` is missing |
+| `PROXY_NOT_PROVISIONED` | `proxy_kind == 'socks5'` and `proxy_address` is blank/NULL (replaces both `PYLON_NOT_PROVISIONED` and `VPN_NOT_PROVISIONED`) |
+| `MGMT_HOST_NOT_SET` | `dial_target == 'device'` and `item.mgmt_host` is empty |
+| `TRANSPORT_UNAVAILABLE` | a caller-supplied `settings` row belongs to a different `company_id` |
 
-Two invariants documented in the module docstring: the `InventoryItem` is
-**never mutated** (`mgmt_host`/`mgmt_port` always describe the device, never
-the path to it — doc 34 §1.3), and NAT modes **fail closed** — doc 34 canon
-R23 was rewritten specifically because its original predicate ("does this
-company hold a non-`direct` row") is satisfied vacuously by a NAT tenant
-stored as `mode='direct'`. The precise scope of "fails closed", accurately:
-`nat_zt`/`nat_public` are fail-closed on a missing config (`gateway_host`,
-`nat_port`, or the `nat_zt` proxy) and `vpn` is fail-closed on a missing
-`vpn_socks5` — none of those inputs ever exist on the item, so there is
-nothing to fall back to. `tunnel`/`direct` are NOT separately validated; they
-fall through to the same `item.mgmt_host` branch as `direct` always has, and
-that branch only errors if `mgmt_host` itself is empty
-(`MGMT_HOST_NOT_SET`). What the resolver still cannot know for `vpn` is
-whether the hub's route actually reaches `mgmt_host` — a populated proxy and
-a populated `mgmt_host` resolve successfully either way; only the driver's
-connect attempt settles it. Callers must surface any returned error code as a
-step failure. See `tests/test_transport_resolver.py`.
+Three invariants documented in the module docstring:
+
+1. The `InventoryItem` is **never mutated** — `mgmt_host`/`mgmt_port` always
+   describe the device, never the path to it (doc 34 §1.3).
+2. It **fails closed** (doc 34 canon R23, rewritten). `proxy_kind` is
+   LOAD-BEARING here and deliberately not collapsed into
+   `proxy_address IS NOT NULL`: `device` with no proxy is the legitimate public-IP
+   case, so without a stored intent the resolver could not tell "no hop needed"
+   from "a hub is intended but its address is missing", and the second would
+   silently dial an RFC1918 address from the Railway container. A blank
+   `proxy_address` under `socks5` is a HARD ERROR, never a fallthrough.
+   `ck_provisioning_settings_proxy_address` only demands NOT NULL, so `''`
+   commits and `PROXY_NOT_PROVISIONED` stays reachable.
+3. Absence of a settings row is a defined state, not an accident (point 4 above).
+
+What the resolver still cannot know is whether a hub's route actually reaches
+`mgmt_host`: a populated `proxy_address` and a populated `mgmt_host` resolve
+successfully either way, and only the driver's connect attempt settles it.
+Callers must surface any returned error code as a step failure. See
+`tests/test_transport_resolver.py` and `tests/test_transport_axis.py`.
 
 ## Related packages
 

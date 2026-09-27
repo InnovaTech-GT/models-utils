@@ -8,8 +8,10 @@ Secrets never round-trip (canon C19): `Create`/`Update` accept a plaintext
 `secret` string, the router encrypts it via database_utils.utils.crypto before
 insert, and `Out` NEVER carries the ciphertext/dek/plaintext — only
 `has_secret` + `fingerprint` (last 4). Binding FKs live ON the credential row
-(inventory_item > device_type > network_access resolution order); the router
-verifies each binding is same-company.
+(inventory_item > device_type > unbound-company-default resolution order —
+`tr1_transport_axis` removed the `network_access_id` tier with the table it
+pointed at, so a credential with both FKs NULL IS the company default); the
+router verifies each binding is same-company.
 """
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional
@@ -29,11 +31,10 @@ class DeviceCredentialBase(BaseModel):
     name: str
     kind: str
     username: Optional[str] = None
-    # Bindings (canon C19) — all optional; resolution order is
-    # inventory_item > device_type > network_access.
+    # Bindings (canon C19) — both optional; resolution order is
+    # inventory_item > device_type > unbound (both NULL = the company default).
     inventory_item_id: Optional[UUID] = None
     device_type_id: Optional[UUID] = None
-    network_access_id: Optional[UUID] = None
 
     @field_validator("kind")
     @classmethod
@@ -53,7 +54,6 @@ class DeviceCredentialUpdate(BaseModel):
     username: Optional[str] = None
     inventory_item_id: Optional[UUID] = None
     device_type_id: Optional[UUID] = None
-    network_access_id: Optional[UUID] = None
     # None = keep the existing secret; a value rotates it (router re-encrypts
     # and stamps last_rotated_at).
     secret: Optional[str] = None

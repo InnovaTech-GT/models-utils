@@ -111,7 +111,6 @@ class Company(Base):
     insight_dashboards = relationship("InsightDashboard", back_populates="company", cascade="all, delete-orphan")
     # Cycle 5 Phase 1: network configuration (TR-069 / GenieACS).
     device_credentials = relationship("DeviceCredential", back_populates="company", cascade="all, delete-orphan")
-    network_accesses = relationship("NetworkAccess", back_populates="company", cascade="all, delete-orphan")
     acs_device_registrations = relationship("AcsDeviceRegistration", back_populates="company", cascade="all, delete-orphan")
     provisioning_settings = relationship("ProvisioningSettings", back_populates="company", uselist=False, cascade="all, delete-orphan")
     device_action_logs = relationship("DeviceActionLog", back_populates="company", cascade="all, delete-orphan")

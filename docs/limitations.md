@@ -20,18 +20,34 @@
   a separate, later destructive-change release (all consuming code already
   removed from every service — this is purely the drop-after-prod rule).
 
-## Transport and Capa 3 (2026-09-25) — shipped limitations
+## Transport and Capa 3 (2026-09-25, axis 2026-09-27) — shipped limitations
 
-- **No WireGuard hub exists yet.** The `vpn` code path is complete and unit
-  tested, but nothing has ever dialled through a real hub. `vpn_socks5` also
-  differs from `pylon_socks5` in a way that is a security prerequisite, not a
-  code change: it is an **external, public** address and `microsocks` has no
-  auth by default, so the hub's listener must be firewalled to Railway's egress.
-  See [network-models.md](network-models.md).
-- **Nothing expires a credential rotation window.** The accept-both window is
-  two `DeviceCredential` rows and closing it is a manual delete of the older
-  row. There is no reaper, and more than two `HTTP_BASIC` rows bound to one
-  `acs` row is undefined (only two AUTH branches exist; the two newest win).
+- **No hub with managed routes exists yet.** The `dial_target='device'` +
+  `proxy_kind='socks5'` path is complete and unit tested, but nothing has ever
+  dialled through a real one. An EXTERNAL `proxy_address` (a VPS, as opposed to a
+  Railway-internal ZeroTier/Pylon service) carries a security prerequisite that is
+  a prerequisite, not a code change: `microsocks` has no auth by default, so the
+  listener must be firewalled to Railway's egress or anyone who learns the address
+  has a route into the tenant LAN. The transport axis does NOT record which
+  technology the hop is, so nothing in code can tell an internal address from an
+  external one — this stays an operator rule. See
+  [network-models.md](network-models.md).
+- **`provisioning_settings.acs_base_url` has no writer.** It survived the fold
+  because an installer needs a URL to type into a CPE, but it is read-only by
+  construction (absent from `ProvisioningSettingsUpdate`) and nothing in code reads
+  it either. Until something sets it — a seeded platform default, or a deliberate
+  super-admin-only write path — it is a column that will read NULL for every
+  tenant that did not already have one on `network_access`.
+- **Nothing expires a credential rotation window.** The window is
+  `cwmp_credential_id` + `cwmp_pending_credential_id` and closing it is an
+  explicit commit or abort from the router. There is no reaper: a window left
+  open stays open, and both secrets keep authenticating.
+- **The per-CIDR / `mgmt_subnets` transport idea is DEAD, not deferred.**
+  `network_access` was multi-row solely to support longest-prefix resolution over
+  a JSON list of CIDRs, which was never implemented. `tr1_transport_axis` dropped
+  the column, the table and the idea. The transport is tenant-wide; do not
+  reintroduce per-address paths, and read any older document that describes them
+  as history.
 - **The Capa 3 gate fails OPEN.** An EXT fault or timeout, or an absent
   `cwmp.auth` document, is ALLOW. Deliberate — the alternative drops every CPE
   of every tenant during a backend blip — but it means a backend outage silently

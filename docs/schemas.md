@@ -23,7 +23,7 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
 | CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `product` (legacy), `recurring_order` (legacy), `task`, `task_state`, `task_template`, `integration` |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
-| Network config (Cycle 5) | `acs_registration`, `device_credential`, `network_access`, `provisioning_settings` |
+| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`) |
 | Workflow | `workflow`, `workflow_template` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
 
@@ -31,6 +31,9 @@ Two modules have been deleted over the life of this repo, and the distinction
 matters when reading `__init__.py`:
 
 - `schemas/network.py` — deleted with the free-form network-graph removal
+- `schemas/network_access.py` — deleted by `tr1_transport_axis` with the
+  `network_access` table; its two surviving fields (`acs_base_url`,
+  `acs_auth_required`) are on `schemas/provisioning_settings.py`
   (Cycle 2 `c2d_graph_removal`); a comment in `__init__.py` still records it.
 - `schemas/topology.py` — deleted in **Cycle 10** (doc 35) together with the
   `Topology` / `TopologyDeviceType` / `TopologyPlaybook` models. Its one

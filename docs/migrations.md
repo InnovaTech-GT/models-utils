@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`iv1_insights_v2`**) — plus the idempotent seed
+`alembic/versions/` (head: **`tr1_transport_axis`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -385,10 +385,14 @@ already has. Full column/constraint detail in
   upgrade would come back with `mode='direct'` pointing at a management LAN
   nothing can reach. Switch the affected tenants off NAT explicitly first.
 - The CHECK fragments (`_NETWORK_ACCESS_MODE_CHECK`, `_NAT_PORT_CHECK`,
-  `_MGMT_PORT_CHECK`) are duplicated byte-for-byte between
+  `_MGMT_PORT_CHECK`) were duplicated byte-for-byte between
   `database_utils/models/isp.py` and the migration (the nc1a/nc2a precedent —
   revisions are immutable, models are not), pinned equal by
-  `tests/test_nat_transport_constants.py`.
+  `tests/test_nat_transport_constants.py`. Since `tr1_transport_axis` only
+  `_NAT_PORT_CHECK`/`_MGMT_PORT_CHECK` still have a model side (`inventory_item`
+  is untouched); `_NETWORK_ACCESS_MODE_CHECK` lives on ONLY inside this immutable
+  revision, and the test pins the two surviving pairs plus each revision's chain
+  position.
 
 ### `nat2_gateway_host_check` (2026-08-13)
 
@@ -471,7 +475,9 @@ tenant's own WireGuard-hub SOCKS5 listener — plus CHECK
 Shape copied from `nat3_pylon_socks5`, but the mode dials `item.mgmt_host`
 DIRECTLY: the hub holds a real kernel route into the tenant LAN via WireGuard,
 so `vpn_socks5` is only the proxy hop and never replaces `mgmt_host` the way
-`gateway_host` does under `NAT_MODES`.
+`gateway_host` does under `NAT_MODES`. (Historical: `tr1_transport_axis` dropped
+this column with the table. The behaviour it describes is now
+`dial_target='device'` + `proxy_kind='socks5'`.)
 
 Authored by Mario Cano as `tun1_tunnel_socks5` (mode `tunnel`, column
 `tunnel_socks5`) and renamed here: the mode he built and lab-validated IS canon
@@ -531,7 +537,7 @@ could pre-exist). `nc1a_network_config_core.py`'s fragment copy stays
 `('acs','olt')` — immutable, and correct for the schema as of `nc1a`; a fresh
 database migrates `nc1a -> ... -> na1` and ends correct.
 
-### `ac1_acs_tenant_auth` (2026-09-25, head)
+### `ac1_acs_tenant_auth` (2026-09-25)
 
 On `na1_kind_outbound`. Capa 3: a CPE identifies itself to GenieACS by serial
 number alone — printed on its label — so tenant attribution rests on public
@@ -541,11 +547,12 @@ authenticates it.
 
 - `network_access.acs_auth_required` BOOLEAN NOT NULL `server_default false`.
   Default-OFF is expressed as a DB constraint, not app code: OFF means ALLOW, so
-  a tenant that never enrols behaves exactly as today.
+  a tenant that never enrols behaves exactly as today. **`tr1_transport_axis`
+  moved this column to `provisioning_settings`, name and semantics unchanged.**
 - CHECK `ck_network_access_acs_auth_required` (`kind = 'acs' OR
   acs_auth_required = false`) — the gate is only read off the tenant's default
   `kind='acs'` row, and the CHECK stops a raw UPDATE arming it where nothing
-  looks.
+  looks. **Not recreated by `tr1`: on a singleton there is no wrong row.**
 - Partial UNIQUE `uq_acs_registration_serial_no_oui` on
   `acs_device_registration (serial_number) WHERE oui IS NULL`. A multi-tenancy
   fix, not housekeeping: `uq_acs_registration_identity` is a plain two-column
@@ -570,7 +577,9 @@ network_access_id)`.** The accept-both rotation window is a SECOND
 `DeviceCredential` row bound to the same `acs` row (`informPassword` = newest,
 `informPendingPassword` = second-newest; rotation is create-new -> roll out ->
 delete-old, and `POST /{id}/rotate` is not used for this credential). Such an
-index would forbid exactly that row.
+index would forbid exactly that row. **`tr1_transport_axis` keeps the two-row
+shape and replaces the newest/second-newest INFERENCE with two explicit FKs,
+`provisioning_settings.cwmp_credential_id` / `cwmp_pending_credential_id`.**
 
 Verified on PG 16 on a scratch database: `upgrade head` -> `downgrade
 iv1_insights_v2` -> `upgrade head` -> `downgrade`, with a seeded legacy row
@@ -578,15 +587,117 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
+### `tr1_transport_axis` (2026-09-26, head)
+
+On `ac1_acs_tenant_auth`. Collapses the whole `network_access` table into the
+tenant singleton `provisioning_settings` and replaces `mode` with two orthogonal
+columns. Rationale in full in
+[network-models.md](network-models.md#the-transport-axis-tr1_transport_axis-2026-09-26--and-the-network_access-table-it-replaced);
+the short version is that `kind` conflated a settings bucket with a transport,
+multi-row existed only for a per-CIDR `mgmt_subnets` resolver that was never
+implemented and is now abandoned, and `mode` enumerated the cross product of two
+independent questions — so the fifth real scenario (ZeroTier with managed routes)
+had no value available.
+
+Eight columns on `provisioning_settings`: `dial_target` (`device`|`gateway`, NOT
+NULL `server_default 'device'`), `proxy_kind` (`none`|`socks5`, NOT NULL
+`server_default 'none'`), `proxy_address`, `gateway_host`, `acs_base_url`,
+`acs_auth_required` (BOOLEAN NOT NULL `server_default false`), and
+`cwmp_credential_id` / `cwmp_pending_credential_id` (FK `device_credential.id`
+ON DELETE SET NULL). Five CHECKs, fragments shared byte-for-byte with
+`models/isp.py` and pinned by `tests/test_transport_axis.py`:
+
+```
+ck_provisioning_settings_dial_target    dial_target IN ('device','gateway')
+ck_provisioning_settings_proxy_kind     proxy_kind IN ('none','socks5')
+ck_provisioning_settings_proxy_address  proxy_kind <> 'socks5' OR proxy_address IS NOT NULL
+ck_provisioning_settings_gateway_host   dial_target <> 'gateway' OR gateway_host IS NOT NULL
+ck_provisioning_settings_cwmp_pair      cwmp_pending_credential_id IS NULL
+                                        OR cwmp_credential_id <> cwmp_pending_credential_id
+```
+
+**A sixth CHECK was specced and deliberately NOT created**: `cwmp_pending_credential_id
+IS NULL OR cwmp_credential_id IS NOT NULL` ("no pending without a current") is
+violable by a DATABASE REFERENTIAL ACTION, not only by application code. Both cwmp
+FKs are ON DELETE SET NULL, so deleting the current credential while a rotation
+window is open nulls `cwmp_credential_id` with the pending pointer still set → CHECK
+violation → an ordinary `DELETE /device-credentials/{id}` becomes a raw 500. A
+company delete has the same shape (`device_credential` and `provisioning_settings`
+both CASCADE from `company`, and Postgres does not order the SET NULL against the
+CASCADE). The invariant belongs in backend-erp's router as a 409, which also closes
+the pre-existing gap that a plain DELETE of an ACS Inform credential was never
+rollout-gated.
+
+**Order inside `upgrade()` is load-bearing:**
+
+1. the eight columns and both FKs (they target `device_credential`, never
+   `network_access`, so they are order-independent w.r.t. step 5);
+2. assert no `mode='tunnel'` row exists — it has no mapping on the axis and the
+   API never allowed it, so the revision aborts by name rather than guessing — and
+   COUNT AND LOG the non-default rows that are about to die with the table;
+3. the fold, `INSERT ... ON CONFLICT (company_id) DO UPDATE`, per company that has
+   any `network_access` row: `direct`→device+none, `vpn`→device+socks5 carrying
+   `vpn_socks5`, `nat_public`→gateway+none, `nat_zt`→gateway+socks5 carrying
+   `pylon_socks5`, `gateway_host` verbatim, and `acs_base_url`/`acs_auth_required`
+   off the default `kind='acs'` row;
+4. the cwmp pair, from `device_credential.network_access_id` — **before** step 5,
+   because that column is the ONLY thing identifying which credentials were the
+   tenant's ACS Inform pair (newest `HTTP_BASIC` bound to the default `acs` row →
+   current, second-newest → pending, `created_at DESC, id DESC`);
+5. `DROP COLUMN device_credential.network_access_id`, then `DROP TABLE
+   network_access` (that FK was the only thing pointing at it);
+6. the CHECKs LAST, so a pre-existing inconsistency surfaces as a named
+   constraint violation on real data rather than aborting a DDL step mid-fold.
+   They are satisfiable by construction: the old
+   `ck_network_access_nat_gateway_host` / `_pylon_socks5` / `_vpn_socks5`
+   guarantee each operand is non-NULL wherever the folded axis requires it.
+
+**The INSERT branch writes `enabled = false`, and that is the only branch that
+runs on Railway development** (`provisioning_settings` had zero rows there while
+the one tenant had two `network_access` rows). `ProvisioningSettings.enabled` is a
+live provisioning gate and canon C6 says absence of the row means DISABLED, so
+`enabled = true` would silently turn provisioning ON for a real tenant with no
+operator action. `default_inform_interval` stays NULL for the same reason. Pinned
+by `tests/test_transport_axis.py::test_tr1_inserts_provisioning_disabled`.
+
+`downgrade()` recreates the table with every column, CHECK, index and the
+`device_credential.network_access_id` FK, and moves the values back into one
+`outbound` + one `acs` row per tenant (device+none→`direct`,
+device+socks5→`vpn`, gateway+none→`nat_public`, gateway+socks5→`nat_zt`), then
+re-binds the two cwmp credentials to the recreated `acs` row. It is reversible in
+substance but **NOT a true inverse**, and the docstring says so rather than
+claiming otherwise: `network_access.name` is NOT NULL and UNIQUE per company with
+no destination column, so the names `'ACS'`/`'Outbound'` are synthesised and will
+collide if a tenant separately holds a row of that name; `mgmt_subnets` is gone for
+good; a tenant that had a settings row but never a `network_access` row is
+indistinguishable after the fold and gets rows too; and any NON-cwmp
+`network_access_id` binding (a company-default SSH/WIREGUARD credential pinned to
+the outbound row) comes back unbound — which is still the company default under the
+new resolution order.
+
+Verified on PG 16 on a scratch database `tr1_scratch` (created and dropped; the
+shared local dev DB was not touched): `upgrade head` → `downgrade
+ac1_acs_tenant_auth` → `upgrade head`, with three seeded tenants proving every
+branch — one mirroring Railway development exactly (default `acs` row + default
+`outbound` `vpn` row + two `HTTP_BASIC` credentials), one `nat_zt` with an armed
+`acs` row and a stray non-default row, and one that already had a
+`provisioning_settings` row (`enabled=true`, interval 300) to exercise the ON
+CONFLICT branch and prove those two values survive both directions. The
+`mode='tunnel'` abort was exercised too. Guardrails:
+`tests/test_transport_axis.py`, `tests/test_transport_resolver.py`.
+
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
   `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
   `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
-  raises from `downgrade()` by design. `nat1_gateway_transport`'s `downgrade()`
-  is conditionally reversible — it raises only while a `network_access` row is
-  still in a NAT mode. Check each revision's `downgrade()` before assuming
-  rollback is possible
+  raises from `downgrade()` by design. `tr1_transport_axis`'s `downgrade()` runs
+  and restores every value, but is not a true inverse (synthesised
+  `network_access.name`, `mgmt_subnets` unrecoverable — see its section above).
+  `nat1_gateway_transport`'s `downgrade()` was conditionally reversible on a
+  `network_access` row still being in a NAT mode; that table no longer exists
+  past `tr1`, so the condition is vacuous. Check each revision's `downgrade()`
+  before assuming rollback is possible
 - Additive changes (new columns/tables): safe to apply before consuming
   service code ships
 - Destructive changes (removing/renaming): apply AFTER all consuming service
