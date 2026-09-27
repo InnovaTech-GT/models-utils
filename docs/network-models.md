@@ -362,8 +362,7 @@ any non-`acs` row.
 This is deliberately **not** a `DeviceCredential`. Those are secrets **we**
 present to devices (SSH, Telnet, connection request), so they must decrypt
 (envelope encryption, canon C1/C19). An inform credential is presented **to**
-us and only ever compared, so it is hashed and never read back (decided with
-Ricardo on 2026-09-23). `NetworkAccessOut` exposes only `acs_username` and
+us and only ever compared, so it is hashed and never read back. `NetworkAccessOut` exposes only `acs_username` and
 `has_acs_password`.
 
 ## Open value sets (CHECK-constrained strings, not PG enums)

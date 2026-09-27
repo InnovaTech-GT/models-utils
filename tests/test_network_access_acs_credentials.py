@@ -1,5 +1,5 @@
 """Tenant-scoped TR-069 inform credentials on network_access (plan 23
-F1.0/F1.1, decided with Ricardo 2026-09-23): acs_username (globally unique,
+F1.0/F1.1): acs_username (globally unique,
 backend-generated) + acs_password_hash (bcrypt), kind='acs' rows only.
 
 Same guardrail shape as tests/test_nat_transport_constants.py: the CHECK

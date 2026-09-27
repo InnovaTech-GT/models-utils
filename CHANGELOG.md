@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tenant-scoped TR-069 inform credentials (plan 23 F1.0/F1.1,
 `uplink-workspace/docs/isp-platform/23-network-config-implementation-plan.md`).
-Decided with Ricardo on 2026-09-23: the credential a CPE presents to our ACS
+The credential a CPE presents to our ACS
 lives on the tenant's `network_access` row (`kind='acs'`) and only its bcrypt
 hash is stored. It is deliberately not a `device_credential`: those are secrets
 WE use to dial devices (envelope-encrypted, canon C1/C19).

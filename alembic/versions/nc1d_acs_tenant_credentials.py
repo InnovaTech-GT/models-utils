@@ -4,7 +4,7 @@ Revision ID: nc1d_acs_tenant_credentials
 Revises: iv1_insights_v2
 Create Date: 2026-09-23
 
-Plan 23 F1.0/F1.1, as decided with Ricardo (2026-09-23): each tenant's ACS
+Plan 23 F1.0/F1.1: each tenant's ACS
 transport row (network_access, kind='acs') carries the TR-069 inform
 credentials its CPEs present to our ACS over HTTP Basic auth. Unlike
 device_credential (secrets WE use to dial devices, envelope-encrypted per
