@@ -103,6 +103,9 @@ def test_adopt_not_granted_to_isp_base_roles():
     isp_seed = _load_isp_seed()
     for role_name, spec in isp_seed.ISP_ROLES.items():
         assert "client_services.adopt" not in spec["permissions"], role_name
+        # ac1: reveal is ADMIN-only too. NOC held an explicit grant until the
+        # user restricted it; ADMIN is the only role that may read a secret.
+        assert "device_credentials.reveal" not in spec["permissions"], role_name
 
 
 def test_no_grant_copy_source_for_adopt():

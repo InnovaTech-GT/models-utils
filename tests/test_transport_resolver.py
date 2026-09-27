@@ -208,21 +208,7 @@ def test_vpn_never_falls_through_to_a_direct_dial(db):
     assert error == "MGMT_HOST_NOT_SET"
 
 
-# --- the additive kind rename (revision na1_kind_outbound) -----------------
-
-def test_the_resolver_still_reads_a_legacy_olt_row(db):
-    """na1 widened the CHECK instead of swapping it, so 'olt' remains a legal
-    stored value. A service running against a database migrated ahead of it —
-    or before the migrate job's UPDATE lands — must still find the row, or
-    every provisioning job silently resolves to mode='direct'."""
-    cid = _company_id(db)
-    _access(db, cid, "nat_public", gateway_host="200.9.9.9", kind="olt")
-    item = _item(db, cid, nat_port=2201)
-    assert default_outbound_access(db, cid) is not None
-    endpoint, error = resolve_endpoint(db, item, cid, default_port=22)
-    assert error is None
-    assert endpoint.host == "200.9.9.9"
-
+# --- the kind rename (revision na1_kind_outbound) --------------------------
 
 def test_an_acs_row_is_never_the_outbound_default(db):
     """uq_network_access_default is per (company_id, kind), so a tenant holds

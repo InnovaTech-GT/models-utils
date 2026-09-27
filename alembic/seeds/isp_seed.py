@@ -122,8 +122,8 @@ ISP_PERMISSIONS = [
     {"name": "device_credentials.delete", "resource": "device_credentials", "action": "delete", "description": "Delete device credentials"},
     # ac1 (Capa 3): a deliberate, audited exception to the write-only-secrets
     # canon — the tenant CWMP Inform password must be readable back because an
-    # installer types it into the router by hand. ADMIN-only (see
-    # ADMIN_ONLY_PERMISSIONS) plus an explicit NOC grant.
+    # installer types it into the router by hand. ADMIN role ONLY (see
+    # ADMIN_ONLY_PERMISSIONS); no other base role is granted it.
     {"name": "device_credentials.reveal", "resource": "device_credentials", "action": "reveal", "description": "Reveal a device credential's plaintext secret (audited)"},
     {"name": "acs_devices.read", "resource": "acs_devices", "action": "read", "description": "View ACS/TR-069 device state"},
     {"name": "acs_devices.action", "resource": "acs_devices", "action": "action", "description": "Run ACS device actions (reboot, factory-reset, refresh)"},
@@ -143,9 +143,8 @@ ISP_PERMISSIONS = [
 # duplicated-fragment precedent).
 ADMIN_ONLY_PERMISSIONS = (
     "client_services.adopt",
-    # ac1: revealing a stored plaintext secret is withheld from the MANAGER
-    # auto-inherit. NOC still gets it through its explicit ISP_ROLES grant
-    # below — this tuple only controls the MANAGER cross-join.
+    # ac1: revealing a stored plaintext secret is ADMIN-only. This tuple
+    # keeps it out of the MANAGER cross-join; no ISP_ROLES entry grants it.
     "device_credentials.reveal",
 )
 
@@ -196,7 +195,7 @@ ISP_ROLES = {
             # Cycle 5 Phase 1: NOC owns the network-configuration surface.
             "network_access.read", "network_access.create", "network_access.update", "network_access.delete",
             "device_credentials.read", "device_credentials.create", "device_credentials.update", "device_credentials.delete",
-            "device_credentials.reveal",
+            # device_credentials.reveal is deliberately absent: ADMIN only.
             "acs_devices.read", "acs_devices.action",
             "acs_registrations.read", "acs_registrations.create", "acs_registrations.update", "acs_registrations.delete",
             "provisioning_settings.read", "provisioning_settings.update",

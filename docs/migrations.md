@@ -500,25 +500,31 @@ On `vpn1_vpn_socks5`. Renames the `network_access.kind` value `olt` to
 `outbound` — the row was never OLT-specific, it is the tenant's default
 OUTBOUND path for every managed device.
 
-**ADDITIVE on purpose.** `ck_network_access_kind` is WIDENED to
-`('acs','olt','outbound')`, the rows are rewritten (`UPDATE ... WHERE
+**The CHECK is SWAPPED, not widened**: `ck_network_access_kind` becomes
+`kind IN ('acs','outbound')`, the rows are rewritten (`UPDATE ... WHERE
 kind='olt'`), and a post-upgrade assertion raises `RuntimeError` if any `olt`
-survives. `'olt'` stays a legal value; narrowing to `('acs','outbound')` is a
-trailing no-data revision NEXT cycle, once every service runs the tolerant read
-path.
+survives. `'olt'` is no longer a legal value on any path — write, read or
+stored.
 
-Narrowing here would be destructive. `NetworkAccessOut` inherits
-`NetworkAccessBase.validate_kind`, so a service whose `NETWORK_ACCESS_KINDS`
-lacks a value raises on every `network_access` READ of a row carrying it.
-models-utils must migrate FIRST (the additive columns in `vpn1`/`ac1` are
-SELECTed by the new ORM), while a rename demands consuming code first (the
-workspace pitfall "removing or renaming: all consuming service code must be in
-production FIRST") — mutually exclusive requirements. Widening removes the
-conflict: there is no 500 window in either direction, and `downgrade()` can
-reverse both halves.
+An earlier draft of this revision was additive (widen now, narrow next cycle)
+because `NetworkAccessOut` inherits `NetworkAccessBase.validate_kind`, so a
+backend still pinned to the previous models-utils raises on every
+`network_access` READ of a rewritten row; models-utils must migrate FIRST (the
+additive columns in `vpn1`/`ac1` are SELECTed by the new ORM), while a rename
+normally demands consuming code first (the workspace pitfall "removing or
+renaming: all consuming service code must be in production FIRST"). That
+conflict only bites if rows exist. Both the Railway `development` and the
+production databases were checked before this revision was finalised:
+`network_access` holds **zero** rows in both and both sit at
+`alembic_version = iv1_insights_v2`, so there is no row to poison and no window
+to protect. The `UPDATE` is kept anyway — harmless on both, and correct for a
+developer's local database that does hold an `olt` row. If `network_access`
+ever holds live rows again, the safe sequence for a value rename is the old
+one: widen, deploy every consumer, rewrite, narrow.
 
-Order inside `upgrade()` is load-bearing — widen the CHECK BEFORE the UPDATE,
-or the old CHECK rejects the new value. `uq_network_access_default` (UNIQUE
+Order inside `upgrade()` is load-bearing — neither CHECK admits both spellings,
+so the constraint is dropped, the rows are rewritten, and only then is the
+narrow CHECK created. `uq_network_access_default` (UNIQUE
 `(company_id, kind)` WHERE `is_default`) needs no recreation: it indexes the
 column, and an in-place value UPDATE preserves uniqueness (no `outbound` row
 could pre-exist). `nc1a_network_config_core.py`'s fragment copy stays
@@ -550,7 +556,7 @@ authenticates it.
   lookup's `.first()` hand one tenant's CWMP password to another tenant's CPE.
   Built behind a pre-check that names the offending serials rather than failing
   the release with a bare index-build error.
-- The `device_credentials.reveal` permission row + its NOC grant, cfg3 recipe
+- The `device_credentials.reveal` permission row (no role grant — ADMIN-only, and ADMIN comes from the convergent seed), cfg3 recipe
   (idempotent `INSERT ... ON CONFLICT (name) DO NOTHING`, per-role grant,
   post-upgrade count assertion, total `downgrade()`). ADMIN comes from the
   convergent seed; MANAGER is withheld because the name is in BOTH

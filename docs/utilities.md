@@ -210,7 +210,7 @@ instead of three drifting copies.
 | Name | Behaviour |
 |---|---|
 | `ResolvedEndpoint` | Frozen dataclass: `host`, `port`, `proxy` (SOCKS5 `host:port` for `nat_zt` and `vpn`, else `None`), `mode` |
-| `default_outbound_access(db, company_id)` | The tenant's default outbound `NetworkAccess` row — `kind IN ('outbound','olt')` and `is_default`. **Public on purpose:** backend-erp's `cli.py` driver and the provisioning worker each carried a byte-identical private copy of this query, each docstring claiming to be the canonical one; they import this instead. `'olt'` is the pre-`na1_kind_outbound` spelling, accepted for the length of the additive rename |
+| `default_outbound_access(db, company_id)` | The tenant's default outbound `NetworkAccess` row — `kind == 'outbound'` and `is_default`. **Public on purpose:** backend-erp's `cli.py` driver and the provisioning worker each carried a byte-identical private copy of this query, each docstring claiming to be the canonical one; they import this instead. `'olt'` was the pre-`na1_kind_outbound` spelling and is no longer a legal value anywhere |
 | `resolve_endpoint(db, item, company_id, default_port, access=None)` | Returns `(endpoint, None)` or `(None, error_code)`. Reads only the company's **default** outbound `NetworkAccess` row via `default_outbound_access` (or the caller-supplied `access`) — no longest-prefix match, no per-device override; `network_access.mgmt_subnets` is deliberately not read |
 
 Resolution:

@@ -25,7 +25,7 @@ pre-baked chain.
 | Model | Table | Key Fields | Purpose |
 |-------|-------|-----------|---------|
 | `DeviceCredential` | `device_credential` | name, kind (CHECK: CREDENTIAL_KINDS), username, `secret_ciphertext`/`dek_wrapped`/`kek_id`, fingerprint, binding FKs (inventory_item/device_type/network_access) | Envelope-encrypted per-tenant device secret (canon C1/C19). Secret never round-trips — Out schema exposes only `has_secret` + fingerprint |
-| `NetworkAccess` | `network_access` | name, kind (CHECK: acs\|olt\|outbound — `olt` is the pre-`na1` spelling), mode (CHECK: direct\|vpn\|tunnel\|nat_zt\|nat_public), is_default, mgmt_subnets (JSON CIDRs), acs_base_url, **`gateway_host`** (String, nullable — NAT transport, 2026-08-13), **`pylon_socks5`** (String, nullable — per-tenant Pylon SOCKS5 endpoint, 2026-08-17), **`vpn_socks5`** (String, nullable — per-tenant WireGuard-hub SOCKS5 listener, `vpn1`, 2026-09-25), **`acs_auth_required`** (Boolean NOT NULL default false — Capa 3 gate, `ac1`, 2026-09-25) | Per-tenant transport config (canon C9). `mgmt_subnets`-based longest-prefix match was never implemented; `transport.py::resolve_endpoint` reads only the default outbound row — see below |
+| `NetworkAccess` | `network_access` | name, kind (CHECK: acs\|outbound — `na1` renamed the pre-existing `olt` value to `outbound`), mode (CHECK: direct\|vpn\|tunnel\|nat_zt\|nat_public), is_default, mgmt_subnets (JSON CIDRs), acs_base_url, **`gateway_host`** (String, nullable — NAT transport, 2026-08-13), **`pylon_socks5`** (String, nullable — per-tenant Pylon SOCKS5 endpoint, 2026-08-17), **`vpn_socks5`** (String, nullable — per-tenant WireGuard-hub SOCKS5 listener, `vpn1`, 2026-09-25), **`acs_auth_required`** (Boolean NOT NULL default false — Capa 3 gate, `ac1`, 2026-09-25) | Per-tenant transport config (canon C9). `mgmt_subnets`-based longest-prefix match was never implemented; `transport.py::resolve_endpoint` reads only the default outbound row — see below |
 | `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE — plus the partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` (`ac1`), because the two-column UNIQUE does NOT cover NULL-oui rows |
 | `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval | Tenant provisioning enable gate — a per-tenant singleton (canon C6). Absence of a row = DISABLED (fail-safe) |
 | `DeviceActionLog` | `device_action_log` | actor_kind, actor_user_id, device_kind, device_identity, action, before_data/after_data (secret-redacted JSON), provisioning_job_id | Append-only device audit trail (canon C14). No `updated_at`; immutability enforced by a Postgres `BEFORE UPDATE OR DELETE` trigger (nc1b) |
@@ -388,7 +388,7 @@ is not patched); the password only authenticates it.
 |---|---|---|
 | `network_access` | `acs_auth_required` (Boolean NOT NULL, `server_default false`) + CHECK `ck_network_access_acs_auth_required` (`kind = 'acs' OR acs_auth_required = false`) | The per-tenant switch. Default-OFF as a DB constraint; OFF means **ALLOW**, and the gate is only meaningful on the tenant's default `kind='acs'` row |
 | `acs_device_registration` | partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` | Multi-tenancy. `uq_acs_registration_identity` is a plain two-column UNIQUE and Postgres treats NULLs as distinct, while `oui` is nullable and `_normalize_oui` returns `None` unchanged for an omitted OUI — so `(NULL, serial)` could repeat and the inform-auth lookup's `.first()` could hand one tenant's CWMP password to another tenant's CPE. `_normalize_oui` coerces a blank OUI to `None` (it used to return `''`, which put a second, index-invisible key on the same physical device) so every no-OUI write lands under this index |
-| `permission` | row `device_credentials.reveal` + NOC grant | Reading back a stored plaintext secret. ADMIN via the convergent seed; MANAGER withheld (the name is in BOTH `isp_seed.ADMIN_ONLY_PERMISSIONS` and `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`) |
+| `permission` | row `device_credentials.reveal`, no role grant | Reading back a stored plaintext secret. **ADMIN role ONLY** — granted solely by the convergent seed's global-ADMIN cross-join; MANAGER is withheld (the name is in BOTH `isp_seed.ADMIN_ONLY_PERMISSIONS` and `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`) and no `ISP_ROLES` entry — NOC included — lists it |
 
 The credential itself needs **no new columns**: it is an ordinary
 `DeviceCredential` row of `kind='HTTP_BASIC'` bound via `network_access_id` to
@@ -447,9 +447,9 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 
 - `CREDENTIAL_KINDS`: SSH, TELNET, SNMP_COMMUNITY, TR069_CONNECTION_REQUEST, HTTP_BASIC,
   HTTP_BEARER, WIREGUARD, AGENT
-- `NETWORK_ACCESS_KINDS`: acs, outbound (the WRITE set) · `_NETWORK_ACCESS_KINDS_READ`
-  adds the legacy `olt` spelling, which `ck_network_access_kind` still accepts
-  (`na1_kind_outbound` is additive) · `NETWORK_ACCESS_MODES`: direct, vpn, tunnel, nat_zt, nat_public
+- `NETWORK_ACCESS_KINDS`: acs, outbound — one tuple for reads and writes, matching
+  `ck_network_access_kind` exactly since `na1_kind_outbound` renamed `olt` to `outbound`
+  · `NETWORK_ACCESS_MODES`: direct, vpn, tunnel, nat_zt, nat_public
   (`NAT_MODES` = nat_zt, nat_public — 2026-08-13, `nat1_gateway_transport`, see the NAT transport
   section above)
 - **Cycle 7**: `DEVICE_CATEGORY_TIERS`: CORE, EDGE · `CLI_PROTOCOLS`: ssh, telnet ·

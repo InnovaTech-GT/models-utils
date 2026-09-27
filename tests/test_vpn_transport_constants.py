@@ -21,6 +21,7 @@ from database_utils.models import isp
 from database_utils.schemas.network_access import (
     NetworkAccessCreate,
     NetworkAccessOut,
+    NetworkAccessUpdate,
 )
 
 _VERSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "alembic", "versions")
@@ -99,17 +100,18 @@ def test_the_mode_check_needed_no_migration_this_cycle():
 # na1 — the additive kind rename
 # --------------------------------------------------------------------------
 
-def test_kind_write_set_is_narrow_and_read_set_is_tolerant():
+def test_kind_is_one_set_for_reads_and_writes():
+    """There is no tolerant READ set any more: na1 narrowed the CHECK, so no
+    stored row can carry a value the write set rejects."""
     assert isp.NETWORK_ACCESS_KINDS == ("acs", "outbound")
-    assert isp._NETWORK_ACCESS_KINDS_READ == ("acs", "outbound", "olt")
+    assert not hasattr(isp, "_NETWORK_ACCESS_KINDS_READ")
 
 
-def test_kind_check_is_widened_not_swapped():
-    """The whole point of the additive rename: 'olt' stays accepted so no
-    service ordering can produce a 500 window (CLAUDE.md pitfall 6)."""
-    assert isp._NETWORK_ACCESS_KIND_CHECK == "kind IN ('acs','olt','outbound')"
-    for value in isp._NETWORK_ACCESS_KINDS_READ:
+def test_kind_check_is_swapped_not_widened():
+    assert isp._NETWORK_ACCESS_KIND_CHECK == "kind IN ('acs','outbound')"
+    for value in isp.NETWORK_ACCESS_KINDS:
         assert f"'{value}'" in isp._NETWORK_ACCESS_KIND_CHECK
+    assert "'olt'" not in isp._NETWORK_ACCESS_KIND_CHECK
 
 
 def test_na1_migration_fragment_matches_model_fragment():
@@ -126,22 +128,23 @@ def test_na1_migration_chain_position():
     assert len(na1.revision) <= 32
 
 
-def test_a_legacy_olt_row_still_serializes_but_cannot_be_written():
-    """NetworkAccessOut inherits NetworkAccessBase.validate_kind, so a strict
-    reader would poison every GET for a row the migration has not rewritten
-    yet. Create is strict, so nothing new lands as 'olt'."""
+def test_olt_is_rejected_on_every_path():
+    """NetworkAccessOut inherits NetworkAccessBase.validate_kind, and the base
+    validator is now the single strict write set — so 'olt' is refused on READ
+    as well as on WRITE. na1 guarantees no stored row carries it."""
     import uuid
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    row = NetworkAccessOut(
-        id=uuid.uuid4(), company_id=uuid.uuid4(), created_at=now, updated_at=now,
-        name="legacy", kind="olt", mode="direct", is_default=True,
-    )
-    assert row.kind == "olt"
-
+    with pytest.raises(ValueError):
+        NetworkAccessOut(
+            id=uuid.uuid4(), company_id=uuid.uuid4(), created_at=now, updated_at=now,
+            name="legacy", kind="olt", mode="direct", is_default=True,
+        )
     with pytest.raises(ValueError):
         NetworkAccessCreate(name="new", kind="olt", mode="direct")
+    with pytest.raises(ValueError):
+        NetworkAccessUpdate(kind="olt")
     assert NetworkAccessCreate(name="new", kind="outbound", mode="direct").kind == "outbound"
 
 
@@ -206,18 +209,19 @@ def test_ac1_permission_matches_the_isp_seed_row():
         assert perm["name"] == f"{perm['resource']}.{perm['action']}"
 
 
-def test_reveal_is_withheld_from_manager_and_granted_to_noc():
+def test_reveal_is_admin_only():
     """isp_seed._seed_permissions cross-joins every ISP_PERMISSIONS name onto
     global ADMIN *and* MANAGER minus ADMIN_ONLY_PERMISSIONS, so dropping the
     name from either tuple silently hands every tenant manager the tenant's ACS
-    password. Verified against a real database: ADMIN and NOC hold it."""
-    ac1 = _load_ac1()
+    password. ADMIN is the ONLY role that may hold it: no ISP_ROLES entry grants
+    it, and ac1 writes no role_permission row of its own."""
     isp_seed = _load_isp_seed()
     rbac_seed = _load_rbac_seed()
     assert "device_credentials.reveal" in isp_seed.ADMIN_ONLY_PERMISSIONS
     assert "device_credentials.reveal" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
-    assert ac1.GRANTS == (("NOC", "device_credentials.reveal"),)
-    assert "device_credentials.reveal" in isp_seed.ISP_ROLES["NOC"]["permissions"]
     for role_name, spec in isp_seed.ISP_ROLES.items():
-        if role_name != "NOC":
-            assert "device_credentials.reveal" not in spec["permissions"], role_name
+        assert "device_credentials.reveal" not in spec["permissions"], role_name
+    source = open(
+        os.path.join(_VERSIONS_DIR, "ac1_acs_tenant_auth.py"), encoding="utf-8"
+    ).read()
+    assert "INSERT INTO role_permission" not in source

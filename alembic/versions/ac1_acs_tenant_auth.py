@@ -37,13 +37,13 @@ THREE things land here, and nothing else:
    an existing duplicate fails loudly with the offending serials named instead
    of as a bare index-build error.
 
-Plus the `device_credentials.reveal` permission row and its NOC grant
-(cfg3 recipe: idempotent INSERT ... ON CONFLICT DO NOTHING, per-role grant,
-post-upgrade count assertion). ADMIN and MANAGER are NOT granted here —
-isp_seed._seed_permissions cross-joins every ISP_PERMISSIONS name onto global
-ADMIN and MANAGER minus ADMIN_ONLY_PERMISSIONS, and this name IS in that tuple
-(and in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS, pinned by
-tests/test_attested_adoption.py), so it reaches ADMIN and NOC and not MANAGER.
+Plus the `device_credentials.reveal` permission row (cfg3 recipe: idempotent
+INSERT ... ON CONFLICT DO NOTHING, post-upgrade count assertion). No role grant
+is written here at all: isp_seed._seed_permissions cross-joins every
+ISP_PERMISSIONS name onto global ADMIN and MANAGER minus
+ADMIN_ONLY_PERMISSIONS, and this name IS in that tuple (and in
+rbac_seed.MANAGER_EXCLUDED_PERMISSIONS, pinned by
+tests/test_attested_adoption.py), so it reaches ADMIN and nothing else.
 
 WHAT IS DELIBERATELY NOT HERE — the rotation window's second secret.
 `DeviceCredential` has exactly one secret slot and `POST /{id}/rotate`
@@ -95,11 +95,12 @@ PERMISSIONS = [
     },
 ]
 
-# ADMIN/MANAGER are NOT listed: the convergent seed reconciler grants ADMIN and
-# withholds this name from MANAGER via ADMIN_ONLY_PERMISSIONS /
-# MANAGER_EXCLUDED_PERMISSIONS. Duplicating that here would be a second source
-# of truth. Pinned against isp_seed.ISP_ROLES by the same test.
-GRANTS = (("NOC", "device_credentials.reveal"),)
+# No GRANTS table here on purpose: `device_credentials.reveal` is ADMIN-only,
+# and the convergent seed reconciler is the single source that grants ADMIN and
+# withholds the name from MANAGER (ADMIN_ONLY_PERMISSIONS /
+# MANAGER_EXCLUDED_PERMISSIONS). This revision therefore inserts the permission
+# row and NO role_permission row — pinned by
+# tests/test_vpn_transport_constants.py.
 
 
 def upgrade() -> None:
@@ -154,17 +155,6 @@ def upgrade() -> None:
             ),
             perm,
         )
-    for role_name, perm_name in GRANTS:
-        connection.execute(
-            text(
-                "INSERT INTO role_permission (role_id, permission_id) "
-                "SELECT r.id, p.id FROM role r, permission p "
-                "WHERE r.name = :role AND r.company_id IS NULL AND p.name = :perm "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {"role": role_name, "perm": perm_name},
-        )
-
     names = ", ".join(f"'{p['name']}'" for p in PERMISSIONS)
     found = connection.execute(
         text(f"SELECT COUNT(*) FROM permission WHERE name IN ({names})")
@@ -183,7 +173,7 @@ def downgrade() -> None:
     connection.execute(sa.text("SET lock_timeout = '5s'"))
 
     names = ", ".join(f"'{p['name']}'" for p in PERMISSIONS)
-    # Drops every grant, including the ADMIN one the seed converged and any a
+    # Drops every grant — the ADMIN one the seed converged, and any a
     # tenant added to a custom role — the permission row is going away, so
     # nothing may be left pointing at it. Same caveat as cfg3/ba1: env.py runs
     # the seeds after EVERY online alembic command, downgrades included, so a

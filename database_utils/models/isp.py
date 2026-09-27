@@ -254,15 +254,9 @@ CREDENTIAL_KINDS = (
 # canon C9: network-access transport shape. `outbound` was called `olt` until
 # revision na1_kind_outbound — the row is the tenant's default OUTBOUND path
 # for every managed device, not an OLT-specific one.
-NETWORK_ACCESS_KINDS = ("acs", "outbound")      # what callers may WRITE
-# Transitional READ set. A row written before na1 (or read by a service running
-# against a database migrated ahead of it) still says 'olt', and
-# NetworkAccessOut inherits NetworkAccessBase.validate_kind — so a strict
-# reader poisons every GET for such a row. Drop 'olt' from here in the same
-# cycle that narrows _NETWORK_ACCESS_KIND_CHECK.
-# ponytail: one deferred no-data revision; the ceiling is an extra legal-but-
-# unused value in a CHECK until someone bothers.
-_NETWORK_ACCESS_KINDS_READ = NETWORK_ACCESS_KINDS + ("olt",)
+# One tuple, used for both reads and writes: na1_kind_outbound narrows the DB
+# CHECK to the same pair, so no stored row can carry anything else.
+NETWORK_ACCESS_KINDS = ("acs", "outbound")
 NETWORK_ACCESS_MODES = ("direct", "vpn", "tunnel", "nat_zt", "nat_public")
 # spec N2: the two variants of gateway port-mapping. Both resolve the dial
 # target to (network_access.gateway_host, inventory_item.nat_port); they differ
@@ -277,10 +271,9 @@ ACS_STALE_AFTER_SECONDS = 900
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
 _CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
-# WIDENED by na1_kind_outbound, not swapped: 'olt' stays accepted so the rename
-# is additive and needs no service-ordering dance (see that revision's
-# docstring). nc1a's copy is immutable and keeps ('acs','olt').
-_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','olt','outbound')"
+# SWAPPED by na1_kind_outbound: 'olt' was renamed to 'outbound' and is no
+# longer legal. nc1a's copy is immutable and keeps ('acs','olt').
+_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','outbound')"
 _NETWORK_ACCESS_MODE_CHECK = "mode IN ('direct','vpn','tunnel','nat_zt','nat_public')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
@@ -1306,8 +1299,8 @@ class ProvisioningJob(Base):
 
 class NetworkAccess(Base):
     """Per-tenant transport configuration (canon C9). Multiple rows per tenant,
-    keyed by `kind` (acs|outbound; legacy rows may still read 'olt', see
-    _NETWORK_ACCESS_KINDS_READ); the transport resolver reads it keyed on
+    keyed by `kind` (acs|outbound — 'olt' was renamed to 'outbound' by
+    na1_kind_outbound and is not a kind); the transport resolver reads it keyed on
     company_id + the target management address. `kind`/`mode` are
     CHECK-constrained strings (not PG enums) per the c3a/c3b precedent —
     transport modes are config-flavored and grow by phase. WireGuard keys/PSK

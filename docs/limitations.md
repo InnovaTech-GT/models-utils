@@ -22,14 +22,6 @@
 
 ## Transport and Capa 3 (2026-09-25) — shipped limitations
 
-- **`ck_network_access_kind` still accepts the legacy `olt` value.**
-  `na1_kind_outbound` was deliberately additive (widen the CHECK, rewrite the
-  rows) because `NetworkAccessOut` validates `kind` on READ, so narrowing before
-  every service is redeployed would 500 every `network_access` read. Narrowing
-  to `('acs','outbound')` is a trailing no-data revision NEXT cycle, together
-  with dropping `'olt'` from `_NETWORK_ACCESS_KINDS_READ` and from
-  `default_outbound_access`'s filter. Until then an extra legal-but-unused value
-  is the cost. `ponytail:` skip it entirely if nobody minds.
 - **No WireGuard hub exists yet.** The `vpn` code path is complete and unit
   tested, but nothing has ever dialled through a real hub. `vpn_socks5` also
   differs from `pylon_socks5` in a way that is a security prerequisite, not a

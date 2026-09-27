@@ -46,17 +46,12 @@ def default_outbound_access(db, company_id) -> Optional[NetworkAccess]:
     carried their own byte-identical copy of this query, each docstring
     claiming to be the canonical one. Three copies is how the kind string
     drifts; they import this instead.
-
-    'olt' is accepted alongside 'outbound' for the length of the additive
-    rename (revision na1_kind_outbound widened the CHECK and rewrote the rows,
-    but a service can be reading a database migrated ahead of it). Drop it in
-    the cycle that narrows _NETWORK_ACCESS_KIND_CHECK.
     """
     return (
         db.query(NetworkAccess)
         .filter(
             NetworkAccess.company_id == company_id,
-            NetworkAccess.kind.in_(("outbound", "olt")),
+            NetworkAccess.kind == "outbound",
             NetworkAccess.is_default.is_(True),
         )
         .first()
