@@ -1,8 +1,16 @@
-"""NAT transport (spec §8) guardrails. The CHECK-fragment strings shared
-between database_utils/models/isp.py and the hand-written nat1 migration are
-duplicated on purpose (the nc1a/nc2a precedent — revisions are immutable,
-models are not, so neither can import the other). These tests pin the two
-copies byte-identical."""
+"""NAT transport (spec §8) revisions: chain-position guardrails only.
+
+nat1/nat2/nat3 shipped `network_access.gateway_host`, `pylon_socks5` and their
+CHECKs. `tr1_transport_axis` dropped that table, so the model constants these
+tests used to pin byte-for-byte against each revision's copy no longer exist —
+those assertions moved to tests/test_transport_axis.py, against tr1's fragments.
+
+Revisions are IMMUTABLE and these three stay in the chain forever (a fresh
+database still migrates through them on its way to tr1), so what is still worth
+pinning is exactly that: each one's position, and the 32-character id limit.
+The `_NAT_PORT_CHECK`/`_MGMT_PORT_CHECK` fragments DO survive — they constrain
+inventory_item, not network_access.
+"""
 import importlib.util
 import os
 
@@ -32,26 +40,13 @@ def _load_nat3():
     return _load_migration("nat3_pylon_socks5.py", "nat3_pylon_socks5")
 
 
-def test_network_access_modes_constant():
-    assert isp.NETWORK_ACCESS_MODES == (
-        "direct", "vpn", "tunnel", "nat_zt", "nat_public",
-    )
 
 
-def test_nat_modes_constant_is_a_subset():
-    assert isp.NAT_MODES == ("nat_zt", "nat_public")
-    for value in isp.NAT_MODES:
-        assert value in isp.NETWORK_ACCESS_MODES
-
-
-def test_check_fragment_covers_every_mode():
-    for value in isp.NETWORK_ACCESS_MODES:
-        assert f"'{value}'" in isp._NETWORK_ACCESS_MODE_CHECK
-
-
-def test_migration_fragments_match_model_fragments():
+def test_the_item_port_fragments_survive_the_table_drop():
+    """nat1 also added the range CHECKs `inventory_item` had lacked since nc2a.
+    `inventory_item` is untouched by tr1, so these two still have a model side to
+    be pinned against."""
     nat1 = _load_nat1()
-    assert nat1._NETWORK_ACCESS_MODE_CHECK == isp._NETWORK_ACCESS_MODE_CHECK
     assert nat1._NAT_PORT_CHECK == isp._NAT_PORT_CHECK
     assert nat1._MGMT_PORT_CHECK == isp._MGMT_PORT_CHECK
 
@@ -63,25 +58,11 @@ def test_migration_chain_position():
     assert len(nat1.revision) <= 32
 
 
-def test_nat2_migration_fragment_matches_model_fragment():
-    nat2 = _load_nat2()
-    assert nat2._NETWORK_ACCESS_NAT_GATEWAY_CHECK == isp._NETWORK_ACCESS_NAT_GATEWAY_CHECK
-
-
 def test_nat2_migration_chain_position():
     nat2 = _load_nat2()
     assert nat2.revision == "nat2_gateway_host_check"
     assert nat2.down_revision == "nat1_gateway_transport"
     assert len(nat2.revision) <= 32
-
-
-def test_pylon_check_fragment_exists():
-    assert isp._NETWORK_ACCESS_PYLON_CHECK == "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
-
-
-def test_nat3_migration_fragment_matches_model_fragment():
-    nat3 = _load_nat3()
-    assert nat3._NETWORK_ACCESS_PYLON_CHECK == isp._NETWORK_ACCESS_PYLON_CHECK
 
 
 def test_nat3_migration_chain_position():

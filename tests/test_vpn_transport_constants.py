@@ -1,28 +1,24 @@
-"""vpn transport + kind rename + Capa 3 gate guardrails.
+"""vpn1 / na1 / ac1 guardrails, after the transport-axis collapse.
 
-Same job as tests/test_nat_transport_constants.py, for the three revisions this
-cycle adds. The CHECK-fragment strings shared between
-database_utils/models/isp.py and the hand-written vpn1/na1/ac1 migrations are
-duplicated on purpose (the nc1a/nc2a/nat3 precedent — revisions are immutable,
-models are not, so neither can import the other). These tests pin the copies
-byte-identical, pin each revision's position in the chain, and pin the ac1
-permission row against the two seed files it has to agree with.
+vpn1 and na1 were entirely about `network_access` (`vpn_socks5`, the
+`olt` -> `outbound` kind rename) and `tr1_transport_axis` dropped that table, so
+their model-side constants are gone and only their CHAIN POSITIONS are still
+assertable — revisions are immutable and a fresh database still migrates through
+both on its way to tr1.
 
-The chain this cycle produces:
+ac1 is different: its `acs_auth_required` column MOVED to
+`provisioning_settings` rather than disappearing, and its other two payloads —
+the `uq_acs_registration_serial_no_oui` partial UNIQUE and the
+`device_credentials.reveal` permission row — are untouched by this cycle. Those
+assertions stay in full.
 
-    iv1_insights_v2 -> vpn1_vpn_socks5 -> na1_kind_outbound -> ac1_acs_tenant_auth
+The chain: iv1_insights_v2 -> vpn1_vpn_socks5 -> na1_kind_outbound ->
+ac1_acs_tenant_auth -> tr1_transport_axis.
 """
 import importlib.util
 import os
 
-import pytest
-
 from database_utils.models import isp
-from database_utils.schemas.network_access import (
-    NetworkAccessCreate,
-    NetworkAccessOut,
-    NetworkAccessUpdate,
-)
 
 _VERSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "alembic", "versions")
 _SEEDS_DIR = os.path.join(os.path.dirname(__file__), "..", "alembic", "seeds")
@@ -61,15 +57,6 @@ def _load_rbac_seed():
 # vpn1 — the tunnel -> vpn rename
 # --------------------------------------------------------------------------
 
-def test_vpn_check_fragment_shape():
-    assert isp._NETWORK_ACCESS_VPN_CHECK == "mode != 'vpn' OR vpn_socks5 IS NOT NULL"
-
-
-def test_vpn1_migration_fragment_matches_model_fragment():
-    vpn1 = _load_vpn1()
-    assert vpn1._NETWORK_ACCESS_VPN_CHECK == isp._NETWORK_ACCESS_VPN_CHECK
-
-
 def test_vpn1_migration_chain_position():
     vpn1 = _load_vpn1()
     assert vpn1.revision == "vpn1_vpn_socks5"
@@ -77,49 +64,9 @@ def test_vpn1_migration_chain_position():
     assert len(vpn1.revision) <= 32
 
 
-def test_the_tunnel_spelling_is_gone_everywhere():
-    """Mario's branch shipped `tunnel_socks5` / _NETWORK_ACCESS_TUNNEL_CHECK.
-    'tunnel' is still a legal MODE (reserved for canon C10's edge agent) but it
-    owns no column and no CHECK, which is what lets the router keep answering
-    for it from _UNSHIPPED_MODES instead of the schema answering first."""
-    assert not hasattr(isp, "_NETWORK_ACCESS_TUNNEL_CHECK")
-    assert not hasattr(isp.NetworkAccess, "tunnel_socks5")
-    assert "tunnel" in isp.NETWORK_ACCESS_MODES
-    assert "'tunnel'" not in isp._NETWORK_ACCESS_VPN_CHECK
-
-
-def test_the_mode_check_needed_no_migration_this_cycle():
-    """'vpn' was already legal before this cycle, which is why no revision
-    touches ck_network_access_mode — and why vpn1's clamp is a real backfill
-    rather than the defensive no-op nat2/nat3 shipped."""
-    assert "vpn" in isp.NETWORK_ACCESS_MODES
-    assert "'vpn'" in isp._NETWORK_ACCESS_MODE_CHECK
-
-
 # --------------------------------------------------------------------------
-# na1 — the additive kind rename
+# na1 — the kind rename
 # --------------------------------------------------------------------------
-
-def test_kind_is_one_set_for_reads_and_writes():
-    """There is no tolerant READ set any more: na1 narrowed the CHECK, so no
-    stored row can carry a value the write set rejects."""
-    assert isp.NETWORK_ACCESS_KINDS == ("acs", "outbound")
-    assert not hasattr(isp, "_NETWORK_ACCESS_KINDS_READ")
-
-
-def test_kind_check_is_swapped_not_widened():
-    assert isp._NETWORK_ACCESS_KIND_CHECK == "kind IN ('acs','outbound')"
-    for value in isp.NETWORK_ACCESS_KINDS:
-        assert f"'{value}'" in isp._NETWORK_ACCESS_KIND_CHECK
-    assert "'olt'" not in isp._NETWORK_ACCESS_KIND_CHECK
-
-
-def test_na1_migration_fragment_matches_model_fragment():
-    na1 = _load_na1()
-    assert na1._NETWORK_ACCESS_KIND_CHECK == isp._NETWORK_ACCESS_KIND_CHECK
-    # and the downgrade target is nc1a's immutable copy, unchanged
-    assert na1._OLD_NETWORK_ACCESS_KIND_CHECK == "kind IN ('acs','olt')"
-
 
 def test_na1_migration_chain_position():
     na1 = _load_na1()
@@ -128,37 +75,31 @@ def test_na1_migration_chain_position():
     assert len(na1.revision) <= 32
 
 
-def test_olt_is_rejected_on_every_path():
-    """NetworkAccessOut inherits NetworkAccessBase.validate_kind, and the base
-    validator is now the single strict write set — so 'olt' is refused on READ
-    as well as on WRITE. na1 guarantees no stored row carries it."""
-    import uuid
-    from datetime import datetime, timezone
+def test_the_kind_and_mode_vocabulary_left_with_the_table():
+    """tr1 dropped `network_access`, so nothing in the models or schemas may still
+    speak of kinds or modes — the axis replaced both."""
+    import database_utils.schemas as schemas
 
-    now = datetime.now(timezone.utc)
-    with pytest.raises(ValueError):
-        NetworkAccessOut(
-            id=uuid.uuid4(), company_id=uuid.uuid4(), created_at=now, updated_at=now,
-            name="legacy", kind="olt", mode="direct", is_default=True,
-        )
-    with pytest.raises(ValueError):
-        NetworkAccessCreate(name="new", kind="olt", mode="direct")
-    with pytest.raises(ValueError):
-        NetworkAccessUpdate(kind="olt")
-    assert NetworkAccessCreate(name="new", kind="outbound", mode="direct").kind == "outbound"
+    for name in ("NETWORK_ACCESS_KINDS", "NETWORK_ACCESS_MODES", "NAT_MODES",
+                 "_NETWORK_ACCESS_KINDS_READ", "NetworkAccess"):
+        assert not hasattr(isp, name), name
+    for name in ("NetworkAccessBase", "NetworkAccessCreate", "NetworkAccessUpdate",
+                 "NetworkAccessOut"):
+        assert not hasattr(schemas, name), name
 
 
 # --------------------------------------------------------------------------
 # ac1 — the Capa 3 gate and the reveal permission
 # --------------------------------------------------------------------------
 
-def test_acs_auth_check_fragment_shape():
-    assert isp._NETWORK_ACCESS_ACS_AUTH_CHECK == "kind = 'acs' OR acs_auth_required = false"
-
-
-def test_ac1_migration_fragment_matches_model_fragment():
-    ac1 = _load_ac1()
-    assert ac1._NETWORK_ACCESS_ACS_AUTH_CHECK == isp._NETWORK_ACCESS_ACS_AUTH_CHECK
+def test_the_capa_3_gate_moved_rather_than_disappeared():
+    """ac1's `acs_auth_required` is the one thing it added to `network_access` that
+    tr1 kept: same name, same NOT NULL default-false semantics (decision 8 — OFF
+    means ALLOW), now on the tenant singleton, where `ck_network_access_acs_auth_required`
+    ("only meaningful on the acs row") is unnecessary because there is one row."""
+    column = isp.ProvisioningSettings.__table__.c["acs_auth_required"]
+    assert column.nullable is False
+    assert not hasattr(isp, "_NETWORK_ACCESS_ACS_AUTH_CHECK")
 
 
 def test_ac1_migration_chain_position():
@@ -168,17 +109,18 @@ def test_ac1_migration_chain_position():
     assert len(ac1.revision) <= 32
 
 
-def test_ac1_adds_no_pending_columns():
-    """The accept-both rotation window is a SECOND DeviceCredential row, not a
-    second column set — and deliberately no partial unique index on
-    (company_id, network_access_id), which would forbid that row."""
+def test_the_rotation_window_still_needs_no_pending_columns():
+    """ac1 deliberately shipped no `pending_*` columns: the accept-both window was
+    a SECOND DeviceCredential row. tr1 keeps the two-row shape and only makes the
+    PAIR explicit (two FKs on provisioning_settings) instead of inferring it from
+    `created_at DESC, id DESC`. The credential row itself is unchanged."""
     for name in ("pending_secret_ciphertext", "pending_dek_wrapped",
                  "pending_kek_id", "pending_fingerprint", "pending_started_at"):
         assert not hasattr(isp.DeviceCredential, name), name
-    index_names = {
-        c.name for c in isp.DeviceCredential.__table__.constraints
-    } | {i.name for i in isp.DeviceCredential.__table__.indexes}
-    assert "uq_device_credential_acs_inform" not in index_names
+    assert not hasattr(isp.DeviceCredential, "network_access_id")
+    columns = isp.ProvisioningSettings.__table__.c
+    assert columns["cwmp_credential_id"].nullable
+    assert columns["cwmp_pending_credential_id"].nullable
 
 
 def test_the_null_oui_serial_is_unique():
