@@ -251,18 +251,21 @@ CREDENTIAL_KINDS = (
     "HTTP_BASIC", "HTTP_BEARER", "WIREGUARD", "AGENT",
 )
 
-# canon C9: network-access transport shape. `outbound` was called `olt` until
-# revision na1_kind_outbound — the row is the tenant's default OUTBOUND path
-# for every managed device, not an OLT-specific one.
-# One tuple, used for both reads and writes: na1_kind_outbound narrows the DB
-# CHECK to the same pair, so no stored row can carry anything else.
-NETWORK_ACCESS_KINDS = ("acs", "outbound")
-NETWORK_ACCESS_MODES = ("direct", "vpn", "tunnel", "nat_zt", "nat_public")
-# spec N2: the two variants of gateway port-mapping. Both resolve the dial
-# target to (network_access.gateway_host, inventory_item.nat_port); they differ
-# only in how the gateway itself is reached — nat_zt through the fleet Pylon
-# SOCKS5 proxy, nat_public over plain egress.
-NAT_MODES = ("nat_zt", "nat_public")
+# tr1_transport_axis: the transport is TWO orthogonal per-tenant choices, not one
+# cross-product enum. `dial_target` answers "whose address do we dial", and
+# `proxy_kind` answers "is there a hop, and of what sort". Both live on
+# ProvisioningSettings (the tenant singleton, canon C6) — the old multi-row
+# `network_access` table and its kind/mode value sets are gone.
+#
+#   device  + none    devices have public IPs          (was mode 'direct')
+#   gateway + none    NAT + port map to a public IP    (was mode 'nat_public')
+#   gateway + socks5  NAT + port map via ZeroTier      (was mode 'nat_zt')
+#   device  + socks5  hub + managed routes: WireGuard, ZeroTier or any other
+#                                                      (was mode 'vpn')
+#
+# canon C10's edge agent becomes proxy_kind='agent', not a new mode.
+DIAL_TARGETS = ("device", "gateway")
+PROXY_KINDS = ("none", "socks5")
 
 # canon C13: derived acs_device_registration ONLINE-vs-STALE threshold (a
 # registration that has not informed within this window reads STALE).
@@ -271,10 +274,6 @@ ACS_STALE_AFTER_SECONDS = 900
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
 _CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
-# SWAPPED by na1_kind_outbound: 'olt' was renamed to 'outbound' and is no
-# longer legal. nc1a's copy is immutable and keeps ('acs','olt').
-_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','outbound')"
-_NETWORK_ACCESS_MODE_CHECK = "mode IN ('direct','vpn','tunnel','nat_zt','nat_public')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
@@ -282,32 +281,33 @@ _MGMT_PORT_CHECK = "mgmt_port IS NULL OR (mgmt_port BETWEEN 1 AND 65535)"
 # Figma redesign PR 8 (08-inventario §2.3): a lot row is at least one unit.
 # Zero is not "out of stock", it is a row that should have been deleted.
 _INVENTORY_QUANTITY_CHECK = "quantity >= 1"
-# whole-branch review I3: "gateway_host required for NAT mode" was previously
-# only enforced by NetworkAccessCreate's Pydantic validator — bypassable by
-# an UPDATE (direct -> nat_public on an existing row) or any future caller
-# that skips the schema. This CHECK is the layer that can't be bypassed.
-# Shared byte-for-byte with the hand-written nat2 migration.
-_NETWORK_ACCESS_NAT_GATEWAY_CHECK = (
-    "mode NOT IN ('nat_zt','nat_public') OR gateway_host IS NOT NULL"
+# tr1_transport_axis: the transport axis on provisioning_settings. Shared
+# byte-for-byte with the hand-written tr1 migration; tests/test_transport_axis.py
+# pins them equal.
+#
+# proxy_kind is LOAD-BEARING and deliberately NOT collapsed into
+# "proxy_address IS NOT NULL": dial_target='device' with no proxy is the
+# legitimate public-IP case, so without an explicit intent value the resolver
+# could not tell "no proxy needed" from "a hub is intended but its address is
+# missing" — and the second would silently dial an RFC1918 address from the
+# Railway container. That is the canon R23 fail-closed guarantee.
+_PROVISIONING_DIAL_TARGET_CHECK = "dial_target IN ('device','gateway')"
+_PROVISIONING_PROXY_KIND_CHECK = "proxy_kind IN ('none','socks5')"
+_PROVISIONING_PROXY_ADDRESS_CHECK = (
+    "proxy_kind <> 'socks5' OR proxy_address IS NOT NULL"
 )
-# spec 2026-08-17 §3.1: mirrors _NETWORK_ACCESS_NAT_GATEWAY_CHECK, narrowed to
-# nat_zt only — nat_public has no proxy hop and must not require one.
-_NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
-
-
-# vpn1: mirrors _NETWORK_ACCESS_PYLON_CHECK's shape, narrowed to 'vpn'.
-# Unlike nat_zt, this mode never touches gateway_host — it dials
-# item.mgmt_host directly through the hub's SOCKS5 proxy (see transport.py).
-# 'tunnel' stays reserved for canon C10's edge agent and imposes no column
-# requirement, which is why the mode CHECK needed no change for either name.
-_NETWORK_ACCESS_VPN_CHECK = "mode != 'vpn' OR vpn_socks5 IS NOT NULL"
-
-# ac1 (Capa 3): the per-tenant CWMP Inform authentication gate is only
-# meaningful on an `acs` row — /internal/inform-auth joins the tenant's default
-# kind='acs' row and no other. Expressing decision 8's "default OFF" as a DB
-# constraint (NOT NULL server_default false) plus this CHECK means no code path
-# can arm the gate on the wrong row, including a raw UPDATE.
-_NETWORK_ACCESS_ACS_AUTH_CHECK = "kind = 'acs' OR acs_auth_required = false"
+_PROVISIONING_GATEWAY_HOST_CHECK = (
+    "dial_target <> 'gateway' OR gateway_host IS NOT NULL"
+)
+# The accept-both rotation window is two FKs, so "the pending secret is not the
+# current one" is expressible. "No pending without a current" is NOT: both FKs
+# are ON DELETE SET NULL, so deleting the current credential mid-window would
+# violate such a CHECK through a referential action and turn an ordinary DELETE
+# into a 500. That half is a 409 in backend-erp's router.
+_PROVISIONING_CWMP_PAIR_CHECK = (
+    "cwmp_pending_credential_id IS NULL "
+    "OR cwmp_credential_id <> cwmp_pending_credential_id"
+)
 
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
@@ -1289,119 +1289,14 @@ class ProvisioningJob(Base):
 # ---------------------------------------------------------------------------
 # Network configuration (Cycle 5 Phase 1: TR-069 / GenieACS). Plan:
 # docs/isp-platform/23-network-config-implementation-plan.md §2. Envelope-
-# encrypted device secrets (device_credential, canon C1/C19), per-tenant
-# transport config (network_access, canon C9), serial/OUI -> tenant mapping
-# (acs_device_registration, canon C13), the tenant enable gate
-# (provisioning_settings, canon C6), and the append-only device audit trail
+# encrypted device secrets (device_credential, canon C1/C19), serial/OUI ->
+# tenant mapping (acs_device_registration, canon C13), the tenant enable gate
+# AND per-tenant transport/ACS config (provisioning_settings, canon C6 + C9 —
+# tr1_transport_axis folded the old multi-row network_access table into it),
+# and the append-only device audit trail
 # (device_action_log, canon C14 — append-only enforced by a Postgres trigger
 # created in revision nc1b, not here).
 # ---------------------------------------------------------------------------
-
-class NetworkAccess(Base):
-    """Per-tenant transport configuration (canon C9). Multiple rows per tenant,
-    keyed by `kind` (acs|outbound — 'olt' was renamed to 'outbound' by
-    na1_kind_outbound and is not a kind); the transport resolver reads it keyed on
-    company_id + the target management address. `kind`/`mode` are
-    CHECK-constrained strings (not PG enums) per the c3a/c3b precedent —
-    transport modes are config-flavored and grow by phase. WireGuard keys/PSK
-    are NOT columns here (Phase 2+): they live in a device_credential row of
-    kind WIREGUARD bound via network_access_id (canon C19 — bindings on the
-    credential, no credential FK here)."""
-    __tablename__ = "network_access"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
-    name = Column(String, nullable=False)
-    kind = Column(String, nullable=False)   # CHECK: acs | olt (legacy) | outbound
-    mode = Column(String, nullable=False, default="direct", server_default="direct")  # CHECK
-    is_default = Column(Boolean, nullable=False, default=False, server_default="false")
-    # Which mgmt addresses this path serves (JSON list of CIDR strings); the
-    # resolver does longest-prefix match, else the default row. NULL on the
-    # default row. Atomic config value read whole — never queried per-element.
-    mgmt_subnets = Column(JSON, nullable=True)
-    # Phase-4 per-tenant ACS escape hatch — nullable from day one, unused until P4.
-    acs_base_url = Column(String, nullable=True)
-    # ac1 (Capa 3, decision 8): does this tenant's CPEs have to prove a shared
-    # secret at CWMP Inform? OFF by default, and off means ALLOW — a tenant
-    # that never enrols behaves exactly as before, and so does a serial with no
-    # acs_device_registration row. Both are required or auto-discovery and
-    # quarantine break. Meaningful only on the kind='acs' row
-    # (ck_network_access_acs_auth_required).
-    acs_auth_required = Column(
-        Boolean, nullable=False, default=False, server_default="false"
-    )
-    # spec N1/§8: the tenant gateway's address on the path WE dial — a
-    # ZeroTier address under nat_zt, a public IP or DDNS hostname under
-    # nat_public. Deliberately String, not INET: a nat_zt value is RFC1918 and
-    # a nat_public value may be a hostname, so no "globally routable"
-    # assertion is possible or wanted. NULL on every non-NAT row.
-    gateway_host = Column(String, nullable=True)
-
-    # spec 2026-08-17 N13 (doc 34 OV17): the per-tenant Pylon's SOCKS5
-    # listener as "host:port" — always THIS tenant's own Railway-internal
-    # Pylon service, e.g. "pylon-acme.railway.internal:1080". One `pylon
-    # refract` process joins exactly one ZeroTier network, so a shared fleet
-    # proxy cannot serve two tenants. NULL on every non-nat_zt row, including
-    # nat_public (which dials the gateway over plain egress, no proxy hop).
-    pylon_socks5 = Column(String, nullable=True)
-
-
-    # spec 2026-09-16 (canon C17 `vpn`, revision vpn1_vpn_socks5): the tenant's
-    # own WireGuard-hub SOCKS5 listener, "host:port". Unlike
-    # pylon_socks5/gateway_host under NAT_MODES, this mode dials item.mgmt_host
-    # DIRECTLY — the hub has a real kernel route into the tenant's private
-    # network via WireGuard, not a single port-mapped gateway. NULL on every
-    # non-vpn row.
-    #
-    # Unlike pylon_socks5 (a Railway-INTERNAL address, see above) this is an
-    # EXTERNAL public host:port on a VPS, and microsocks ships with no auth —
-    # the hub's listener MUST be firewalled to Railway's egress or anyone who
-    # learns the address gets a route into the tenant LAN. Prerequisite, not
-    # code: see docs/network-models.md.
-    vpn_socks5 = Column(String, nullable=True)
-
-    company_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-
-    company = relationship("Company", back_populates="network_accesses")
-
-    __table_args__ = (
-        UniqueConstraint("company_id", "name", name="uq_network_access_company_name"),
-        CheckConstraint(_NETWORK_ACCESS_KIND_CHECK, name="ck_network_access_kind"),
-        CheckConstraint(_NETWORK_ACCESS_MODE_CHECK, name="ck_network_access_mode"),
-        CheckConstraint(
-            _NETWORK_ACCESS_NAT_GATEWAY_CHECK, name="ck_network_access_nat_gateway_host"
-        ),
-        CheckConstraint(
-            _NETWORK_ACCESS_PYLON_CHECK, name="ck_network_access_pylon_socks5"
-        ),
-        CheckConstraint(
-            _NETWORK_ACCESS_VPN_CHECK, name="ck_network_access_vpn_socks5"
-        ),
-        CheckConstraint(
-            _NETWORK_ACCESS_ACS_AUTH_CHECK,
-            name="ck_network_access_acs_auth_required",
-        ),
-        # Exactly one default path per tenant PER KIND (one default ACS, one
-        # default outbound). na1_kind_outbound rewrites the kind VALUE in
-        # place, which this index tolerates unchanged — it indexes the column.
-        Index(
-            "uq_network_access_default",
-            "company_id", "kind",
-            unique=True,
-            postgresql_where=text("is_default"),
-            # sqlite_where mirrors postgresql_where so this partial index
-            # behaves the same under the SQLite `create_all()` the test
-            # suite uses — without it, SQLite creates a plain (non-partial)
-            # unique index and rejects any non-default row that shares a
-            # company_id/kind with the default row. No production schema
-            # change: Postgres is migrated by nc1a_network_config_core.
-            sqlite_where=text("is_default"),
-        ),
-    )
-
 
 class DeviceCredential(Base):
     """Envelope-encrypted per-tenant device secret (canon C1/C19). AES-256-GCM
@@ -1412,8 +1307,13 @@ class DeviceCredential(Base):
     has_secret + fingerprint (last 4).
 
     Binding FKs live ON this row (canon C19): resolution order at execution is
-    inventory_item > device_type > network_access default. No other table
-    carries an FK pointing at a credential."""
+    inventory_item > device_type > UNBOUND (both FKs NULL = the company default;
+    tr1_transport_axis removed the third FK, network_access_id, along with the
+    table it pointed at). The tenant's TR-069 Inform credential is the one
+    exception to "no other table carries an FK pointing at a credential":
+    provisioning_settings.cwmp_credential_id / cwmp_pending_credential_id name
+    it explicitly, because there is exactly one per tenant and the accept-both
+    rotation window needs the pair to be stated rather than inferred."""
     __tablename__ = "device_credential"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1441,14 +1341,10 @@ class DeviceCredential(Base):
     device_type_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("device_type.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    network_access_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("network_access.id", ondelete="SET NULL"), nullable=True, index=True
-    )
 
     company = relationship("Company", back_populates="device_credentials")
     inventory_item = relationship("InventoryItem")
     device_type = relationship("DeviceType")
-    network_access = relationship("NetworkAccess")
 
     __table_args__ = (
         UniqueConstraint("company_id", "name", name="uq_device_credential_company_name"),
@@ -1517,7 +1413,8 @@ class AcsDeviceRegistration(Base):
         # is check-then-insert with no DB backstop, and once Capa 3 ships the
         # inform-auth lookup's .first() would hand one tenant's CWMP password
         # to the other's CPE. sqlite_where mirrors postgresql_where, the
-        # uq_network_access_default precedent.
+        # tr1's partial-index precedent (sqlite_where mirroring
+        # postgresql_where).
         Index(
             "uq_acs_registration_serial_no_oui",
             "serial_number",
@@ -1543,10 +1440,17 @@ class AcsDeviceRegistration(Base):
 
 
 class ProvisioningSettings(Base):
-    """Tenant provisioning enable gate — a singleton per tenant (canon C6).
-    Absence of a row means DISABLED (fail-safe); the row is created lazily /
-    by tenant-onboarding automation, never seeded. Not a column on `company`:
-    auth-erp owns that table and this is ISP-module config."""
+    """Per-tenant provisioning, transport and ACS configuration — a singleton per
+    tenant (canon C6 + C9). Absence of a row means DISABLED (fail-safe) and the
+    row is created lazily / by tenant-onboarding automation, never seeded. Not a
+    column on `company`: auth-erp owns that table and this is ISP-module config.
+
+    tr1_transport_axis folded the whole `network_access` table in here. That table
+    was multi-row only to serve a per-CIDR longest-prefix resolver
+    (`mgmt_subnets`) that was never implemented and is now abandoned, and its
+    `kind` discriminator conflated a settings bucket (`acs`) with a transport
+    (`outbound`). Both questions are tenant-wide and mutually exclusive, which is
+    what a singleton is for."""
     __tablename__ = "provisioning_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1562,7 +1466,92 @@ class ProvisioningSettings(Base):
     # the platform default.
     default_inform_interval = Column(Integer, nullable=True)
 
+    # --- the transport axis (tr1_transport_axis) ---------------------------
+    # Whose address the worker dials: the DEVICE's own mgmt_host, or the tenant
+    # gateway that dst-nats to it. Replaces half of the old `mode` enum.
+    dial_target = Column(
+        String, nullable=False, default="device", server_default="device"
+    )
+    # Whether there is a hop in front of that address, and of what sort. The
+    # other half of the old `mode`. 'agent' (canon C10's edge relay) is the
+    # planned third value and needs no new column.
+    proxy_kind = Column(String, nullable=False, default="none", server_default="none")
+    # The SOCKS5 listener as "host:port"; REQUIRED when proxy_kind='socks5'
+    # (ck_provisioning_settings_proxy_address). The hub technology is NOT
+    # recorded and is none of the resolver's business — a Railway-internal
+    # Pylon/ZeroTier proxy and an external WireGuard-hub VPS are the same thing
+    # here.
+    #
+    # SECURITY PREREQUISITE, not code: an external value (a VPS running
+    # microsocks, which ships with no authentication) MUST be firewalled to
+    # Railway's egress, or anyone who learns the address gets a route into the
+    # tenant LAN. See docs/network-models.md.
+    proxy_address = Column(String, nullable=True)
+    # The tenant gateway's address on the path WE dial; REQUIRED when
+    # dial_target='gateway' (ck_provisioning_settings_gateway_host). Deliberately
+    # String, not INET: a ZeroTier value is RFC1918 and a public value may be a
+    # DDNS hostname, so no "globally routable" assertion is possible or wanted.
+    # The per-device external port is inventory_item.nat_port, unchanged.
+    gateway_host = Column(String, nullable=True)
+
+    # --- ACS config, moved off network_access (tr1_transport_axis) ----------
+    # Informational ONLY and read-only in the UI: nothing in code reads it. Its
+    # job is telling an installer what to type into a CPE. It is deliberately
+    # absent from ProvisioningSettingsUpdate so no write path can set it — an
+    # `http://` value here would turn every CWMP POST into a bodyless GET at
+    # Railway's edge, and an orphaned CPE has no remote fix.
+    acs_base_url = Column(String, nullable=True)
+    # ac1 (Capa 3, decision 8): do this tenant's CPEs have to prove a shared
+    # secret at CWMP Inform? OFF by default, and off means ALLOW — a tenant that
+    # never enrols behaves exactly as before, and so does a serial with no
+    # acs_device_registration row. Both are required or auto-discovery and
+    # quarantine break.
+    acs_auth_required = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # --- the tenant TR-069 credential (tr1_transport_axis) ------------------
+    # decision 12's accept-both rotation window, made EXPLICIT. It used to be
+    # inferred as "newest vs second-newest HTTP_BASIC device_credential row bound
+    # to the tenant's acs network_access row", which was fragile in both
+    # directions: a third row was undefined, and the pair depended on a
+    # `created_at DESC, id DESC` tie-break. One credential per tenant is now true
+    # by construction.
+    cwmp_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_credential.id", ondelete="SET NULL"), nullable=True
+    )
+    cwmp_pending_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_credential.id", ondelete="SET NULL"), nullable=True
+    )
+
     company = relationship("Company", back_populates="provisioning_settings")
+    cwmp_credential = relationship(
+        "DeviceCredential", foreign_keys=[cwmp_credential_id]
+    )
+    cwmp_pending_credential = relationship(
+        "DeviceCredential", foreign_keys=[cwmp_pending_credential_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            _PROVISIONING_DIAL_TARGET_CHECK,
+            name="ck_provisioning_settings_dial_target",
+        ),
+        CheckConstraint(
+            _PROVISIONING_PROXY_KIND_CHECK, name="ck_provisioning_settings_proxy_kind"
+        ),
+        CheckConstraint(
+            _PROVISIONING_PROXY_ADDRESS_CHECK,
+            name="ck_provisioning_settings_proxy_address",
+        ),
+        CheckConstraint(
+            _PROVISIONING_GATEWAY_HOST_CHECK,
+            name="ck_provisioning_settings_gateway_host",
+        ),
+        CheckConstraint(
+            _PROVISIONING_CWMP_PAIR_CHECK, name="ck_provisioning_settings_cwmp_pair"
+        ),
+    )
 
 
 class DeviceActionLog(Base):

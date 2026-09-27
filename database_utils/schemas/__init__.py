@@ -27,7 +27,6 @@ from .workflow_template import *
 from .insight import *
 # Cycle 5 Phase 1: network configuration (TR-069 / GenieACS)
 from .device_credential import *
-from .network_access import *
 from .acs_registration import *
 from .provisioning_settings import *
 from .device_action_log import *

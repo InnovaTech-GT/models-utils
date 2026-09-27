@@ -79,14 +79,13 @@ from .isp import (
     InsightChart,
     InsightChartType,
     # Cycle 5 Phase 1: network configuration (TR-069 / GenieACS)
-    NetworkAccess,
     DeviceCredential,
     AcsDeviceRegistration,
     ProvisioningSettings,
     DeviceActionLog,
     CREDENTIAL_KINDS,
-    NETWORK_ACCESS_KINDS,
-    NETWORK_ACCESS_MODES,
+    DIAL_TARGETS,
+    PROXY_KINDS,
     ACS_STALE_AFTER_SECONDS,
 )
 
@@ -182,14 +181,13 @@ __all__ = [
     "InsightChart",
     "InsightChartType",
     # Network configuration (Cycle 5 Phase 1)
-    "NetworkAccess",
     "DeviceCredential",
     "AcsDeviceRegistration",
     "ProvisioningSettings",
     "DeviceActionLog",
     "CREDENTIAL_KINDS",
-    "NETWORK_ACCESS_KINDS",
-    "NETWORK_ACCESS_MODES",
+    "DIAL_TARGETS",
+    "PROXY_KINDS",
     "ACS_STALE_AFTER_SECONDS",
     # Workflows
     "WorkflowTemplate",
