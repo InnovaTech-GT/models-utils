@@ -20,6 +20,40 @@
   a separate, later destructive-change release (all consuming code already
   removed from every service — this is purely the drop-after-prod rule).
 
+## Transport and Capa 3 (2026-09-25) — shipped limitations
+
+- **No WireGuard hub exists yet.** The `vpn` code path is complete and unit
+  tested, but nothing has ever dialled through a real hub. `vpn_socks5` also
+  differs from `pylon_socks5` in a way that is a security prerequisite, not a
+  code change: it is an **external, public** address and `microsocks` has no
+  auth by default, so the hub's listener must be firewalled to Railway's egress.
+  See [network-models.md](network-models.md).
+- **Nothing expires a credential rotation window.** The accept-both window is
+  two `DeviceCredential` rows and closing it is a manual delete of the older
+  row. There is no reaper, and more than two `HTTP_BASIC` rows bound to one
+  `acs` row is undefined (only two AUTH branches exist; the two newest win).
+- **The Capa 3 gate fails OPEN.** An EXT fault or timeout, or an absent
+  `cwmp.auth` document, is ALLOW. Deliberate — the alternative drops every CPE
+  of every tenant during a backend blip — but it means a backend outage silently
+  disables the gate rather than announcing itself.
+- **Pre-existing `oui = ''` rows are left alone, but no new one can be written.**
+  `ac1`'s partial UNIQUE covers `oui IS NULL` only, and a NULL row and a `''` row
+  for the same serial are distinct under `uq_acs_registration_identity` too — so
+  `('','SN1')` plus `(NULL,'SN1')` both committed and two tenants could claim one
+  serial, defeating the index. `_normalize_oui` now returns `None` for a blank
+  value, so every write path lands on NULL and the index covers it. No data
+  conversion ships: converting existing `''` rows would collide with the index
+  ac1 has just built. Legacy `''` rows stay readable and are tolerated by
+  backend-erp's `_no_oui_filter()`; run
+  `select serial_number, count(*) from acs_device_registration where oui is null or oui = '' group by 1 having count(*) > 1`
+  before arming a tenant.
+- **A 500 no longer logs handler arguments.** `handle_exceptions` used to write
+  `args`/`kwargs` to loguru, which put `DeviceCredentialCreate.secret` and
+  `RotationStartRequest.secret` — a tenant's whole-fleet CWMP password — in the
+  logs on any unexpected error. It now logs argument *types* and keyword *names*
+  only, so a 500 inside a secret-carrying handler is less diagnosable from the log
+  alone; reproduce it against a scratch DB instead.
+
 ## The network graph (Cycle 10, doc 35 §10) — shipped limitations
 
 These are known and accepted, not oversights. They are the price of the model

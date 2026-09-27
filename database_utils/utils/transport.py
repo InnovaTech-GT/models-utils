@@ -33,19 +33,25 @@ from database_utils.models.isp import NAT_MODES, NetworkAccess
 class ResolvedEndpoint:
     host: str
     port: int
-    proxy: Optional[str]   # SOCKS5 "host:port" for nat_zt, else None
+    proxy: Optional[str]   # SOCKS5 "host:port" for nat_zt and vpn, else None
     mode: str
 
 
-def _default_olt_access(db, company_id) -> Optional[NetworkAccess]:
-    """The tenant's default 'olt'-kind transport row. This is the same row the
+def default_outbound_access(db, company_id) -> Optional[NetworkAccess]:
+    """The tenant's default outbound transport row. This is the same row the
     canon C19 credential resolver already needs, so callers should pass it on
-    rather than querying twice."""
+    rather than querying twice.
+
+    PUBLIC on purpose: backend-erp's cli driver and provisioning worker each
+    carried their own byte-identical copy of this query, each docstring
+    claiming to be the canonical one. Three copies is how the kind string
+    drifts; they import this instead.
+    """
     return (
         db.query(NetworkAccess)
         .filter(
             NetworkAccess.company_id == company_id,
-            NetworkAccess.kind == "olt",
+            NetworkAccess.kind == "outbound",
             NetworkAccess.is_default.is_(True),
         )
         .first()
@@ -69,7 +75,7 @@ def resolve_endpoint(
     when omitted it is queried here.
     """
     if access is None:
-        access = _default_olt_access(db, company_id)
+        access = default_outbound_access(db, company_id)
     elif access.company_id != company_id:
         # Whole-branch review I4: a caller-supplied `access` row is trusted
         # verbatim — nothing here confirmed it belongs to `company_id`. In a
@@ -97,6 +103,26 @@ def resolve_endpoint(
                 # is no fleet proxy to fall back to, by design (spec N13).
                 return None, "PYLON_NOT_PROVISIONED"
         return ResolvedEndpoint(gateway_host, int(item.nat_port), proxy, mode), None
+
+    if mode == "vpn":
+        # Unlike NAT_MODES, this dials item.mgmt_host DIRECTLY — the hub has
+        # a real kernel route into the tenant's private network via
+        # WireGuard (validated 2026-09-15/16 against a live MikroTik gateway
+        # + CPE), not a single port-mapped gateway. vpn_socks5 is only the
+        # proxy hop, mirroring nat_zt's PYLON_NOT_PROVISIONED shape but with
+        # its own code (canon C17) so the two failures stay diagnostically
+        # distinct, same reasoning as N12's split.
+        #
+        # VPN_NOT_PROVISIONED stays reachable even with
+        # ck_network_access_vpn_socks5 in place: the CHECK only demands NOT
+        # NULL, so an empty string commits and lands here.
+        proxy = (access.vpn_socks5 or "").strip() or None
+        if proxy is None:
+            return None, "VPN_NOT_PROVISIONED"
+        host = (item.mgmt_host or "").strip()
+        if not host:
+            return None, "MGMT_HOST_NOT_SET"
+        return ResolvedEndpoint(host, item.mgmt_port or default_port, proxy, mode), None
 
     host = (item.mgmt_host or "").strip()
     if not host:

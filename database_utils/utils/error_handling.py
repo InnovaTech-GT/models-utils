@@ -19,7 +19,15 @@ def handle_exceptions(func: Callable[..., T]) -> Callable[..., T]:
             # Re-raise FastAPI HTTP exceptions as they're already formatted correctly
             raise
         except Exception as e:
-            logger.error(f"{args = } :: {kwargs = }")
+            # Argument TYPES and keyword NAMES only, never values: every
+            # handler decorated with this receives its request body, and the
+            # Capa 3 bodies carry plaintext secrets (DeviceCredentialCreate.
+            # secret, RotationStartRequest.secret). Dumping them wrote a
+            # tenant's CWMP fleet password into loguru on any 500.
+            logger.error(
+                f"{func.__name__} args={[type(a).__name__ for a in args]} "
+                f"kwargs={sorted(kwargs)}"
+            )
             logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
             # Convert generic exceptions to HTTPException
             raise HTTPException(

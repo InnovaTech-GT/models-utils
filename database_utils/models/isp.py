@@ -251,8 +251,12 @@ CREDENTIAL_KINDS = (
     "HTTP_BASIC", "HTTP_BEARER", "WIREGUARD", "AGENT",
 )
 
-# canon C9: network-access transport shape.
-NETWORK_ACCESS_KINDS = ("acs", "olt")
+# canon C9: network-access transport shape. `outbound` was called `olt` until
+# revision na1_kind_outbound — the row is the tenant's default OUTBOUND path
+# for every managed device, not an OLT-specific one.
+# One tuple, used for both reads and writes: na1_kind_outbound narrows the DB
+# CHECK to the same pair, so no stored row can carry anything else.
+NETWORK_ACCESS_KINDS = ("acs", "outbound")
 NETWORK_ACCESS_MODES = ("direct", "vpn", "tunnel", "nat_zt", "nat_public")
 # spec N2: the two variants of gateway port-mapping. Both resolve the dial
 # target to (network_access.gateway_host, inventory_item.nat_port); they differ
@@ -267,7 +271,9 @@ ACS_STALE_AFTER_SECONDS = 900
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
 _CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
-_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','olt')"
+# SWAPPED by na1_kind_outbound: 'olt' was renamed to 'outbound' and is no
+# longer legal. nc1a's copy is immutable and keeps ('acs','olt').
+_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','outbound')"
 _NETWORK_ACCESS_MODE_CHECK = "mode IN ('direct','vpn','tunnel','nat_zt','nat_public')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
@@ -288,6 +294,20 @@ _NETWORK_ACCESS_NAT_GATEWAY_CHECK = (
 # nat_zt only — nat_public has no proxy hop and must not require one.
 _NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
 
+
+# vpn1: mirrors _NETWORK_ACCESS_PYLON_CHECK's shape, narrowed to 'vpn'.
+# Unlike nat_zt, this mode never touches gateway_host — it dials
+# item.mgmt_host directly through the hub's SOCKS5 proxy (see transport.py).
+# 'tunnel' stays reserved for canon C10's edge agent and imposes no column
+# requirement, which is why the mode CHECK needed no change for either name.
+_NETWORK_ACCESS_VPN_CHECK = "mode != 'vpn' OR vpn_socks5 IS NOT NULL"
+
+# ac1 (Capa 3): the per-tenant CWMP Inform authentication gate is only
+# meaningful on an `acs` row — /internal/inform-auth joins the tenant's default
+# kind='acs' row and no other. Expressing decision 8's "default OFF" as a DB
+# constraint (NOT NULL server_default false) plus this CHECK means no code path
+# can arm the gate on the wrong row, including a raw UPDATE.
+_NETWORK_ACCESS_ACS_AUTH_CHECK = "kind = 'acs' OR acs_auth_required = false"
 
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
@@ -1279,7 +1299,8 @@ class ProvisioningJob(Base):
 
 class NetworkAccess(Base):
     """Per-tenant transport configuration (canon C9). Multiple rows per tenant,
-    keyed by `kind` (acs|olt); the transport resolver reads it keyed on
+    keyed by `kind` (acs|outbound — 'olt' was renamed to 'outbound' by
+    na1_kind_outbound and is not a kind); the transport resolver reads it keyed on
     company_id + the target management address. `kind`/`mode` are
     CHECK-constrained strings (not PG enums) per the c3a/c3b precedent —
     transport modes are config-flavored and grow by phase. WireGuard keys/PSK
@@ -1292,7 +1313,7 @@ class NetworkAccess(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
     name = Column(String, nullable=False)
-    kind = Column(String, nullable=False)   # CHECK: acs | olt
+    kind = Column(String, nullable=False)   # CHECK: acs | olt (legacy) | outbound
     mode = Column(String, nullable=False, default="direct", server_default="direct")  # CHECK
     is_default = Column(Boolean, nullable=False, default=False, server_default="false")
     # Which mgmt addresses this path serves (JSON list of CIDR strings); the
@@ -1301,6 +1322,15 @@ class NetworkAccess(Base):
     mgmt_subnets = Column(JSON, nullable=True)
     # Phase-4 per-tenant ACS escape hatch — nullable from day one, unused until P4.
     acs_base_url = Column(String, nullable=True)
+    # ac1 (Capa 3, decision 8): does this tenant's CPEs have to prove a shared
+    # secret at CWMP Inform? OFF by default, and off means ALLOW — a tenant
+    # that never enrols behaves exactly as before, and so does a serial with no
+    # acs_device_registration row. Both are required or auto-discovery and
+    # quarantine break. Meaningful only on the kind='acs' row
+    # (ck_network_access_acs_auth_required).
+    acs_auth_required = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # spec N1/§8: the tenant gateway's address on the path WE dial — a
     # ZeroTier address under nat_zt, a public IP or DDNS hostname under
     # nat_public. Deliberately String, not INET: a nat_zt value is RFC1918 and
@@ -1315,6 +1345,21 @@ class NetworkAccess(Base):
     # proxy cannot serve two tenants. NULL on every non-nat_zt row, including
     # nat_public (which dials the gateway over plain egress, no proxy hop).
     pylon_socks5 = Column(String, nullable=True)
+
+
+    # spec 2026-09-16 (canon C17 `vpn`, revision vpn1_vpn_socks5): the tenant's
+    # own WireGuard-hub SOCKS5 listener, "host:port". Unlike
+    # pylon_socks5/gateway_host under NAT_MODES, this mode dials item.mgmt_host
+    # DIRECTLY — the hub has a real kernel route into the tenant's private
+    # network via WireGuard, not a single port-mapped gateway. NULL on every
+    # non-vpn row.
+    #
+    # Unlike pylon_socks5 (a Railway-INTERNAL address, see above) this is an
+    # EXTERNAL public host:port on a VPS, and microsocks ships with no auth —
+    # the hub's listener MUST be firewalled to Railway's egress or anyone who
+    # learns the address gets a route into the tenant LAN. Prerequisite, not
+    # code: see docs/network-models.md.
+    vpn_socks5 = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1332,8 +1377,16 @@ class NetworkAccess(Base):
         CheckConstraint(
             _NETWORK_ACCESS_PYLON_CHECK, name="ck_network_access_pylon_socks5"
         ),
+        CheckConstraint(
+            _NETWORK_ACCESS_VPN_CHECK, name="ck_network_access_vpn_socks5"
+        ),
+        CheckConstraint(
+            _NETWORK_ACCESS_ACS_AUTH_CHECK,
+            name="ck_network_access_acs_auth_required",
+        ),
         # Exactly one default path per tenant PER KIND (one default ACS, one
-        # default OLT).
+        # default outbound). na1_kind_outbound rewrites the kind VALUE in
+        # place, which this index tolerates unchanged — it indexes the column.
         Index(
             "uq_network_access_default",
             "company_id", "kind",
@@ -1456,6 +1509,22 @@ class AcsDeviceRegistration(Base):
 
     __table_args__ = (
         UniqueConstraint("oui", "serial_number", name="uq_acs_registration_identity"),
+        # The UNIQUE above does NOT constrain rows whose oui is NULL (Postgres
+        # treats NULLs as distinct), and `oui` IS nullable — _normalize_oui
+        # (schemas/acs_registration.py) returns None unchanged for an omitted
+        # OUI, so NULL-oui rows are ordinary API output. Without this index two
+        # tenants can both pre-register the same serial: the router's 409 check
+        # is check-then-insert with no DB backstop, and once Capa 3 ships the
+        # inform-auth lookup's .first() would hand one tenant's CWMP password
+        # to the other's CPE. sqlite_where mirrors postgresql_where, the
+        # uq_network_access_default precedent.
+        Index(
+            "uq_acs_registration_serial_no_oui",
+            "serial_number",
+            unique=True,
+            postgresql_where=text("oui IS NULL"),
+            sqlite_where=text("oui IS NULL"),
+        ),
     )
 
     @property

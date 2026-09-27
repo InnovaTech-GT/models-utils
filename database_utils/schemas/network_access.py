@@ -1,7 +1,8 @@
 # schemas/network_access.py
 """
 Network access (Cycle 5 Phase 1, canon C9): per-tenant transport configuration,
-multiple rows per tenant keyed by `kind` (acs|olt). Plan:
+multiple rows per tenant keyed by `kind` (acs|outbound — 'olt' was renamed to
+'outbound' by na1_kind_outbound and is not a kind). Plan:
 docs/isp-platform/23-network-config-implementation-plan.md §2.2.
 
 CIDR validation (valid networks) lives here in the schema, not the DB — same
@@ -14,7 +15,11 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 
-from database_utils.models.isp import NETWORK_ACCESS_KINDS, NETWORK_ACCESS_MODES, NAT_MODES
+from database_utils.models.isp import (
+    NETWORK_ACCESS_KINDS,
+    NETWORK_ACCESS_MODES,
+    NAT_MODES,
+)
 
 
 def _validate_subnets(v: Optional[List[str]]) -> Optional[List[str]]:
@@ -43,6 +48,15 @@ class NetworkAccessBase(BaseModel):
     # "host:port". Required only for nat_zt — nat_public has no proxy hop.
     pylon_socks5: Optional[str] = None
 
+    # canon C17 `vpn`: the tenant's own WireGuard-hub SOCKS5 listener,
+    # "host:port". Required only for vpn — direct/tunnel/nat_* don't use it
+    # ('tunnel' is the reserved canon C10 edge-agent mode and carries no
+    # column requirement of its own).
+    vpn_socks5: Optional[str] = None
+    # ac1 (Capa 3, decision 8): per-tenant CWMP Inform authentication gate.
+    # Meaningful only on the kind='acs' row; default OFF, and OFF means ALLOW.
+    acs_auth_required: bool = False
+
     @field_validator("kind")
     @classmethod
     def validate_kind(cls, v: str) -> str:
@@ -68,10 +82,17 @@ class NetworkAccessBase(BaseModel):
             raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode == "nat_zt" and not (self.pylon_socks5 or "").strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
+        if self.mode == "vpn" and not (self.vpn_socks5 or "").strip():
+            raise ValueError("vpn_socks5 is required when mode is 'vpn'")
+        # Mirrors ck_network_access_acs_auth_required so the API answers 422
+        # instead of letting the DB CHECK surface as a 500.
+        if self.acs_auth_required and self.kind != "acs":
+            raise ValueError("acs_auth_required is only valid when kind is 'acs'")
         return self
 
 
 class NetworkAccessCreate(NetworkAccessBase):
+    # No overrides: the base validator is already the one write set.
     pass
 
 
@@ -84,6 +105,11 @@ class NetworkAccessUpdate(BaseModel):
     acs_base_url: Optional[str] = None
     gateway_host: Optional[str] = None
     pylon_socks5: Optional[str] = None
+    vpn_socks5: Optional[str] = None
+    # Flipping the Capa 3 gate. Whether the target row is kind='acs' is not
+    # visible here (same merged-row blind spot as the mode checks above), so
+    # that half is the DB CHECK's and the router's.
+    acs_auth_required: Optional[bool] = None
 
     @field_validator("kind")
     @classmethod
@@ -117,12 +143,24 @@ class NetworkAccessUpdate(BaseModel):
         # `mode` (being set to a NAT mode) and a blank `gateway_host` are
         # submitted together in the same request — the exact "direct ->
         # nat_public with no gateway_host" tenant flow the review flagged.
-        # The DB CHECK is what closes every other path.
+        # The DB CHECK is what closes every other path, EXCEPT two that only
+        # backend-erp's router can (it is the only layer that sees the merged
+        # row) and which it closes as GATEWAY_HOST_REQUIRED /
+        # PYLON_SOCKS5_REQUIRED / VPN_SOCKS5_REQUIRED:
+        #   * PATCH {"mode": "vpn"} alone — legal when the row already holds a
+        #     vpn_socks5, an IntegrityError when it does not. Requiring the
+        #     column here would forbid the legal case, so this validator must
+        #     NOT be tightened.
+        #   * PATCH {"vpn_socks5": ""} on an existing vpn row — '' is NOT
+        #     NULL, so the CHECK passes, the row commits, and NetworkAccessOut
+        #     then refuses to serialize it, poisoning every later GET.
         if self.mode is not None and self.mode in NAT_MODES:
             if self.gateway_host is not None and not self.gateway_host.strip():
                 raise ValueError(f"gateway_host is required when mode is '{self.mode}'")
         if self.mode is not None and self.mode == "nat_zt" and self.pylon_socks5 is not None and not self.pylon_socks5.strip():
             raise ValueError("pylon_socks5 is required when mode is 'nat_zt'")
+        if self.mode is not None and self.mode == "vpn" and self.vpn_socks5 is not None and not self.vpn_socks5.strip():
+            raise ValueError("vpn_socks5 is required when mode is 'vpn'")
         return self
 
 

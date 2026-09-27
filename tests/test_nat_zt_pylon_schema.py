@@ -7,13 +7,13 @@ from database_utils.schemas.network_access import NetworkAccessCreate, NetworkAc
 
 def test_nat_zt_create_requires_pylon_socks5():
     with pytest.raises(ValidationError) as exc:
-        NetworkAccessCreate(name="gw", kind="olt", mode="nat_zt", gateway_host="10.147.3.1")
+        NetworkAccessCreate(name="gw", kind="outbound", mode="nat_zt", gateway_host="10.147.3.1")
     assert "pylon_socks5" in str(exc.value)
 
 
 def test_nat_zt_create_accepts_a_railway_internal_hostname():
     row = NetworkAccessCreate(
-        name="gw", kind="olt", mode="nat_zt",
+        name="gw", kind="outbound", mode="nat_zt",
         gateway_host="10.147.3.1", pylon_socks5="pylon-acme.railway.internal:1080",
     )
     assert row.pylon_socks5 == "pylon-acme.railway.internal:1080"
@@ -21,7 +21,7 @@ def test_nat_zt_create_accepts_a_railway_internal_hostname():
 
 def test_nat_public_does_not_require_pylon_socks5():
     row = NetworkAccessCreate(
-        name="gw", kind="olt", mode="nat_public", gateway_host="200.9.9.9",
+        name="gw", kind="outbound", mode="nat_public", gateway_host="200.9.9.9",
     )
     assert row.pylon_socks5 is None
 

@@ -444,7 +444,7 @@ the sixteen are. `downgrade()` reactivates all 22 (the pre-trim state).
 insert on a brand-new database already lands in the trimmed state instead of
 depending on this migration ever having run against it.
 
-### `iv1_insights_v2` (2026-09-18, head)
+### `iv1_insights_v2` (2026-09-18)
 
 On `dc1_category_trim`. Insights v2 persistence (uplink-workspace spec
 `docs/superpowers/specs/2026-09-18-insights-v2-design.md` §5.1). Hand-written
@@ -462,6 +462,121 @@ the two columns. The `LINE` label stays: a documented no-op, because PG cannot d
 enum labels (precedents `c1e`, `nc1a`, `pm1`, `tj1`). Verified on PG 16 with
 upgrade → guarded downgrade → downgrade → re-upgrade on a scratch database.
 Guardrails: `tests/test_insights_v2.py`.
+
+### `vpn1_vpn_socks5` (2026-09-25)
+
+On `iv1_insights_v2`. Adds `network_access.vpn_socks5` (String, nullable) — the
+tenant's own WireGuard-hub SOCKS5 listener — plus CHECK
+`ck_network_access_vpn_socks5` (`mode != 'vpn' OR vpn_socks5 IS NOT NULL`).
+Shape copied from `nat3_pylon_socks5`, but the mode dials `item.mgmt_host`
+DIRECTLY: the hub holds a real kernel route into the tenant LAN via WireGuard,
+so `vpn_socks5` is only the proxy hop and never replaces `mgmt_host` the way
+`gateway_host` does under `NAT_MODES`.
+
+Authored by Mario Cano as `tun1_tunnel_socks5` (mode `tunnel`, column
+`tunnel_socks5`) and renamed here: the mode he built and lab-validated IS canon
+C17's `vpn` (WireGuard + SOCKS5), assembled from an external VPS hub instead of
+the in-container userspace wireproxy C17 specced. `tunnel` stays reserved for
+canon C10's edge agent and stays in backend-erp's `_UNSHIPPED_MODES`. The
+original was also parented on `ng2_provisioning_run_list`, an interior node that
+already had a child, so merging it forked the graph and `alembic upgrade head`
+aborted with `Multiple head revisions are present` — re-parented onto the real
+head. **No mode-CHECK change:** `vpn` was already in `NETWORK_ACCESS_MODES` and
+`ck_network_access_mode`.
+
+Unlike `nat2`/`nat3` the clamp (`UPDATE network_access SET mode='direct' WHERE
+mode='vpn' AND vpn_socks5 IS NULL`) is a REAL backfill, not a defensive no-op:
+`vpn` has been API-creatable since `nc1a` while `resolve_endpoint` had no vpn
+branch. It also has to run BEFORE any backend carrying the new schema deploys —
+`NetworkAccessOut` inherits `NetworkAccessBase`'s validator, so a proxy-less
+`vpn` row would otherwise 500 every `GET /network-access/` for that tenant.
+That is a second, independent reason the models-utils-first push order is not
+optional. `downgrade()` drops the column and CHECK cleanly. Guardrails:
+`tests/test_vpn_transport_constants.py`.
+
+### `na1_kind_outbound` (2026-09-25)
+
+On `vpn1_vpn_socks5`. Renames the `network_access.kind` value `olt` to
+`outbound` — the row was never OLT-specific, it is the tenant's default
+OUTBOUND path for every managed device.
+
+**The CHECK is SWAPPED, not widened**: `ck_network_access_kind` becomes
+`kind IN ('acs','outbound')`, the rows are rewritten (`UPDATE ... WHERE
+kind='olt'`), and a post-upgrade assertion raises `RuntimeError` if any `olt`
+survives. `'olt'` is no longer a legal value on any path — write, read or
+stored.
+
+An earlier draft of this revision was additive (widen now, narrow next cycle)
+because `NetworkAccessOut` inherits `NetworkAccessBase.validate_kind`, so a
+backend still pinned to the previous models-utils raises on every
+`network_access` READ of a rewritten row; models-utils must migrate FIRST (the
+additive columns in `vpn1`/`ac1` are SELECTed by the new ORM), while a rename
+normally demands consuming code first (the workspace pitfall "removing or
+renaming: all consuming service code must be in production FIRST"). That
+conflict only bites if rows exist. Both the Railway `development` and the
+production databases were checked before this revision was finalised:
+`network_access` holds **zero** rows in both and both sit at
+`alembic_version = iv1_insights_v2`, so there is no row to poison and no window
+to protect. The `UPDATE` is kept anyway — harmless on both, and correct for a
+developer's local database that does hold an `olt` row. If `network_access`
+ever holds live rows again, the safe sequence for a value rename is the old
+one: widen, deploy every consumer, rewrite, narrow.
+
+Order inside `upgrade()` is load-bearing — neither CHECK admits both spellings,
+so the constraint is dropped, the rows are rewritten, and only then is the
+narrow CHECK created. `uq_network_access_default` (UNIQUE
+`(company_id, kind)` WHERE `is_default`) needs no recreation: it indexes the
+column, and an in-place value UPDATE preserves uniqueness (no `outbound` row
+could pre-exist). `nc1a_network_config_core.py`'s fragment copy stays
+`('acs','olt')` — immutable, and correct for the schema as of `nc1a`; a fresh
+database migrates `nc1a -> ... -> na1` and ends correct.
+
+### `ac1_acs_tenant_auth` (2026-09-25, head)
+
+On `na1_kind_outbound`. Capa 3: a CPE identifies itself to GenieACS by serial
+number alone — printed on its label — so tenant attribution rests on public
+data. This revision carries the schema half of the credential proof. Attribution
+itself stays serial-derived (no GenieACS patching); the password only
+authenticates it.
+
+- `network_access.acs_auth_required` BOOLEAN NOT NULL `server_default false`.
+  Default-OFF is expressed as a DB constraint, not app code: OFF means ALLOW, so
+  a tenant that never enrols behaves exactly as today.
+- CHECK `ck_network_access_acs_auth_required` (`kind = 'acs' OR
+  acs_auth_required = false`) — the gate is only read off the tenant's default
+  `kind='acs'` row, and the CHECK stops a raw UPDATE arming it where nothing
+  looks.
+- Partial UNIQUE `uq_acs_registration_serial_no_oui` on
+  `acs_device_registration (serial_number) WHERE oui IS NULL`. A multi-tenancy
+  fix, not housekeeping: `uq_acs_registration_identity` is a plain two-column
+  UNIQUE, Postgres treats NULLs as distinct, `oui` is nullable and
+  `_normalize_oui` returns `None` unchanged for an omitted OUI — so `(NULL,
+  serial)` can repeat today and the router's 409 is check-then-insert with no DB
+  backstop. Once the gate is armed, a duplicated serial lets the inform-auth
+  lookup's `.first()` hand one tenant's CWMP password to another tenant's CPE.
+  Built behind a pre-check that names the offending serials rather than failing
+  the release with a bare index-build error.
+- The `device_credentials.reveal` permission row (no role grant — ADMIN-only, and ADMIN comes from the convergent seed), cfg3 recipe
+  (idempotent `INSERT ... ON CONFLICT (name) DO NOTHING`, per-role grant,
+  post-upgrade count assertion, total `downgrade()`). ADMIN comes from the
+  convergent seed; MANAGER is withheld because the name is in BOTH
+  `isp_seed.ADMIN_ONLY_PERMISSIONS` and
+  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`. Dropping it from either tuple hands
+  every tenant manager the tenant's ACS password, which is why
+  `tests/test_attested_adoption.py` pins both.
+
+**No `pending_*` columns, and deliberately no unique index on `(company_id,
+network_access_id)`.** The accept-both rotation window is a SECOND
+`DeviceCredential` row bound to the same `acs` row (`informPassword` = newest,
+`informPendingPassword` = second-newest; rotation is create-new -> roll out ->
+delete-old, and `POST /{id}/rotate` is not used for this credential). Such an
+index would forbid exactly that row.
+
+Verified on PG 16 on a scratch database: `upgrade head` -> `downgrade
+iv1_insights_v2` -> `upgrade head` -> `downgrade`, with a seeded legacy row
+proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
+an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
+Guardrails: `tests/test_vpn_transport_constants.py`.
 
 ## Key rules
 
