@@ -18,7 +18,7 @@ Docs wiki: [docs/README.md](docs/README.md) · Navigation: [CODEBASE_INDEX.md](C
 
 ```bash
 pip install -e .                                  # editable local dev
-pytest -v                                         # 418 tests, in-memory SQLite (needs placeholder POSTGRES_* env)
+pytest -v                                         # 422 tests, in-memory SQLite (needs placeholder POSTGRES_* env)
 alembic revision --autogenerate -m "description"  # generate revision (needs reachable DB env)
 ```
 
@@ -58,9 +58,9 @@ Correct order:
 - `database_utils/middleware/` — request-ID/JWT-context logging ASGI middleware
 - `database_utils/services/email_service.py` + `database_utils/templates/email/` — transactional email (SMTP via aiosmtplib) + 8 Jinja2 templates (shipped via `[options.package_data]`)
 - `database_utils/database.py` — engine bootstrap from `DATABASE_URL`/`DB_URL`/`POSTGRES_*` (raises at import if none)
-- `alembic/` — 82 revisions (head: `ts1_task_status`, on `tr1_transport_axis` ← `ac1_acs_tenant_auth` ← `na1_kind_outbound` ← `vpn1_vpn_socks5` ← `iv1_insights_v2`, on `dc1_category_trim` ← `fg1_integration_enabled_regby` ← `ng2_provisioning_run_list` ← `nat3_pylon_socks5` ← `nat2_gateway_host_check` ← `nat1_gateway_transport` ← `ng2_topology_drop` ← `ng1_network_graph` ← `lc2_retire_susp_react`); `env.py` imports all model modules and runs seeds after upgrade
+- `alembic/` — 83 revisions (head: `dr1_task_route_sequence`, on `ts1_task_status` ← `tr1_transport_axis` ← `ac1_acs_tenant_auth` ← `na1_kind_outbound` ← `vpn1_vpn_socks5` ← `iv1_insights_v2`, on `dc1_category_trim` ← `fg1_integration_enabled_regby` ← `ng2_provisioning_run_list` ← `nat3_pylon_socks5` ← `nat2_gateway_host_check` ← `nat1_gateway_transport` ← `ng2_topology_drop` ← `ng1_network_graph` ← `lc2_retire_susp_react`); `env.py` imports all model modules and runs seeds after upgrade
 - `alembic/seeds/` — idempotent seed scripts: `rbac_seed.py`, `tier_seed.py`, `isp_seed.py` (importable as `seeds.*` because `env.py` adds the alembic dir to `sys.path`). `isp_seed.DEVICE_CATEGORIES` rows are 7-wide `(key, name, sort_order, tier, is_passive, icon, is_active)` since `dc1_category_trim`; passive = SPLITTER / SPLICE_CLOSURE / MUFA / PATCH_PANEL / ANTENNA (UPS and RADIO deliberately stay configurable). The nine `inv1` keys are skipped at pre-`inv1` migration positions (the old tier CHECK forbids CONSUMABLE/TOOL/OTHER). Only 6 of the 22 keys are `is_active` on a fresh insert — ROUTER/SWITCH/OLT/ONU/FIBER_OPTIC/PATCH_CORD, the ones backend-erp seeds as every tenant's default products
-- `tests/` — 39 files, 418 tests (`asyncio_mode = auto`, SQLite); `conftest.py` holds the shared `db` + `plant` fixtures (a real in-memory graph, not fakes)
+- `tests/` — 40 files, 422 tests (`asyncio_mode = auto`, SQLite); `conftest.py` holds the shared `db` + `plant` fixtures (a real in-memory graph, not fakes)
 - `.github/workflows/` — `ci.yml` (migration guard + ruff advisory + pytest), `migrate.yml` (prod migration)
 - `Dockerfile` — exists solely for the compose `migrate` one-shot; production images never build it
 

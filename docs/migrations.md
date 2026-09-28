@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`ts1_task_status`**) — plus the idempotent seed
+`alembic/versions/` (head: **`dr1_task_route_sequence`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -587,7 +587,15 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `ts1_task_status` (2026-09-28, head)
+### `dr1_task_route_sequence` (2026-09-28, head)
+
+Adds `task.route_sequence` (INTEGER, nullable): the stop's order in its
+technician's route for the task's `scheduled_date`, written by backend-erp's
+`POST /dispatch/routes` (dispatch ETL) and read by the technician app. It is
+not `position`, which the move and reorder endpoints renumber. No index, the
+reads are covered by `ix_task_company_scheduled_date`. Additive and reversible.
+
+### `ts1_task_status` (2026-09-28)
 
 Fixed task status. Adds `task.status` (NOT NULL, default `PENDING`, CHECK
 `ck_task_status` over PENDING/ASSIGNED/IN_PROGRESS/DONE, index

@@ -5,6 +5,16 @@ All notable changes to the `database-utils` library will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-28
+
+Dispatch routes (feature `dispatch-routes`).
+
+### Added
+- `Task.route_sequence` (INTEGER, nullable): the stop's order in its technician's route for `scheduled_date`, written by backend-erp's `POST /dispatch/routes` and read by the technician app. NULL means not routed. It is not `position`, which the move and reorder endpoints renumber.
+- `TaskOut.route_sequence` (read-only, not on `TaskUpdate`).
+- Alembic revision `dr1_task_route_sequence` (parent `ts1_task_status`, **new head**), additive and reversible. No index: `ix_task_company_scheduled_date` covers the reads.
+- `tests/test_task_route_sequence.py`.
+
 ## [2.1.0] - 2026-09-28
 
 Fixed task status (feature `fixed-task-status`). Every tenant's tasks use the
