@@ -55,6 +55,7 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
         {"name": "description", "type": "string", "fk_to": None},
         {"name": "position", "type": "number", "fk_to": None},
         {"name": "due_date", "type": "date", "fk_to": None},
+        {"name": "status", "type": "string", "fk_to": None},
         {"name": "task_state_id", "type": "uuid", "fk_to": "task_state"},
     ],
     "task_state": [

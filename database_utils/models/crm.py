@@ -540,6 +540,14 @@ class ClientCustomFieldValue(Base):
 # ck_task_state_kind below and by the CHECK in the revision.
 TASK_STATE_KINDS = ("ASSIGNED", "IN_PROGRESS", "DONE", "CANCELLED")
 
+# ts1_task_status: the fixed task status that replaces the per-tenant columns.
+# PENDING = no technician yet, ASSIGNED = has a technician (both derived from
+# the assignment, see utils/task_status.py), IN_PROGRESS and DONE are set
+# explicitly. Mirrored byte-for-byte by the revision; pinned by
+# tests/test_task_status.py.
+TASK_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS", "DONE")
+_TASK_STATUS_CHECK = "status IN ('PENDING','ASSIGNED','IN_PROGRESS','DONE')"
+
 
 class TaskState(Base):
     __tablename__ = "task_state"
@@ -588,6 +596,7 @@ class Task(Base):
     # Both nullable — office tasks never set them.
     scheduled_date = Column(Date, nullable=True)
     job_kind = Column(Enum(TaskJobKind), nullable=True)
+    status = Column(String(20), nullable=False, default="PENDING", server_default="PENDING")
 
     # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
     # device + parent node SIMULTANEOUSLY, which the single polymorphic
@@ -610,7 +619,9 @@ class Task(Base):
     address = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-    task_state_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("task_state.id", ondelete="RESTRICT"), nullable=False)
+    # ts1_task_status: nullable, superseded by `status`. Kept until every
+    # consumer reads `status`; the table and this FK drop in a later revision.
+    task_state_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("task_state.id", ondelete="RESTRICT"), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
@@ -640,6 +651,8 @@ class Task(Base):
         Index("ix_task_company_client", "company_id", "client_id"),
         Index("ix_task_company_job_kind", "company_id", "job_kind"),
         Index("ix_task_company_due_date", "company_id", "due_date"),
+        Index("ix_task_company_status", "company_id", "status"),
+        CheckConstraint(_TASK_STATUS_CHECK, name="ck_task_status"),
     )
 
 

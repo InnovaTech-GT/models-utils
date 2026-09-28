@@ -930,8 +930,9 @@ def _execute_create_task(
 ) -> dict:
     """
     CREATE_TASK action (doc 16 §5.2, installation flow). Replicates
-    backend-erp tasks.py:create_task invariants: company-scoped state
-    validation, position = max(position)+1 in the target column,
+    backend-erp tasks.py:create_task invariants: status derived from the
+    technician assignment (ts1_task_status), position = max(position)+1
+    within that status,
     company-scoped assignees, created_by=NULL (system-created), fires
     task CREATED triggers.
 
@@ -939,7 +940,10 @@ def _execute_create_task(
     {
       "name": "...",
       "description": "...",                      # may embed {{steps.s1.resource_id}}
-      "task_state_id": "<uuid>",                 # {{param:install_state_id}}
+      "status": "PENDING",                       # optional; PENDING/ASSIGNED
+                                                 #   follow the assignment
+      "task_state_id": "<uuid>",                 # legacy (pre-ts1 installs):
+                                                 #   mapped to status via its kind
       "linked_object_type": "CLIENT_SERVICE",    # Cycle-3 join key — ORDER linkage
       "linked_object_id": "<uuid>",              #   is forbidden for installs (§5.2)
       "assignee_source": "client_technician" | "fixed" | "none",   # default "none"
@@ -970,6 +974,7 @@ def _execute_create_task(
     from database_utils.models.crm import (
         Client, Task, TaskJobKind, TaskLinkedObjectType, TaskState,
     )
+    from database_utils.utils.task_status import STATUS_FROM_STATE_KIND, derive_status
     from database_utils.models.isp import ClientService, DeviceType, InventoryItem
     from database_utils.utils.audit_utils import serialize_for_audit
 
@@ -977,15 +982,20 @@ def _execute_create_task(
     if not name or not str(name).strip():
         raise ValueError("CREATE_TASK: 'name' is required")
 
-    # --- Company-scoped state validation (tasks.py:create_task pattern) ---
-    task_state_id = _required_uuid(config.get("task_state_id"), "task_state_id", "CREATE_TASK")
-    state = db.query(TaskState).filter(
-        TaskState.id == task_state_id, TaskState.company_id == company_id
-    ).first()
-    if not state:
-        raise ValueError(
-            f"CREATE_TASK: task_state {task_state_id} not found for company {company_id}"
-        )
+    # --- Status (ts1). A legacy task_state_id still validates against the
+    # company and seeds the status from its kind. ---
+    requested_status = config.get("status") or None
+    task_state_id = None
+    if config.get("task_state_id") and not str(config["task_state_id"]).startswith("{{"):
+        task_state_id = _required_uuid(config.get("task_state_id"), "task_state_id", "CREATE_TASK")
+        state = db.query(TaskState).filter(
+            TaskState.id == task_state_id, TaskState.company_id == company_id
+        ).first()
+        if not state:
+            raise ValueError(
+                f"CREATE_TASK: task_state {task_state_id} not found for company {company_id}"
+            )
+        requested_status = requested_status or STATUS_FROM_STATE_KIND.get(state.kind)
 
     # --- Linked object ---
     linked_object_type = None
@@ -1045,12 +1055,6 @@ def _execute_create_task(
         except ValueError:
             raise ValueError(f"CREATE_TASK: invalid job_kind {config['job_kind']!r}")
 
-    # --- Position: end of the target column ---
-    max_pos = db.query(func.max(Task.position)).filter(
-        Task.task_state_id == task_state_id, Task.company_id == company_id
-    ).scalar()
-    position = (max_pos + 1) if max_pos is not None else 0
-
     # --- Assignee resolution ---
     assignee_source = config.get("assignee_source") or "none"
     if assignee_source not in ("client_technician", "fixed", "none"):
@@ -1087,6 +1091,17 @@ def _execute_create_task(
             User.id.in_(wanted_ids), User.company_id == company_id
         ).all()
 
+    try:
+        status = derive_status(requested_status, has_technician=bool(assignees))
+    except ValueError:
+        raise ValueError(f"CREATE_TASK: invalid status {requested_status!r}")
+
+    # --- Position: end of that status ---
+    max_pos = db.query(func.max(Task.position)).filter(
+        Task.status == status, Task.company_id == company_id
+    ).scalar()
+    position = (max_pos + 1) if max_pos is not None else 0
+
     # --- Optional due date ---
     due_date = None
     if config.get("due_date_offset_days") is not None:
@@ -1111,6 +1126,7 @@ def _execute_create_task(
         inventory_item_id=task_inventory_item_id,
         device_category_id=task_device_category_id,
         company_id=company_id,
+        status=status,
         task_state_id=task_state_id,
         created_by=None,  # system-created (workflow engine), not a user
     )
@@ -1127,7 +1143,8 @@ def _execute_create_task(
     return {
         "created_resource_type": "task",
         "resource_id": str(task.id),
-        "task_state_id": str(task_state_id),
+        "status": status,
+        "task_state_id": str(task_state_id) if task_state_id else None,
         "assignee_ids": [str(u.id) for u in assignees],
     }
 

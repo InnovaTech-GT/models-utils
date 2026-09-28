@@ -295,7 +295,10 @@ TEMPLATE_REQUIRED_COLUMNS = {
     # on the traversed path through the device_type_playbook binding table
     # (revision ng1_network_graph) — never publish before it exists. Same gate
     # as before, pointed at the table that replaced topology_playbook.
-    "installation-provisioning": [(DeviceTypePlaybook.__tablename__, "purpose")],
+    "installation-provisioning": [(DeviceTypePlaybook.__tablename__, "purpose"), ("task", "status")],
+    # ts1_task_status: both templates now speak task.status instead of a
+    # tenant board column, so they must not publish before the column exists.
+    "new-installation": [("task", "status")],
     # v3 (Cycle 2 §1b rewrite, doc 18 amendment 8): these templates now
     # UPDATE_FIELD client_service.billing_status instead of
     # recurring_order.status — the column only exists from c2b onward. v4
@@ -333,7 +336,6 @@ WORKFLOW_TEMPLATES = [
         "and open an installation task on the dispatch board.",
         "installation",
         [
-            {"key": "install_state_id", "label": "Board column for new installations", "type": "task_state", "required": True},
             {"key": "installation_fee_plan_id", "label": "Installation fee catalog item (use a Q0 plan for free installs)", "type": "service_plan", "required": True},
             {"key": "fixed_assignee_ids", "label": "Fallback technicians when the client has no assigned technician", "type": "users", "required": False},
         ],
@@ -353,7 +355,8 @@ WORKFLOW_TEMPLATES = [
                  "name": "New installation — service {{trigger.resource_id}}",
                  "description": "Install subscriber service. Client: {{trigger.after.client_id}}. "
                                 "Installation order: {{steps.s1.resource_id}}",
-                 "task_state_id": "{{param:install_state_id}}",
+                 # ts1: no board column any more. The status follows the
+                 # assignment (ASSIGNED with a technician, else PENDING).
                  "linked_object_type": "CLIENT_SERVICE",
                  "linked_object_id": "{{trigger.resource_id}}",
                  "assignee_source": "client_technician",
@@ -377,16 +380,13 @@ WORKFLOW_TEMPLATES = [
     # until they reinstall — mode B is unchanged and stays supported.
     _wt(
         "installation-provisioning", "Installation → Provisioning",
-        "When an installation task is moved to the 'installed' column, resolve the "
+        "When an installation task is marked DONE, resolve the "
         "linked service's network path and run each device's ACTIVATION playbook.",
         "installation",
-        [
-            {"key": "installed_state_id", "label": "Board column meaning 'installation done'",
-             "type": "task_state", "required": True},
-        ],
+        [],
         [{"resource_type": "task", "event_type": "UPDATED",
-          "field_conditions": {"field": "task_state_id", "operator": "changed_to",
-                                "value": "{{param:installed_state_id}}"}}],
+          "field_conditions": {"field": "status", "operator": "changed_to",
+                                "value": "DONE"}}],
         [{"ref": "provision", "name": "Provision service from its network path",
           "action_type": "ENQUEUE_PROVISIONING",
           "action_config": {

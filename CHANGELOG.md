@@ -5,6 +5,24 @@ All notable changes to the `database-utils` library will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-28
+
+Fixed task status (feature `fixed-task-status`). Every tenant's tasks use the
+same four statuses instead of tenant-defined board columns.
+
+### Added
+- `Task.status` (VARCHAR(20), NOT NULL, default `PENDING`), CHECK `ck_task_status` over `TASK_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS", "DONE")`, index `ix_task_company_status`.
+- `utils/task_status.py`: `derive_status()` (PENDING and ASSIGNED follow the technician assignment, IN_PROGRESS and DONE are only set explicitly) and `STATUS_FROM_STATE_KIND` (CANCELLED maps to DONE).
+- `schemas/task.py`: `TaskStatus` Literal, and `status` on `TaskCreate`, `TaskUpdate` and `TaskOut`.
+- Alembic revision `ts1_task_status` (parent `tr1_transport_axis`, **new head**). It backfills `status` from each task's `task_state.kind` (ASSIGNED without a technician becomes PENDING, CANCELLED becomes DONE), makes `task_state_id` nullable and rewrites installed workflows that reference task_state UUIDs (task triggers on `task_state_id` and `task_state_id` in step configs) to `status`. `downgrade()` restores `task_state_id`, creating default columns for a company that has none, and maps workflows back.
+- `tests/test_task_status.py`.
+
+### Changed
+- `Task.task_state_id` is nullable. The `task_state` table, the FK and the `task_states.*` permissions stay until every consumer reads `status`.
+- `TaskMove` and `TaskBulkReorder` take `status` instead of `task_state_id`. **Breaking** for backend-erp, which moves to `status` in the same re-pin.
+- Workflow engine CREATE_TASK: `status` is optional and follows the assignment. A legacy `task_state_id` is still accepted and mapped through its kind, and an unresolved `{{param:...}}` is ignored. Position is computed within the status. The step output carries `status`.
+- Seed templates `new-installation` (no board-column parameter) and `installation-provisioning` (fires on `status` changed to `DONE`, no parameter), gated on the `task.status` column.
+
 ## [1.33.0] - 2026-09-18
 
 Insights v2 persistence (feature `insights-v2`, spec
