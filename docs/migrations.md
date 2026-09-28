@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`tr1_transport_axis`**) — plus the idempotent seed
+`alembic/versions/` (head: **`ts1_task_status`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -587,7 +587,32 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `tr1_transport_axis` (2026-09-26, head)
+### `ts1_task_status` (2026-09-28, head)
+
+Fixed task status. Adds `task.status` (NOT NULL, default `PENDING`, CHECK
+`ck_task_status` over PENDING/ASSIGNED/IN_PROGRESS/DONE, index
+`ix_task_company_status`) and backfills it from each task's
+`task_state.kind`: CANCELLED and DONE become DONE, IN_PROGRESS stays, and
+ASSIGNED becomes ASSIGNED only when the task has a technician
+(`task_assignee.role` TECHNICIAN or a legacy NULL), otherwise PENDING.
+`task.task_state_id` becomes nullable. Nothing is dropped: the table, the FK
+and the `task_states.*` permissions go in a later, destructive revision.
+
+Installed workflows are rewritten in the same revision: a task trigger on
+`task_state_id` becomes a trigger on `status` with the value mapped through
+the state's kind, and `task_state_id` in a step config (top level, `data` or
+`updates`) becomes `status`. A UUID that matches no task_state row is left
+alone, and the engine still accepts a legacy `task_state_id`. The
+`new-installation` and `installation-provisioning` seed templates drop their
+board-column parameters and are gated on `task.status`.
+
+`downgrade()` is a real inverse for the data it can map: it points every task
+back at a column of the matching kind (creating Asignadas, En proceso and
+Finalizadas for a company that has none), maps the workflows back and drops
+the column, index and CHECK. Verified on PostgreSQL 16: upgrade, downgrade and
+upgrade again.
+
+### `tr1_transport_axis` (2026-09-26)
 
 On `ac1_acs_tenant_auth`. Collapses the whole `network_access` table into the
 tenant singleton `provisioning_settings` and replaces `mode` with two orthogonal

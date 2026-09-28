@@ -23,8 +23,8 @@ by backend-erp (and cron-erp for recurring orders).
 | `Invoice` (invoice) | Customer invoice |
 | `Payment` (payment) | **Cycle 1 payment ledger** — `PaymentKind`, `PaymentMethodType` |
 | `CustomFieldDefinition` / `ClientCustomFieldValue` | Dynamic per-tenant client fields. Also a **provisioning input**: each value is emitted as the playbook variable `client.<field_key>` (doc 33 follow-up), so a subscriber's static IP or VLAN can be templated into device config. Values are stored as strings and coerced by `field_type` at resolution |
-| `TaskState` (task_state) | Kanban column (`TaskStateColor`) |
-| `Task` (task) | Work item; assignees via `task_assignee` M2M; `TaskLinkedObjectType` CLIENT/ORDER/RECURRING_ORDER |
+| `TaskState` (task_state) | Legacy board column (`TaskStateColor`). Superseded by `task.status` since `ts1_task_status`, dropped in a later revision |
+| `Task` (task) | Work item; `status` PENDING/ASSIGNED/IN_PROGRESS/DONE (`TASK_STATUSES`, `ck_task_status`), PENDING and ASSIGNED derived from the technician assignment (`utils/task_status.py`); assignees via `task_assignee` M2M; `TaskLinkedObjectType` CLIENT/ORDER/RECURRING_ORDER |
 | `TaskTemplate` (task_template) | Task blueprint |
 | `Integration` (integration) | External API connection — `IntegrationAuthType` NONE/API_KEY/BEARER_TOKEN/BASIC_AUTH; `enabled` (bool, default true — disabled = kept but refused by consumers) and `provider` (nullable tag, `WHATSAPP_BUSINESS` only; schemas type it as a `Literal`) since fg1 |
 
