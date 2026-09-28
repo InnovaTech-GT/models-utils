@@ -597,6 +597,11 @@ class Task(Base):
     scheduled_date = Column(Date, nullable=True)
     job_kind = Column(Enum(TaskJobKind), nullable=True)
     status = Column(String(20), nullable=False, default="PENDING", server_default="PENDING")
+    # dr1_task_route_sequence: the stop's order in its technician's route for
+    # scheduled_date, written by the dispatch ETL (POST /dispatch/routes).
+    # NULL = not routed. Not the board order: that is `position`, which
+    # move/reorder renumber. ix_task_company_scheduled_date covers the reads.
+    route_sequence = Column(Integer, nullable=True)
 
     # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
     # device + parent node SIMULTANEOUSLY, which the single polymorphic

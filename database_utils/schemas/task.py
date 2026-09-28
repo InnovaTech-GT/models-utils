@@ -65,6 +65,8 @@ class TaskOut(TaskBase):
     assignees: List[TaskAssigneeSimple] = []
     creator: Optional[TaskAssigneeSimple] = None
     time_spent_minutes: Optional[int] = None
+    # Written only by the dispatch ETL; read-only for every other client.
+    route_sequence: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
