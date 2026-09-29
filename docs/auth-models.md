@@ -15,11 +15,12 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | Model | Purpose |
 |-------|---------|
 | `Tier` (tier) | SaaS subscription plans (features/modules JSON) |
-| `Company` (company) | Multi-tenant ISP company |
+| `Company` (company) | Multi-tenant ISP company. `mobile_settings` JSON (mi2): `{bank_account, collector_daily_goal, technician_daily_goal}`, validated by `schemas.company.MobileSettings` |
 | `User` (user) | Authenticated user (incl. super-admin flag) |
 | `Role` (role) | Permission group |
 | `Permission` (permission) | Single access right (resource + action) |
-| `Notification` (notification) | In-app notification |
+| `Notification` (notification) | Pending user **invitation** (despite the name) |
+| `UserNotification` (user_notification) | Field-app notification feed (mi2): `kind` in `USER_NOTIFICATION_KINDS` (TASK_ASSIGNED/TASK_OVERDUE/PAYMENTS_OVERDUE, CHECK), `dedupe_key` unique per user, `payload` JSON, `read_at`. Produced lazily by backend-erp when the feed is read |
 | `AuditLog` (audit_log) | Immutable audit trail (see `utils/audit_utils.py`) |
 | `UserInvitation` (user_invitation) | Invitation flow |
 | `EmailVerificationToken` (email_verification_token) | Email verification flow — existing users were grandfathered by the `c1f_verify_grandfather` migration |

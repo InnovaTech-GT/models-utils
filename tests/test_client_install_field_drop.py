@@ -62,7 +62,10 @@ def test_single_head_file_scan():
     rather than read it. The invariant worth protecting is that the migration
     graph never branches."""
     revision_re = re.compile(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)['\"]", re.M)
-    down_re = re.compile(r"^down_revision[^=]*=\s*['\"]([^'\"]+)['\"]", re.M)
+    # A merge revision's down_revision is a tuple: take every quoted id on
+    # the line (mi1_mobile_enum_labels merges dr1 and lp1).
+    down_re = re.compile(r"^down_revision[^=]*=\s*(.+)$", re.M)
+    quoted_re = re.compile(r"['\"]([^'\"]+)['\"]")
     revisions, parents = set(), set()
     for path in glob.glob(os.path.join(_VERSIONS_DIR, "*.py")):
         source = open(path).read()
@@ -71,7 +74,7 @@ def test_single_head_file_scan():
         revisions.add(rev.group(1))
         down = down_re.search(source)
         if down:  # the root revision has down_revision = None
-            parents.add(down.group(1))
+            parents.update(quoted_re.findall(down.group(1)))
     heads = revisions - parents
     assert len(heads) == 1, f"migration graph has branched: {sorted(heads)}"
 

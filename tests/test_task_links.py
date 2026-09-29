@@ -60,6 +60,11 @@ COLLECTOR_GRANTS = {
     "payments.record",
     "orders.read",
     "client_services.read",
+    # mi2_mobile_field_ops: what the cobros app needs (still no client edits).
+    "mobile.collector",
+    "tasks.create",
+    "service_plans.read",
+    "inventory_items.read",
 }
 
 

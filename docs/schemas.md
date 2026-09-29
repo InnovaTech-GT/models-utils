@@ -212,6 +212,20 @@ matters when reading `__init__.py`:
 - The read wrappers that add `accessible` (`InsightChartView`,
   `InsightDashboardView`) live in backend-erp, not here.
 
+### Mobile integration (mi1/mi2, 2026-09-29)
+
+- `payment.py`: `PaymentCreate` / `FullPaymentCreate` gain
+  `idempotency_key: Optional[str]` (max 64). `PaymentOut` gains
+  `allocation_id` and `cash_session_id`.
+- `inventory.py`: `InventoryItemUpdate` gains `latitude` (−90..90),
+  `longitude` (−180..180), `gps_precision_m` (≥0); `InventoryItemOut` returns
+  them. Warehouse Create/Update/Out gain `latitude`/`longitude`.
+- `company.py`: `BankAccount` (`holder`, `bank`, `account`, `type`,
+  `currency` default GTQ) and `MobileSettings` (`bank_account`,
+  `collector_daily_goal`, `technician_daily_goal`), both `extra="forbid"`.
+  `CompanyUpdate` and `CompanyOut` gain `mobile_settings`.
+- `requests.py`: `LoginRequest.client_type: Literal["web","mobile"] = "web"`.
+
 ### Auth overhaul — request-schema changes (no DB migration)
 
 Company-only signup with locale-aware transactional email:

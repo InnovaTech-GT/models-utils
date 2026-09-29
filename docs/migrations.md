@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`dr1_task_route_sequence`**) — plus the idempotent seed
+`alembic/versions/` (head: **`mi2_mobile_field_ops`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -587,7 +587,60 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `dr1_task_route_sequence` (2026-09-28, head)
+### `mi2_mobile_field_ops` (2026-09-29, head)
+
+Field apps on the real system (uplink-mobile cobros + tecnicos). **Additive
+only**: every new column is nullable or has a server default, and
+`downgrade()` drops exactly what `upgrade()` added.
+
+- `task`: `started_at`, `completed_at` (TIMESTAMPTZ), `step_progress` (JSON
+  NOT NULL default `{}`, keyed by the app's step id).
+- `task_material` (new): `quantity` (>0, in `device_type.unit`),
+  `consumed_quantity`, `shortfall`, `consumed_at`, `updated_by`; UNIQUE
+  `uq_task_material_task_type (task_id, device_type_id)`, index
+  `ix_task_material_company_task`.
+- `inventory_item`: `latitude`, `longitude`, `gps_precision_m`; `warehouse`:
+  `latitude`, `longitude`. The lot quantity CHECK is **unchanged** (an
+  exhausted lot becomes `RETIRED`).
+- `user_notification` (new; `notification` is the invitation table): `kind`
+  CHECK `ck_user_notification_kind` (TASK_ASSIGNED / TASK_OVERDUE /
+  PAYMENTS_OVERDUE), `entity_type`/`entity_id`, `dedupe_key` (UNIQUE per
+  user), `payload`, `read_at`; feed index `ix_user_notification_feed`.
+- `cash_session`: `opening_cents` (NOT NULL default 0, CHECK >= 0),
+  `deposited_at`, `deposited_cents`, `deposit_reference`,
+  `closed_expected_cash_cents`, `reopen_count`.
+- `cash_movement` (new): top-ups; the client-supplied `id` is the
+  idempotency key; `amount_cents > 0`.
+- `payment`: `allocation_id`, `cash_session_id` (FK `cash_session` SET NULL);
+  indexes `ix_payment_company_allocation`, `ix_payment_cash_session`,
+  `ix_payment_company_received_paid (company_id, received_by, paid_at DESC)`.
+- `uploaded_file`: `idempotency_key` VARCHAR(80), partial UNIQUE
+  `uq_uploaded_file_company_idem`.
+- `company`: `mobile_settings` JSON (`schemas.company.MobileSettings`).
+- `order`: partial index `ix_order_open_receivables (company_id, due_date)
+  WHERE status='ACTIVE' AND payment_status IN ('PENDING','PARTIAL')`.
+
+Backfills: `task.completed_at = updated_at` for DONE tasks;
+`payment.cash_session_id` from the collector's box whose
+`[opened_at, closed_at]` window holds `paid_at`. RBAC (cfg3 pattern, mirrored
+in `isp_seed.ISP_ROLES['COLLECTOR']`, pinned by
+`tests/test_mobile_rbac_seed.py`): COLLECTOR gains `mobile.collector`,
+`tasks.create`, `service_plans.read`, `inventory_items.read`.
+
+Verified on PG 16 against a copy of the local DB (prod data, at
+`lp1_link_ports`): `upgrade head` -> `downgrade lp1_link_ports` ->
+`upgrade head`, single head; autogenerate shows no drift for any mi2 object.
+
+### `mi1_mobile_enum_labels` (2026-09-29)
+
+**Merge point** of `dr1_task_route_sequence` and `lp1_link_ports` (both
+branches hang off `tr1_transport_axis`), and enum labels only:
+`taskjobkind += RELOCATION`, `cashsessionstatus += DEPOSITED`,
+`equipmenteventtype += CONSUMED, RELEASED`. Downgrade is a documented no-op
+(PG cannot drop a label; tj1 precedent). The single-head file scan in
+`tests/test_client_install_field_drop.py` reads tuple `down_revision`s.
+
+### `dr1_task_route_sequence` (2026-09-28)
 
 Adds `task.route_sequence` (INTEGER, nullable): the stop's order in its
 technician's route for the task's `scheduled_date`, written by backend-erp's
@@ -719,7 +772,7 @@ CONFLICT branch and prove those two values survive both directions. The
 `mode='tunnel'` abort was exercised too. Guardrails:
 `tests/test_transport_axis.py`, `tests/test_transport_resolver.py`.
 
-### `lp1_link_ports` (2026-09-28, head)
+### `lp1_link_ports` (2026-09-28)
 
 On `tr1_transport_axis`. Additive: `inventory_item.parent_port` and
 `inventory_item.uplink_port` (both `VARCHAR(64)` NULL, free text) label the

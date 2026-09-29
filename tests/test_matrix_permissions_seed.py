@@ -98,6 +98,9 @@ def test_matrix_permissions_granted_to_no_other_isp_role():
     for role_name, spec in isp.ISP_ROLES.items():
         stray = set(spec["permissions"]) & set(MATRIX_PERMISSIONS)
         expected = {EXPECTED_GRANTS[role_name]} if role_name in EXPECTED_GRANTS else set()
+        # mi2_mobile_field_ops: COLLECTOR is the cobros app's role.
+        if role_name == "COLLECTOR":
+            expected = {"mobile.collector"}
         assert stray == expected, f"{role_name} holds unexpected matrix permissions: {stray}"
 
 

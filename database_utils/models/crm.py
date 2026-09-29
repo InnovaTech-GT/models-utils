@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float,
-    Table, Index, CheckConstraint
+    Table, Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -97,6 +97,9 @@ class TaskJobKind(str, enum.Enum):
     # client_service), they only tell the technician what to go and do.
     SUSPEND = "SUSPEND"
     MAINTENANCE = "MAINTENANCE"
+    # mi1_mobile_enum_labels: the tecnicos "Traslado" job (moving a client's
+    # service to a new address).
+    RELOCATION = "RELOCATION"
 
 
 class TaskLinkedObjectType(str, enum.Enum):
@@ -360,6 +363,14 @@ class Order(Base):
         # tenant's orders by client. company_id alone made that a full scan of
         # the company's ledger.
         Index("ix_order_company_client", "company_id", "client_id"),
+        # mi2: the cobros "Pendientes" list (GET /collections/receivables) —
+        # every open, unpaid or partly paid order of the company by due date.
+        Index(
+            "ix_order_open_receivables",
+            "company_id",
+            "due_date",
+            postgresql_where=text("status = 'ACTIVE' AND payment_status IN ('PENDING','PARTIAL')"),
+        ),
     )
 
 
@@ -477,6 +488,15 @@ class Payment(Base):
     # row instead of double-recording money. `received_by` above already
     # covers "collected_by" for cash-cut aggregation — no new column needed.
     idempotency_key = Column(String, nullable=True)
+    # mi2: one POST /collections/payments call spread across several unpaid
+    # orders writes one row per order, all sharing this id (no batch table).
+    allocation_id = Column(Uuid, nullable=True)
+    # mi2: the collector's cash box this payment landed in, stamped
+    # server-side — cash totals read this column, never a paid_at window
+    # (offline payments sync late and would fall outside it).
+    cash_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("cash_session.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Relationships
     order = relationship("Order", back_populates="payments")
@@ -492,6 +512,10 @@ class Payment(Base):
         ),
         Index("ix_payment_company_order", "company_id", "order_id"),
         Index("ix_payment_company_paid_at", "company_id", "paid_at"),
+        Index("ix_payment_company_allocation", "company_id", "allocation_id"),
+        Index("ix_payment_cash_session", "cash_session_id"),
+        # cobros "Cobradas" tab: my payments, newest first.
+        Index("ix_payment_company_received_paid", "company_id", "received_by", paid_at.desc()),
         Index(
             "uq_payment_company_idem",
             "company_id", "idempotency_key",
@@ -602,6 +626,12 @@ class Task(Base):
     # NULL = not routed. Not the board order: that is `position`, which
     # move/reorder renumber. ix_task_company_scheduled_date covers the reads.
     route_sequence = Column(Integer, nullable=True)
+    # mi2_mobile_field_ops: field-job timestamps (set when the status becomes
+    # IN_PROGRESS / DONE) and the technician's per-step progress, keyed by the
+    # app's step id: {"pickupOnu": {"done": true, "at": "...", ...}, ...}.
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    step_progress = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
 
     # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
     # device + parent node SIMULTANEOUSLY, which the single polymorphic
@@ -642,6 +672,7 @@ class Task(Base):
     # cannot pick a join condition.
     inventory_item = relationship("InventoryItem", foreign_keys=[inventory_item_id])
     parent_item = relationship("InventoryItem", foreign_keys=[parent_item_id])
+    materials = relationship("TaskMaterial", back_populates="task", cascade="all, delete-orphan")
 
     __table_args__ = (
         # tecnicos "today" screen filter (routers/tasks.py `assignee_id` +
@@ -658,6 +689,37 @@ class Task(Base):
         Index("ix_task_company_due_date", "company_id", "due_date"),
         Index("ix_task_company_status", "company_id", "status"),
         CheckConstraint(_TASK_STATUS_CHECK, name="ck_task_status"),
+    )
+
+
+class TaskMaterial(Base):
+    """mi2: materials a technician reports for a task, one row per device
+    type. `quantity` is in device_type.unit (integer metres for fiber).
+    Consumption against the technician's lots happens once, when the task
+    becomes DONE: consumed_quantity is what was actually taken from stock,
+    shortfall is what the technician's stock could not cover."""
+    __tablename__ = "task_material"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    quantity = Column(Integer, nullable=False)
+    consumed_quantity = Column(Integer, nullable=False, default=0, server_default="0")
+    shortfall = Column(Integer, nullable=False, default=0, server_default="0")
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("task.id", ondelete="CASCADE"), nullable=False)
+    device_type_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("device_type.id", ondelete="RESTRICT"), nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    task = relationship("Task", back_populates="materials")
+    device_type = relationship("DeviceType")
+
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_task_material_quantity_positive"),
+        UniqueConstraint("task_id", "device_type_id", name="uq_task_material_task_type"),
+        Index("ix_task_material_company_task", "company_id", "task_id"),
     )
 
 
@@ -756,6 +818,9 @@ class UploadedFile(Base):
     storage_key = Column(String, nullable=False)
     content_type = Column(String, nullable=False)
     size_bytes = Column(Integer, nullable=False)
+    # mi2: offline outbox replay key — a retried upload returns the row it
+    # already created instead of storing the file twice.
+    idempotency_key = Column(String(80), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     uploaded_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
@@ -766,6 +831,12 @@ class UploadedFile(Base):
 
     __table_args__ = (
         Index("ix_uploaded_file_owner", "owner_type", "owner_id"),
+        Index(
+            "uq_uploaded_file_company_idem",
+            "company_id", "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
     )
 
 
@@ -799,6 +870,9 @@ class CollectionVisitCode(str, enum.Enum):
 class CashSessionStatus(str, enum.Enum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
+    # mi1: the closed box's cash was handed in at the bank (slip photo in
+    # deposit_slip_photo_id). Terminal — nothing is left on hand.
+    DEPOSITED = "DEPOSITED"
 
 
 class CollectionRoute(Base):
@@ -874,6 +948,16 @@ class CashSession(Base):
     closed_at = Column(DateTime(timezone=True), nullable=True)
     counted_cash_cents = Column(BigInteger, nullable=True)
     status = Column(Enum(CashSessionStatus), nullable=False, default=CashSessionStatus.OPEN, server_default='OPEN')
+    # --- mi2 (cobros "Efectivo en mano") ---
+    # Float the collector started with; top-ups are cash_movement rows.
+    opening_cents = Column(BigInteger, nullable=False, default=0, server_default="0")
+    deposited_at = Column(DateTime(timezone=True), nullable=True)
+    deposited_cents = Column(BigInteger, nullable=True)
+    deposit_reference = Column(String(120), nullable=True)
+    # Expected CASH (opening + top-ups + CASH payments) frozen at close, so a
+    # later refund cannot rewrite the cut.
+    closed_expected_cash_cents = Column(BigInteger, nullable=True)
+    reopen_count = Column(Integer, nullable=False, default=0, server_default="0")
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     collector_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -885,9 +969,32 @@ class CashSession(Base):
     collector = relationship("User", foreign_keys=[collector_id])
     route = relationship("CollectionRoute")
     deposit_slip_photo = relationship("UploadedFile", foreign_keys=[deposit_slip_photo_id])
+    movements = relationship("CashMovement", back_populates="cash_session", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_cash_session_company_collector", "company_id", "collector_id"),
+        CheckConstraint("opening_cents >= 0", name="ck_cash_session_opening_nonneg"),
+    )
+
+
+class CashMovement(Base):
+    """mi2: a cash top-up into an open box. The id is client-generated and
+    doubles as the idempotency key (a replay with the same id is a no-op)."""
+    __tablename__ = "cash_movement"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    amount_cents = Column(BigInteger, nullable=False)
+    note = Column(String(200), nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    cash_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("cash_session.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    cash_session = relationship("CashSession", back_populates="movements")
+
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_cash_movement_amount_positive"),
     )
 
 

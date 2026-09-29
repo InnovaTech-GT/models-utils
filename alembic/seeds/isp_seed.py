@@ -262,6 +262,14 @@ ISP_ROLES = {
             "payments.read", "payments.record",
             "orders.read",
             "client_services.read",
+            # mi2_mobile_field_ops (uplink-mobile cobros): the app gate, the
+            # create-order sheet + field-staff picker, plan names in pickers,
+            # and the MUFA picker / serial lookup. Pinned against mi2's
+            # COLLECTOR_GRANTS by tests/test_mobile_rbac_seed.py.
+            "mobile.collector",
+            "tasks.create",
+            "service_plans.read",
+            "inventory_items.read",
         ],
     },
 }

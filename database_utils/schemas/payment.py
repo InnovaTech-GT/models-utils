@@ -21,6 +21,9 @@ class PaymentCreate(BaseModel):
     # schema has no DB session and a Pydantic validator that silently passed
     # would be worse than none.
     received_by: Optional[UUID] = None
+    # mi2: offline-outbox replay key (uplink-mobile). A retry with the same
+    # key returns the payment already recorded instead of charging twice.
+    idempotency_key: Optional[str] = Field(None, max_length=64)
 
 
 class FullPaymentCreate(BaseModel):
@@ -40,6 +43,9 @@ class FullPaymentCreate(BaseModel):
     paid_at: Optional[datetime] = None
     notes: Optional[str] = None
     received_by: Optional[UUID] = None
+    # mi2: offline-outbox replay key (uplink-mobile). A retry with the same
+    # key returns the payment already recorded instead of charging twice.
+    idempotency_key: Optional[str] = Field(None, max_length=64)
 
 
 class PaymentRefundCreate(BaseModel):
@@ -68,6 +74,10 @@ class PaymentOut(BaseModel):
     received_by: Optional[UUID] = None
     reverses_payment_id: Optional[UUID] = None
     notes: Optional[str] = None
+    # mi2: the multi-order allocation this row belongs to, and the collector
+    # cash box it landed in (both NULL for office-recorded payments).
+    allocation_id: Optional[UUID] = None
+    cash_session_id: Optional[UUID] = None
     # --- Figma redesign PR 5 (05-pagos §3.3): both COMPUTED by backend-erp,
     # never ORM columns. None means "not annotated", not "no data".
     # `received_by` resolved to a display name (joinedload Payment.receiver).

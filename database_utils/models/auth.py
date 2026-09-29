@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid,
+    CheckConstraint, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -74,6 +75,11 @@ class Company(Base):
     address = Column(String, nullable=True)
     # Recurrente customer id — created lazily on the company's first checkout.
     recurrente_customer_id = Column(String, nullable=True)
+    # mi2: field-app settings, edited from Configuración > Empresa:
+    # {bank_account: {holder, bank, account, type, currency} | null,
+    #  collector_daily_goal: int | null, technician_daily_goal: int | null}.
+    # Validated by schemas.company.MobileSettings; NULL = nothing configured.
+    mobile_settings = Column(JSON, nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")
@@ -201,6 +207,35 @@ class Notification(Base):
     # Relationships
     user = relationship("User", back_populates="notifications")
     company = relationship("Company", back_populates="notifications")
+
+
+# mi2: the field apps' notification feed. Not `notification` — that table
+# holds user invitations. Produced lazily by backend-erp when the feed is read
+# (dedupe_key makes each event insert at most once per user).
+USER_NOTIFICATION_KINDS = ("TASK_ASSIGNED", "TASK_OVERDUE", "PAYMENTS_OVERDUE")
+_USER_NOTIFICATION_KIND_CHECK = "kind IN ('TASK_ASSIGNED','TASK_OVERDUE','PAYMENTS_OVERDUE')"
+
+
+class UserNotification(Base):
+    __tablename__ = "user_notification"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    kind = Column(String(32), nullable=False)
+    entity_type = Column(String(32), nullable=True)
+    entity_id = Column(Uuid, nullable=True)
+    dedupe_key = Column(String(160), nullable=False)
+    payload = Column(JSON, nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(_USER_NOTIFICATION_KIND_CHECK, name="ck_user_notification_kind"),
+        UniqueConstraint("user_id", "dedupe_key", name="uq_user_notification_dedupe"),
+        Index("ix_user_notification_feed", "user_id", "read_at", created_at.desc()),
+    )
 
 
 class AuditLog(Base):
