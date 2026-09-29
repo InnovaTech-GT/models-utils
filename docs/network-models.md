@@ -146,6 +146,20 @@ Constraints and indexes:
 Model-side, `InventoryItem` gains the `parent` (with `remote_side=[id]`) and
 `children` relationships.
 
+### Link ports (`lp1_link_ports`)
+
+Two free-text labels describe the `parent_id` edge itself:
+
+| Column | Definition | Notes |
+|---|---|---|
+| `inventory_item.parent_port` | VARCHAR(64) NULL | Port **on the parent** this item plugs into ("PON 16", "OUT 3", "sfp-sfpplus1") |
+| `inventory_item.uplink_port` | VARCHAR(64) NULL | This item's **own** port facing the parent ("GE1"); usually blank for splitters |
+
+`uq_inventory_item_parent_port` — partial unique index on `(parent_id,
+parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
+Both describe the current link, so backend-erp's reparent and detach clear them;
+attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
+
 ### Both guard triggers (ng1 only, never in SQLAlchemy metadata)
 
 A CHECK constraint cannot express reachability, so "a node may not become its own

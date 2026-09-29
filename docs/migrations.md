@@ -719,6 +719,16 @@ CONFLICT branch and prove those two values survive both directions. The
 `mode='tunnel'` abort was exercised too. Guardrails:
 `tests/test_transport_axis.py`, `tests/test_transport_resolver.py`.
 
+### `lp1_link_ports` (2026-09-28, head)
+
+On `tr1_transport_axis`. Additive: `inventory_item.parent_port` and
+`inventory_item.uplink_port` (both `VARCHAR(64)` NULL, free text) label the
+`parent_id` edge of the network graph, plus the partial unique index
+`uq_inventory_item_parent_port` on `(parent_id, parent_port)` WHERE
+`parent_port IS NOT NULL` (one parent port feeds one child). `downgrade()` drops
+the index and both columns — loses only the port labels. See
+[network-models.md](network-models.md#link-ports-lp1_link_ports).
+
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
