@@ -25,6 +25,7 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | `UserInvitation` (user_invitation) | Invitation flow |
 | `EmailVerificationToken` (email_verification_token) | Email verification flow — existing users were grandfathered by the `c1f_verify_grandfather` migration |
 | `PasswordResetToken` (password_reset_token) | Password reset flow |
+| `RefreshToken` (auth_refresh_token) | Server-side record of every issued refresh token (rt1), PK = the JWT `jti` claim. `family_id` groups a login's rotation chain; `/refresh` sets `rotated_at` + `replaced_by` on the presented row and inserts the successor; presenting a rotated token again (reuse) sets `revoked_at` on the whole family; logout revokes the family. Also `user_id` (FK CASCADE), `company_id` (FK CASCADE, nullable), `client_type` (`web`/`mobile`, CHECK), `issued_at`, `expires_at` (indexed; expired rows are dead and deletable). Logic lives in auth-erp `routers/auth.py` |
 | `Subscription` (subscription) | Company's SaaS subscription |
 | `PaymentMethod` (payment_method) | SaaS billing payment method |
 | `BillingInvoice` (billing_invoice) | SaaS subscription invoice |

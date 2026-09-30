@@ -1,6 +1,7 @@
 # utils/jwt_utils.py
 import jwt
 import os
+import uuid
 from datetime import timedelta
 from typing import Optional
 from fastapi import HTTPException
@@ -84,15 +85,18 @@ def create_access_token(usuario, expires_minutes: Optional[int] = None):
     logger.info(f"Access token created for user {user_id} with roles {role_names}")
     return token
     
-def create_refresh_token(usuario: UserOut, client_type: str = "web"):
+def create_refresh_token(usuario: UserOut, client_type: str = "web", jti: Optional[str] = None):
     """`cl` remembers the client ("m" mobile / "w" web) so /refresh can issue
-    the next access token with the same TTL."""
+    the next access token with the same TTL. `jti` keys the server-side
+    `auth_refresh_token` row (auth-erp passes the one it records; a fresh
+    uuid4 hex otherwise)."""
     # Convert UUID to string for JSON serialization
     user_id = str(usuario.id) if usuario.id else None
     data = {
         "id": user_id,
         "type": TOKEN_TYPE_REFRESH,
         "cl": "m" if client_type == "mobile" else "w",
+        "jti": jti or uuid.uuid4().hex,
     }
     token = create_token(data, expires_delta=timedelta(seconds=refresh_expire))
     logger.info(f"Refresh token created for user {user_id}")
