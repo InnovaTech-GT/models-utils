@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.4.0] - 2026-09-30
 
 ### Changed
-- `task_assignee` is now the mapped model `TaskAssignee` (`__tablename__ = "task_assignee"`), like the rest of the tables, instead of a bare `Table`. Same columns, primary key and `ck_task_assignee_role`, so no migration. `Task.assignees` keeps working through `secondary="task_assignee"`.
+- `task_assignee` is now the mapped model `TaskAssignee` (`__tablename__ = "task_assignee"`), like the rest of the tables, instead of a bare `Table`. Same columns, primary key and `ck_task_assignee_role`, so no DDL; Alembic `ta1_task_assignee_model` (**new head**, on `rt1_auth_refresh_token`) only asserts the table shape. `Task.assignees` keeps working through `secondary="task_assignee"`.
 - **Breaking for importers:** `database_utils.models.task_assignee` is gone; use `TaskAssignee` (`TaskAssignee.role`, `insert(TaskAssignee)`, `TaskAssignee.__table__` where a `Table` is needed).
 
 ### Fixed
