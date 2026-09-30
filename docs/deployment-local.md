@@ -33,8 +33,8 @@ still migrated by the `migrate` service above.
 ## Standalone library development
 
 ```bash
-pip install -e .   # editable install into your venv
-pytest -v          # ~66 tests on in-memory SQLite
+pip install -e . -r requirements-dev.txt   # editable install + test deps (pytest, pytest-asyncio, ruff)
+pytest -v                                  # 463 tests on in-memory SQLite (placeholder POSTGRES_* env)
 ```
 
 Tests need only **placeholder** `POSTGRES_*` env vars (`database.py` raises at
