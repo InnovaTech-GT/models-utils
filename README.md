@@ -48,7 +48,7 @@ The `migrate` compose service builds this repo's `Dockerfile` and runs
 ### Standalone library development
 
 ```bash
-pip install -e .                                  # editable install
+pip install -e . -r requirements-dev.txt          # editable install + test deps (pytest-asyncio is required)
 pytest -v                                         # tests (in-memory SQLite; needs placeholder POSTGRES_* env)
 alembic revision --autogenerate -m "description"  # generate a migration (needs a reachable DB)
 ```

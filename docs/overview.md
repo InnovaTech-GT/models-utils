@@ -66,7 +66,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 38 files, **375 tests** (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 47 files, **463 tests** (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and
