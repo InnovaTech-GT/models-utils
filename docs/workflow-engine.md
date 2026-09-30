@@ -45,7 +45,7 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    - `CREATE_ORDER` — creates an order with **service-plan resolution** and a
      **billing denylist** (Cycle 2/3 additions preventing automation from
      touching billing-critical fields)
-   - `CREATE_TASK` — creates a task board item
+   - `CREATE_TASK` — creates a task. `status` is optional: PENDING or ASSIGNED follow the resolved technicians, IN_PROGRESS and DONE are kept. A legacy `task_state_id` is mapped to a status through its kind
    (`CREATE_ORDER` and `CREATE_TASK` were added by the irreversible
    `c1e_install_actions` `ALTER TYPE` migration.)
 4. **Trigger-context variables** — `utils/workflow_fields.py` handles

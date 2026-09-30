@@ -1,7 +1,6 @@
 # utils/permission_utils.py
 from __future__ import annotations
 
-from loguru import logger
 from typing import List, Set, Optional, TYPE_CHECKING
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -102,11 +101,10 @@ def require_permission(permission_name: str, get_db_func):
         request: Request,
         db: Session = Depends(get_db_func)
     ) -> User:
-        from database_utils.utils.jwt_utils import decode_token
+        from database_utils.utils.jwt_utils import decode_token, is_refresh_payload
 
         # Extract token from cookie
         token = get_token_from_header(request)
-        logger.info(f"[permission_dependency] {token = }")
         if not token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -115,15 +113,19 @@ def require_permission(permission_name: str, get_db_func):
 
         # Decode token
         payload = decode_token(token)
-        logger.info(f"[permission_dependency] {payload = }")
         if not payload:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token"
             )
+        # A refresh token is not a bearer credential for the API.
+        if is_refresh_payload(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
 
         user_id = payload.get("id")
-        logger.info(f"[permission_dependency] {user_id = }")
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -145,14 +147,19 @@ def require_permission(permission_name: str, get_db_func):
 
         # Get user with permissions
         user = PermissionChecker.get_user_by_id_with_roles(db, user_id)
-        logger.info(f"[permission_dependency] {user = }")
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found"
             )
 
-        logger.info(user)
+        # Same rule as get_current_user: a deactivated account keeps no
+        # access even while its token is still valid.
+        if not user.active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account has been deactivated"
+            )
 
         # Check permission
         if not PermissionChecker.has_permission(user, permission_name):

@@ -22,7 +22,7 @@ library, never the reverse).
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
 | `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5) — see below |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
-| `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE`. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
+| `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None)` → `"access"`; `create_refresh_token(usuario, client_type="web")` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
 | `audit_utils.py` | `log_create_operation` / `log_update_operation` / `log_delete_operation` / `log_custom_operation` helpers writing `AuditLog` rows |
 | `ssrf.py` | `validate_url_no_ssrf` blocklist — shared by the integration-test endpoint and workflow `HTTP_REQUEST` steps (SEC-6) |
@@ -293,6 +293,6 @@ Callers must surface any returned error code as a step failure. See
 
 ## Environment Variables
 
-- `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE`, `REFRESH_TOKEN_EXPIRE` — `jwt_utils.py`
+- `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (min), `REFRESH_TOKEN_EXPIRE` (s), `MOBILE_ACCESS_TOKEN_EXPIRE` (min) — `jwt_utils.py`
 - `POSTGRES_*` / `DATABASE_URL` / `DB_URL` — anything touching the DB (via `database.py`)
 - `EMAIL_PROVIDER`, `SMTP_USE_TLS` — email service (see [email-service.md](email-service.md))

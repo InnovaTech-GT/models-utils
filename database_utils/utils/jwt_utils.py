@@ -16,7 +16,15 @@ load_dotenv()
 # The old name ACCESS_TOKEN_EXPIRE_MINUTES was never set anywhere, so the 114400
 # default (~79 days) was silently always in effect.
 access_expire = int(os.getenv("ACCESS_TOKEN_EXPIRE", "1440"))  # 1 day in minutes
-refresh_expire = int(os.getenv("REFRESH_TOKEN_EXPIRE", "604800"))  # 7 days in seconds
+refresh_expire = int(os.getenv("REFRESH_TOKEN_EXPIRE", "604800"))  # SECONDS (7 days default; 2592000 = 30 days)
+# Access-token TTL for the field apps (LoginRequest.client_type == "mobile"),
+# in minutes. Short because the apps refresh; the web keeps access_expire.
+mobile_access_expire = int(os.getenv("MOBILE_ACCESS_TOKEN_EXPIRE", "60"))
+
+# `type` claim. Tokens issued before it existed have none: a legacy access
+# token carries `roles`, a legacy refresh token carries only `id`.
+TOKEN_TYPE_ACCESS = "access"
+TOKEN_TYPE_REFRESH = "refresh"
 
 # Signing key. Fail fast in production rather than silently falling back to a
 # well-known string (which would allow token forgery). Dev/test keep a fallback.
@@ -38,12 +46,14 @@ def create_token(
     return jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
 
 
-def create_access_token(usuario):
+def create_access_token(usuario, expires_minutes: Optional[int] = None):
     """
     Create an access token for a user.
 
     Args:
         usuario: User object (can be UserOut, User model, or any object with id, roles, company_id)
+        expires_minutes: TTL override (mobile logins pass mobile_access_expire);
+            None = ACCESS_TOKEN_EXPIRE.
 
     Returns:
         str: Encoded JWT token
@@ -66,25 +76,40 @@ def create_access_token(usuario):
         "id": user_id,
         "roles": role_names,
         "company_id": company_id,
-        "is_super_admin": getattr(usuario, 'is_super_admin', False)
+        "is_super_admin": getattr(usuario, 'is_super_admin', False),
+        "type": TOKEN_TYPE_ACCESS,
     }
-    token = create_token(data, expires_delta=timedelta(minutes=access_expire))
+    minutes = access_expire if expires_minutes is None else expires_minutes
+    token = create_token(data, expires_delta=timedelta(minutes=minutes))
     logger.info(f"Access token created for user {user_id} with roles {role_names}")
     return token
     
-def create_refresh_token(usuario: UserOut):
+def create_refresh_token(usuario: UserOut, client_type: str = "web"):
+    """`cl` remembers the client ("m" mobile / "w" web) so /refresh can issue
+    the next access token with the same TTL."""
     # Convert UUID to string for JSON serialization
     user_id = str(usuario.id) if usuario.id else None
-    data = {"id": user_id}
+    data = {
+        "id": user_id,
+        "type": TOKEN_TYPE_REFRESH,
+        "cl": "m" if client_type == "mobile" else "w",
+    }
     token = create_token(data, expires_delta=timedelta(seconds=refresh_expire))
     logger.info(f"Refresh token created for user {user_id}")
     return token
 
+def is_refresh_payload(payload: dict) -> bool:
+    """True for a refresh token: `type == "refresh"`, or a legacy token (no
+    `type`) that also has no `roles` — legacy access tokens always had one."""
+    if "type" in payload:
+        return payload["type"] == TOKEN_TYPE_REFRESH
+    return "roles" not in payload
+
+
 def decode_token(token: str):
     try:
-        payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
-        logger.info(f"{payload = }")
-        return payload
+        # Never log the payload or the token: both are bearer credentials.
+        return jwt.decode(token, secret_key, algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Signature has expired")
     except jwt.InvalidTokenError:

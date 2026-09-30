@@ -2,6 +2,8 @@ from .auth import (
     Company,
     User,
     Notification,
+    UserNotification,
+    USER_NOTIFICATION_KINDS,
     EmailVerificationToken,
     PasswordResetToken,
 )
@@ -24,6 +26,7 @@ from .crm import (
     TaskStateColor,
     Task,
     TaskJobKind,
+    TaskMaterial,
     task_assignee,
     Integration,
     IntegrationAuthType,
@@ -40,6 +43,7 @@ from .crm import (
     CollectionVisitCode,
     CashSession,
     CashSessionStatus,
+    CashMovement,
     TaskCloseout,
 )
 
@@ -108,6 +112,8 @@ __all__ = [
     "Company",
     "User",
     "Notification",
+    "UserNotification",
+    "USER_NOTIFICATION_KINDS",
     "EmailVerificationToken",
     "PasswordResetToken",
     # CRM
@@ -128,6 +134,7 @@ __all__ = [
     "TaskStateColor",
     "Task",
     "TaskJobKind",
+    "TaskMaterial",
     "task_assignee",
     "Integration",
     "IntegrationAuthType",
@@ -144,6 +151,7 @@ __all__ = [
     "CollectionVisitCode",
     "CashSession",
     "CashSessionStatus",
+    "CashMovement",
     "TaskCloseout",
     # ISP
     "ServicePlan",

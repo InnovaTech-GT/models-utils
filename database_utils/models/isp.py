@@ -212,6 +212,10 @@ class EquipmentEventType(str, enum.Enum):
     REPAIRED = "REPAIRED"
     RETIRED = "RETIRED"
     MAINTENANCE = "MAINTENANCE"
+    # mi1: a lot (non-serialized) was used up on a task's materials.
+    CONSUMED = "CONSUMED"
+    # mi1: a reservation was undone — back to IN_STOCK, custody kept.
+    RELEASED = "RELEASED"
 
 
 class ProvisioningJobStatus(str, enum.Enum):
@@ -751,6 +755,9 @@ class Warehouse(Base):
     address = Column(String, nullable=True)
     is_vehicle = Column(Boolean, nullable=False, default=False)  # truck stock
     notes = Column(String, nullable=True)
+    # mi2: map pin for the tecnicos inventory map.
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -868,6 +875,11 @@ class InventoryItem(Base):
     # clear them.
     parent_port = Column(String(64), nullable=True)
     uplink_port = Column(String(64), nullable=True)
+    # mi2: where the item physically is (plant: MUFA / NAP geolocated by the
+    # technician in the field). WGS84 degrees; precision in metres.
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    gps_precision_m = Column(Float, nullable=True)
 
     company = relationship("Company", back_populates="inventory_items")
     device_type = relationship("DeviceType", back_populates="items")

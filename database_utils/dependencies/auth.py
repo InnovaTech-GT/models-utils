@@ -125,7 +125,7 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
-    from database_utils.utils.jwt_utils import decode_token
+    from database_utils.utils.jwt_utils import decode_token, is_refresh_payload
     from database_utils.models.auth import User
 
     logger.info(
@@ -149,6 +149,12 @@ async def get_current_user(
                 "is_super_admin": payload.get("is_super_admin", False)
             }
         )
+
+        if is_refresh_payload(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
 
         user_id_str = payload.get("id")
         if user_id_str is None:

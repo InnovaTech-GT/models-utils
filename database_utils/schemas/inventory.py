@@ -118,6 +118,9 @@ class WarehouseBase(BaseModel):
     address: Optional[str] = None
     is_vehicle: bool = False
     notes: Optional[str] = None
+    # mi2: map pin.
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
 
 
 class WarehouseCreate(WarehouseBase):
@@ -129,6 +132,8 @@ class WarehouseUpdate(BaseModel):
     address: Optional[str] = None
     is_vehicle: Optional[bool] = None
     notes: Optional[str] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
 
 
 class WarehouseOut(WarehouseBase):
@@ -213,6 +218,10 @@ class InventoryItemUpdate(BaseModel):
     label: Optional[str] = None
     custodian_user_id: Optional[UUID] = None
     cost_cents: Optional[int] = None
+    # mi2: field geolocation (plant: MUFA / NAP).
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    gps_precision_m: Optional[float] = Field(default=None, ge=0)
 
     @field_validator("cli_protocol")
     @classmethod
@@ -257,6 +266,10 @@ class InventoryItemOut(InventoryItemBase):
     # only (stamped when a core_connectivity_check job reaches terminal state).
     mgmt_last_check_at: Optional[datetime] = None
     mgmt_last_check_ok: Optional[bool] = None
+    # mi2: field geolocation.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    gps_precision_m: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 

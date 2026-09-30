@@ -60,6 +60,11 @@ COLLECTOR_GRANTS = {
     "payments.record",
     "orders.read",
     "client_services.read",
+    # mi2_mobile_field_ops: what the cobros app needs (still no client edits).
+    "mobile.collector",
+    "tasks.create",
+    "service_plans.read",
+    "inventory_items.read",
 }
 
 
@@ -122,8 +127,9 @@ def test_revision_and_model_agree_on_the_columns():
 def test_revision_and_model_agree_on_the_indexes():
     tk2 = _tk2()
     model_indexes = {i.name for i in Task.__table__.indexes}
+    # ix_task_company_status belongs to ts1_task_status (tests/test_task_status.py).
     assert set(tk2._NEW_INDEXES) == model_indexes - {
-        "ix_task_company_scheduled_date", "ix_task_company_id"
+        "ix_task_company_scheduled_date", "ix_task_company_id", "ix_task_company_status"
     }
 
 

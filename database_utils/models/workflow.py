@@ -38,11 +38,11 @@ class ExecutionStatus(str, enum.Enum):
 class WorkflowTemplate(Base):
     """Installable workflow blueprint (ADR-007). Global rows (seeded); a company
     'installs' one to materialize a Workflow + triggers + steps + edges with
-    parameters (task column IDs, playbook IDs, ...) resolved at install time.
+    parameters (user IDs, playbook IDs, ...) resolved at install time.
 
     definition JSON shape:
     {
-      "parameters": [{"key": "install_state_id", "label": "...", "type": "task_state",
+      "parameters": [{"key": "fixed_assignee_ids", "label": "...", "type": "users",
                       "required": true}],
       "triggers":   [ ...WorkflowTrigger fields with {{param}} placeholders... ],
       "steps":      [ {"ref": "s1", ...WorkflowStep fields...} ],
@@ -114,7 +114,7 @@ class WorkflowStep(Base):
     # Example for UPDATE_FIELD:
     # {"resource_type": "order", "resource_id_source": "trigger", "updates": {"paid": true}}
     # Example for CREATE_ENTITY:
-    # {"resource_type": "task", "data": {"name": "Follow up", "task_state_id": "uuid"}}
+    # {"resource_type": "task", "data": {"name": "Follow up", "status": "PENDING"}}
 
     position_x = Column(Float, nullable=True, default=0)
     position_y = Column(Float, nullable=True, default=0)

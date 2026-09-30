@@ -7,6 +7,9 @@ from pydantic import BaseModel, EmailStr, Field
 class LoginRequest(BaseModel):
     usuario_id: EmailStr
     password: str
+    # mi2 / auth hardening: 'mobile' gets a short access token
+    # (MOBILE_ACCESS_TOKEN_EXPIRE) and a refresh token tagged cl="m".
+    client_type: Literal["web", "mobile"] = "web"
 
 
 # --- Company Signup (company-only; users join by invitation) ---
