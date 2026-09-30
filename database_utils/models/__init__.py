@@ -27,7 +27,7 @@ from .crm import (
     Task,
     TaskJobKind,
     TaskMaterial,
-    task_assignee,
+    TaskAssignee,
     Integration,
     IntegrationAuthType,
     # uplink-mobile integration
@@ -135,7 +135,7 @@ __all__ = [
     "Task",
     "TaskJobKind",
     "TaskMaterial",
-    "task_assignee",
+    "TaskAssignee",
     "Integration",
     "IntegrationAuthType",
     # uplink-mobile integration
