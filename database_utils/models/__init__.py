@@ -5,6 +5,7 @@ from .auth import (
     UserNotification,
     USER_NOTIFICATION_KINDS,
     EmailVerificationToken,
+    RefreshToken,
     PasswordResetToken,
 )
 
@@ -115,6 +116,7 @@ __all__ = [
     "UserNotification",
     "USER_NOTIFICATION_KINDS",
     "EmailVerificationToken",
+    "RefreshToken",
     "PasswordResetToken",
     # CRM
     "Client",

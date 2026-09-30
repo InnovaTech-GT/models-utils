@@ -320,6 +320,36 @@ class PasswordResetToken(Base):
     user = relationship("User")
 
 
+class RefreshToken(Base):
+    """Server-side record of an issued refresh token (bug-fix/refresh-token-reuse).
+
+    One row per token, keyed by its `jti` claim. A login starts a new
+    `family_id`; each /refresh marks the presented row `rotated_at` +
+    `replaced_by` and inserts the successor in the same family. Presenting a
+    rotated token again is reuse: the whole family gets `revoked_at`.
+    auth-erp owns the logic (routers/auth.py); rows past `expires_at` are dead
+    and may be deleted.
+    """
+    __tablename__ = "auth_refresh_token"
+    __table_args__ = (
+        CheckConstraint("client_type IN ('web','mobile')", name="ck_auth_refresh_token_client_type"),
+        Index("ix_auth_refresh_token_family_id", "family_id"),
+        Index("ix_auth_refresh_token_user_id", "user_id"),
+        Index("ix_auth_refresh_token_expires_at", "expires_at"),
+    )
+
+    jti = Column(String(64), primary_key=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
+    client_type = Column(String(10), nullable=False, default="web")
+    issued_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    rotated_at = Column(DateTime(timezone=True), nullable=True)
+    replaced_by = Column(String(64), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class Subscription(Base):
     """Subscription billing for companies"""
     __tablename__ = "subscription"
