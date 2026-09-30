@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `task_assignee` is now the mapped model `TaskAssignee` (`__tablename__ = "task_assignee"`), like the rest of the tables, instead of a bare `Table`. Same columns, primary key and `ck_task_assignee_role`, so no migration. `Task.assignees` keeps working through `secondary="task_assignee"`.
 - **Breaking for importers:** `database_utils.models.task_assignee` is gone; use `TaskAssignee` (`TaskAssignee.role`, `insert(TaskAssignee)`, `TaskAssignee.__table__` where a `Table` is needed).
 
+### Fixed
+- Workflow engine `CREATE_TASK` assigns only company users holding the TECHNICIAN role (tasks are for technicians; mirrors backend-erp's 422 `ASSIGNEE_NOT_TECHNICIAN`). Rejected ids are skipped and reported in the step result (`skipped_assignee_ids`, `warning`) instead of failing the run; the task is created unassigned (PENDING) if nobody qualifies. No migration.
+
+## [2.3.1] - 2026-09-30
+
+Bug fix `refresh-token-reuse`: a rotated refresh token stayed valid until expiry.
+
+### Added
+- Alembic `rt1_auth_refresh_token` (additive): `auth_refresh_token` table, model `RefreshToken`.
+- Refresh JWTs carry a `jti` claim; `create_refresh_token(..., jti=None)`.
+
 ## [2.3.0] - 2026-09-29
 
 Mobile integration (feature `mobile-integration`): uplink-mobile cobros and

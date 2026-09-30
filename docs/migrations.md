@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`mi2_mobile_field_ops`**) — plus the idempotent seed
+`alembic/versions/` (head: **`rt1_auth_refresh_token`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -587,7 +587,19 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `mi2_mobile_field_ops` (2026-09-29, head)
+### `rt1_auth_refresh_token` (2026-09-30, head)
+
+Refresh-token reuse detection (bug-fix `refresh-token-reuse`). **Additive
+only**: creates `auth_refresh_token` (PK `jti` VARCHAR(64), `family_id`,
+`user_id` FK `user` CASCADE, `company_id` FK `company` CASCADE nullable,
+`client_type` CHECK `web`/`mobile`, `issued_at`, `expires_at`, `rotated_at`,
+`replaced_by`, `revoked_at`) + indexes on `family_id`, `user_id`,
+`expires_at`. No backfill: refresh tokens issued earlier have no row (the
+oldest have no `jti` either) and auth-erp accepts each once, migrating it into
+a new family. `downgrade()` drops the table. Verified up/down/up on a scratch
+Postgres 16.
+
+### `mi2_mobile_field_ops` (2026-09-29)
 
 Field apps on the real system (uplink-mobile cobros + tecnicos). **Additive
 only**: every new column is nullable or has a server default, and
