@@ -15,7 +15,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import CheckConstraint
 
-from database_utils.models.auth import User
+from database_utils.models.auth import Role, User
 from database_utils.models.crm import (
     TASK_STATUSES,
     _TASK_STATUS_CHECK,
@@ -118,7 +118,8 @@ def test_derive_status_rejects_unknown_values():
 
 def _user(db, company_id):
     user = User(id=uuid.uuid4(), name="Tec", email=f"{uuid.uuid4()}@x.gt", age=30,
-                password_hash="x", company_id=company_id)
+                password_hash="x", company_id=company_id,
+                roles=[Role(id=uuid.uuid4(), name="TECHNICIAN")])
     db.add(user)
     db.flush()
     return user

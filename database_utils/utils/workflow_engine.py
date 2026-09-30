@@ -949,6 +949,10 @@ def _execute_create_task(
       "assignee_source": "client_technician" | "fixed" | "none",   # default "none"
       "assignee_ids": ["<uuid>", ...],           # for "fixed"; also the fallback
                                                  #   list for "client_technician"
+                                                 #   (only TECHNICIAN-role users are
+                                                 #   assigned; others are skipped and
+                                                 #   reported as skipped_assignee_ids
+                                                 #   + warning in the step result)
       "client_id": "<uuid>",                     # for "client_technician"; also
                                                  #   overrides the resolved task.client_id
       "job_kind": "INSTALL",                     # optional; TaskJobKind label
@@ -970,7 +974,7 @@ def _execute_create_task(
     """
     from datetime import timedelta
     from sqlalchemy import func
-    from database_utils.models.auth import User
+    from database_utils.models.auth import Role, User, user_role
     from database_utils.models.crm import (
         Client, Task, TaskJobKind, TaskLinkedObjectType, TaskState,
     )
@@ -1075,21 +1079,51 @@ def _execute_create_task(
             except (ValueError, TypeError):
                 continue
 
+    # Tasks are for technicians only: the same rule as backend-erp
+    # _require_technicians (company user holding the TECHNICIAN role). An
+    # automation cannot answer that 422, so rejected ids are dropped, logged
+    # and reported in the step result; with nobody left the task is created
+    # unassigned (PENDING) for the dispatcher instead of failing the run.
+    def _technicians(ids):
+        if not ids:
+            return []
+        return (
+            db.query(User)
+            .join(user_role, user_role.c.user_id == User.id)
+            .join(Role, Role.id == user_role.c.role_id)
+            .filter(User.id.in_(ids), User.company_id == company_id,
+                    Role.name == "TECHNICIAN")
+            .distinct()
+            .all()
+        )
+
     wanted_ids: List[UUID] = []
+    assignees = []
     if assignee_source == "client_technician":
         # `client` was already resolved above (explicit client_id, else the
         # CLIENT/CLIENT_SERVICE link) — do not query it a second time.
         technician_id = client.assigned_technician_id if client else None
-        # Technician first; fixed list as fallback; else unassigned (dispatcher).
-        wanted_ids = [technician_id] if technician_id else fixed_ids
+        # Technician first; fixed list as fallback (also when the client's
+        # technician is not a TECHNICIAN); else unassigned (dispatcher).
+        if technician_id:
+            wanted_ids = [technician_id]
+            assignees = _technicians(wanted_ids)
+        if not assignees:
+            wanted_ids += fixed_ids
+            assignees = _technicians(fixed_ids)
     elif assignee_source == "fixed":
         wanted_ids = fixed_ids
+        assignees = _technicians(fixed_ids)
 
-    assignees = []
-    if wanted_ids:
-        assignees = db.query(User).filter(
-            User.id.in_(wanted_ids), User.company_id == company_id
-        ).all()
+    assigned = {u.id for u in assignees}
+    skipped_ids = [str(uid) for uid in dict.fromkeys(wanted_ids) if uid not in assigned]
+    warning = None
+    if skipped_ids:
+        warning = (
+            f"ASSIGNEE_NOT_TECHNICIAN: skipped {len(skipped_ids)} assignee(s) "
+            f"without the TECHNICIAN role in this company"
+        )
+        logger.warning(f"CREATE_TASK {warning}: {skipped_ids}")
 
     try:
         status = derive_status(requested_status, has_technician=bool(assignees))
@@ -1146,6 +1180,7 @@ def _execute_create_task(
         "status": status,
         "task_state_id": str(task_state_id) if task_state_id else None,
         "assignee_ids": [str(u.id) for u in assignees],
+        **({"skipped_assignee_ids": skipped_ids, "warning": warning} if warning else {}),
     }
 
 
