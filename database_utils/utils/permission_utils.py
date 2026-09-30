@@ -102,6 +102,7 @@ def require_permission(permission_name: str, get_db_func):
         db: Session = Depends(get_db_func)
     ) -> User:
         from database_utils.utils.jwt_utils import decode_token, is_refresh_payload
+        from database_utils.utils.sessions import check_session
 
         # Extract token from cookie
         token = get_token_from_header(request)
@@ -124,6 +125,8 @@ def require_permission(permission_name: str, get_db_func):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type"
             )
+        # Revoked session (logout / reuse / deactivation / password change).
+        check_session(db, payload)
 
         user_id = payload.get("id")
         if not user_id:

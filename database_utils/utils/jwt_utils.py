@@ -47,7 +47,7 @@ def create_token(
     return jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
 
 
-def create_access_token(usuario, expires_minutes: Optional[int] = None):
+def create_access_token(usuario, expires_minutes: Optional[int] = None, sid=None):
     """
     Create an access token for a user.
 
@@ -55,6 +55,9 @@ def create_access_token(usuario, expires_minutes: Optional[int] = None):
         usuario: User object (can be UserOut, User model, or any object with id, roles, company_id)
         expires_minutes: TTL override (mobile logins pass mobile_access_expire);
             None = ACCESS_TOKEN_EXPIRE.
+        sid: session id = the refresh family_id (auth-erp issue_token_pair).
+            Lets the auth deps reject the token once the family is revoked
+            (utils/sessions.py). None = no `sid` claim (not revocable).
 
     Returns:
         str: Encoded JWT token
@@ -80,6 +83,8 @@ def create_access_token(usuario, expires_minutes: Optional[int] = None):
         "is_super_admin": getattr(usuario, 'is_super_admin', False),
         "type": TOKEN_TYPE_ACCESS,
     }
+    if sid is not None:
+        data["sid"] = str(sid)
     minutes = access_expire if expires_minutes is None else expires_minutes
     token = create_token(data, expires_delta=timedelta(minutes=minutes))
     logger.info(f"Access token created for user {user_id} with roles {role_names}")
