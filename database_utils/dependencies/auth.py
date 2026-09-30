@@ -126,6 +126,7 @@ async def get_current_user(
         HTTPException: If token is invalid or user not found
     """
     from database_utils.utils.jwt_utils import decode_token, is_refresh_payload
+    from database_utils.utils.sessions import check_session
     from database_utils.models.auth import User
 
     logger.info(
@@ -189,6 +190,10 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
         )
+
+    # Revoked session (logout / reuse / deactivation / password change):
+    # 401 SESSION_REVOKED. Legacy tokens without `sid` pass until they expire.
+    check_session(db, payload)
 
     # Retrieve user from database
     try:
