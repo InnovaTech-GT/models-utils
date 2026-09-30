@@ -28,7 +28,7 @@ from database_utils.models.crm import (
     Task,
     TaskJobKind,
     TaskState,
-    task_assignee,
+    TaskAssignee,
 )
 from database_utils.schemas.task_state import (
     TaskStateCreate,
@@ -121,7 +121,7 @@ def test_revision_and_model_agree_on_the_columns():
     for column in _NEW_TASK_COLUMNS:
         assert column in Task.__table__.columns
     assert "kind" in TaskState.__table__.columns
-    assert "role" in task_assignee.columns
+    assert "role" in TaskAssignee.__table__.columns
 
 
 def test_revision_and_model_agree_on_the_indexes():
@@ -161,7 +161,7 @@ def test_kind_check_pins_exactly_the_four_kinds():
 
 def test_assignee_role_check_allows_null():
     check = next(
-        c for c in task_assignee.constraints
+        c for c in TaskAssignee.__table__.constraints
         if isinstance(c, CheckConstraint) and c.name == "ck_task_assignee_role"
     )
     text = str(check.sqltext)
@@ -170,7 +170,7 @@ def test_assignee_role_check_allows_null():
     assert "role IS NULL" in text
     for role in TASK_ASSIGNEE_ROLES:
         assert f"'{role}'" in text
-    assert task_assignee.columns["role"].nullable is True
+    assert TaskAssignee.__table__.columns["role"].nullable is True
 
 
 # --- job_kind ---

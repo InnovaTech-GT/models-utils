@@ -794,6 +794,15 @@ On `tr1_transport_axis`. Additive: `inventory_item.parent_port` and
 the index and both columns — loses only the port labels. See
 [network-models.md](network-models.md#link-ports-lp1_link_ports).
 
+### ta1_task_assignee_model (2026-09-30)
+
+`task_assignee` is mapped as the `TaskAssignee` model instead of a bare
+`Table`, with the same columns, primary key and `ck_task_assignee_role`, so no
+DDL. The revision only asserts that the live table has `task_id`, `user_id`,
+`role` and the CHECK, and its downgrade does nothing. It exists so the model
+change travels the migrate path (the CI guard and the prod migrate workflow
+filter on `alembic/versions/**`) and a drifted database fails at migrate time.
+
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
