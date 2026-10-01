@@ -18,7 +18,7 @@ Docs wiki: [docs/README.md](docs/README.md) · Navigation: [CODEBASE_INDEX.md](C
 
 ```bash
 pip install -e . -r requirements-dev.txt          # editable local dev + test deps (pytest-asyncio required)
-pytest -v                                         # 463 tests, in-memory SQLite (needs placeholder POSTGRES_* env)
+pytest -v                                         # 464 tests, in-memory SQLite (needs placeholder POSTGRES_* env)
 alembic revision --autogenerate -m "description"  # generate revision (needs reachable DB env)
 ```
 
