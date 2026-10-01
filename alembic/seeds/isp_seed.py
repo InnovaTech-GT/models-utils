@@ -558,10 +558,11 @@ _INV1_CATEGORY_KEYS = {
 }
 _PRE_INV1_TIERS = (None, 'CORE', 'EDGE')
 
+# ROUTER/OLT icons are 'router'/'server' since ci1_category_icons (was radio-tower/radio).
 DEVICE_CATEGORIES = [
-    ('ROUTER', 'Router', 10, 'CORE', False, 'radio-tower', True),
+    ('ROUTER', 'Router', 10, 'CORE', False, 'router', True),
     ('SWITCH', 'Switch', 20, 'CORE', False, 'network', True),
-    ('OLT', 'OLT', 30, 'CORE', False, 'radio', True),
+    ('OLT', 'OLT', 30, 'CORE', False, 'server', True),
     ('ONU', 'ONU / ONT', 40, 'EDGE', False, 'house-wifi', True),
     ('SPLITTER', 'Splitter', 50, None, True, 'split', False),
     ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True, 'box', False),

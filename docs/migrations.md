@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`rt1_auth_refresh_token`**) — plus the idempotent seed
+`alembic/versions/` (head: **`ci1_category_icons`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -587,7 +587,23 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `rt1_auth_refresh_token` (2026-09-30, head)
+### `ci1_category_icons` (2026-10-01, head)
+
+One lucide icon mapping across seed, DB, backoffice and mobile (feature
+`category-icons`). **Data-only**, with no schema or model change.
+`_REMAP = {'ROUTER': ('radio-tower', 'router'), 'OLT': ('radio', 'server')}`.
+`upgrade()` sets the new name only where the icon is still the old default or
+NULL, so an icon customised through the API is left alone. `downgrade()`
+reverts only rows still on the new name. Re-running it is a no-op.
+`isp_seed.DEVICE_CATEGORIES` carries the new names for fresh databases.
+`inv1._ICON_BACKFILL` is history and keeps the old names;
+`tests/test_general_inventory.py` checks that inv1's backfill, after ci1's
+remap, equals the seed. Default icons of the active categories: ROUTER
+`router`, SWITCH `network`, OLT `server`, ONU `house-wifi`, FIBER_OPTIC and
+PATCH_CORD `cable`. Verified up, re-run, down and up on a scratch Postgres
+(including a NULL icon and a custom icon).
+
+### `rt1_auth_refresh_token` (2026-09-30)
 
 Refresh-token reuse detection (bug-fix `refresh-token-reuse`). **Additive
 only**: creates `auth_refresh_token` (PK `jti` VARCHAR(64), `family_id`,
