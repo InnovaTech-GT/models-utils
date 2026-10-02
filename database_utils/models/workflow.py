@@ -35,32 +35,6 @@ class ExecutionStatus(str, enum.Enum):
     SKIPPED = "SKIPPED"
 
 
-class WorkflowTemplate(Base):
-    """Installable workflow blueprint (ADR-007). Global rows (seeded); a company
-    'installs' one to materialize a Workflow + triggers + steps + edges with
-    parameters (user IDs, playbook IDs, ...) resolved at install time.
-
-    definition JSON shape:
-    {
-      "parameters": [{"key": "fixed_assignee_ids", "label": "...", "type": "users",
-                      "required": true}],
-      "triggers":   [ ...WorkflowTrigger fields with {{param}} placeholders... ],
-      "steps":      [ {"ref": "s1", ...WorkflowStep fields...} ],
-      "edges":      [ {"from": "s1", "to": "s2"} ]
-    }
-    """
-    __tablename__ = "workflow_template"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    key = Column(String, nullable=False, unique=True)  # "new-installation", "onu-replacement"
-    name = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    category = Column(String, nullable=True)  # "installation", "billing", "network"
-    definition = Column(JSON, nullable=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-
 class Workflow(Base):
     __tablename__ = "workflow"
 

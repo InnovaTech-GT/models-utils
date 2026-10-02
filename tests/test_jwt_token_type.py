@@ -55,7 +55,7 @@ def test_decode_does_not_log_the_payload(caplog):
 
 def test_refresh_token_is_rejected_as_bearer(db):
     user = _make_admin_user(db)
-    dep = require_permission("products.read", lambda: db)
+    dep = require_permission("clients.read", lambda: db)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(dep(_request_with_token(create_refresh_token(user)), db=db))
     assert exc.value.status_code == 401 and exc.value.detail == "Invalid token type"
@@ -64,7 +64,7 @@ def test_refresh_token_is_rejected_as_bearer(db):
 def test_legacy_refresh_token_is_rejected_as_bearer(db):
     user = _make_admin_user(db)
     legacy = create_token({"id": str(user.id)}, expires_delta=timedelta(minutes=5))
-    dep = require_permission("products.read", lambda: db)
+    dep = require_permission("clients.read", lambda: db)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(dep(_request_with_token(legacy), db=db))
     assert exc.value.status_code == 401

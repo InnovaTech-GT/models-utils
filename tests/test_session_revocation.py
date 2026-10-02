@@ -34,7 +34,7 @@ def _family(db, user, revoked=False):
 
 
 def _deps(db):
-    perm = require_permission("products.read", lambda: db)
+    perm = require_permission("clients.read", lambda: db)
     return [
         lambda t: asyncio.run(get_current_user(_request_with_token(t), db=db)),
         lambda t: asyncio.run(perm(_request_with_token(t), db=db)),

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING (4.0.0)** - legacy drop (Alembic `ld1_legacy_drop`, destructive, no downgrade). Models/tables `Product`, `RecurringOrder`, `RecurringOrderItem`, `TaskState` (+`TaskStateColor`, `TASK_STATE_KINDS`), `WorkflowTemplate`; columns `order.recurring_order_id`, `order_item.product_id`, `service_plan.product_id`, `client_service.recurring_order_id`, `task.task_state_id`; schemas `product`, `recurring_order` (kept DTOs moved to `schemas/billing_due.py`), `task_state`, `workflow_template`; `OrderOut.recurring_order`/`generation_period`; `TaskLinkedObjectType.RECURRING_ORDER`; permissions `products.*`, `recurring_orders.*`, `task_states.*`, `workflow_templates.*` (grants copied to `service_plans.*`/`client_services.*` first); the workflow-template seed catalog; `CREATE_ORDER` `product_id` items and `CREATE_TASK` `task_state_id`; `KNOWN_RESOURCE_TYPES` `product`/`task_state`/`recurring_order`. Unbridged ACTIVE recurring orders are migrated into `client_service`; legacy workflows are deleted. `OrderItemBase.service_plan_id` is now required. `alembic/env.py` seed sentinel is `client_service`.
+
 ### Changed
 - **BREAKING (3.0.0)** — built-in roles collapse to ADMIN / VIEWER / COLLECTOR / TECHNICIAN (Alembic `rr1_four_builtin_roles`). `Roles.MANAGER`, `Roles.SALES`, `Roles.USER` are removed; `Roles.VIEWER`, `Roles.COLLECTOR`, `Roles.TECHNICIAN` are added. New permission `web.access` (web dashboard gate). Holders of the removed roles are remapped (MANAGER→ADMIN, BILLING→COLLECTOR, others→VIEWER); seeds no longer create MANAGER/SALES/USER/NOC/WAREHOUSE/SUPPORT/BILLING; `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` and `isp_seed.ADMIN_ONLY_PERMISSIONS` are gone.
 

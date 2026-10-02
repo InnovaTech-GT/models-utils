@@ -25,7 +25,7 @@ services (email)   middleware   dependencies
   `workflow`) — `alembic/env.py` imports it wholesale so autogenerate sees every
   table.
 - `schemas/__init__.py` star-imports all 40 schema modules and runs
-  `model_rebuild()` to resolve circular Order/RecurringOrder references.
+  `model_rebuild()` to resolve circular Order/billing_due forward references.
   Cycle 4/5 additions: `insight`, `acs_registration`, `device_credential`,
   `provisioning_settings` (`network_access` was deleted by
   `tr1_transport_axis`).

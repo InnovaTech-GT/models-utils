@@ -1,6 +1,8 @@
 """
-ISP module seed: permissions, base roles, tier modules, and installable
-workflow templates (ADR-007/008).
+ISP module seed: permissions, base roles, tier modules and device categories.
+
+ld1_legacy_drop: the installable workflow-template catalog (workflow_template
+table, WORKFLOW_TEMPLATES, _seed_workflow_templates) was removed.
 
 Idempotent — every insert is ON CONFLICT DO NOTHING / DO UPDATE (workflow
 templates upsert so blueprint revisions propagate) or existence-checked, so it
@@ -42,8 +44,6 @@ from database_utils.utils.timezone_utils import now_gt
 # a hand-typed string literal (doc 20a workflow-provisioning verifier fix —
 # a typo'd table/column name silently deactivates the gated templates
 # forever via the retirement pass, with no test catching it at head).
-from database_utils.models.isp import DeviceTypePlaybook
-from database_utils.utils.workflow_engine import KNOWN_RESOURCE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +100,6 @@ ISP_PERMISSIONS = [
     {"name": "provisioning.create", "resource": "provisioning", "action": "create", "description": "Enqueue provisioning jobs"},
     {"name": "provisioning.execute", "resource": "provisioning", "action": "execute", "description": "Execute/retry provisioning jobs"},
     {"name": "provisioning.cancel", "resource": "provisioning", "action": "cancel", "description": "Cancel provisioning jobs"},
-    # Workflow templates
-    {"name": "workflow_templates.read", "resource": "workflow_templates", "action": "read", "description": "Browse workflow template catalog"},
-    {"name": "workflow_templates.install", "resource": "workflow_templates", "action": "install", "description": "Install a workflow template"},
     # Insights (Cycle 4) — available to every tenant, no tier module gate.
     {"name": "insights.create", "resource": "insights", "action": "create", "description": "Create insight dashboards/charts"},
     {"name": "insights.read", "resource": "insights", "action": "read", "description": "View insight dashboards"},
@@ -141,7 +138,6 @@ ISP_ROLES = {
         "description": "Field technician: installations, equipment handling, dispatch board",
         "permissions": [
             "tasks.create", "tasks.read", "tasks.update",
-            "task_states.read",
             "clients.read", "clients.update",
             "client_services.read", "client_services.update",
             "inventory_items.read", "inventory_items.update",
@@ -172,7 +168,6 @@ ISP_ROLES = {
         "description": "Field collector: collection routes, cash sessions, payment recording",
         "permissions": [
             "tasks.read",
-            "task_states.read",
             "clients.read",
             "payments.read", "payments.record",
             "orders.read",
@@ -195,233 +190,6 @@ ISP_ROLES = {
 # revision c2d_graph_removal step 10.
 ISP_TIER_MODULES = ["inventory", "topologies", "provisioning"]
 
-
-def _wt(key, name, description, category, parameters, triggers, steps, edges):
-    return {
-        "key": key, "name": name, "description": description, "category": category,
-        "definition": {
-            "parameters": parameters, "triggers": triggers, "steps": steps, "edges": edges,
-        },
-    }
-
-
-# Per-template column dependencies (doc 18 amendment 10 / topology-networking
-# verifier fix): the seed runs after EVERY alembic command, including stepped
-# partial upgrades, so a template whose steps reference a column from a LATER
-# revision must be skipped until that revision has actually applied — the
-# stepactiontype enum gate below already does this for step action types;
-# this dict extends the same idea to plain columns. Checked against
-# information_schema.columns in _seed_workflow_templates.
-TEMPLATE_REQUIRED_COLUMNS = {
-    # Cycle 10 (doc 35 §2.4): 'installation-provisioning' uses
-    # ENQUEUE_PROVISIONING's use_service_path mode, which resolves each device
-    # on the traversed path through the device_type_playbook binding table
-    # (revision ng1_network_graph) — never publish before it exists. Same gate
-    # as before, pointed at the table that replaced topology_playbook.
-    "installation-provisioning": [(DeviceTypePlaybook.__tablename__, "purpose"), ("task", "status")],
-    # ts1_task_status: both templates now speak task.status instead of a
-    # tenant board column, so they must not publish before the column exists.
-    "new-installation": [("task", "status")],
-    # v3 (Cycle 2 §1b rewrite, doc 18 amendment 8): these templates now
-    # UPDATE_FIELD client_service.billing_status instead of
-    # recurring_order.status — the column only exists from c2b onward. v4
-    # (Cycle 3 E2) adds the same topology_playbook.purpose gate as above.
-    # 'service-removal', 'suspension' and 'reactivation' had identical entries,
-    # dropped with the templates themselves (service-lifecycle cycle) — this
-    # dict is only consulted per entry in WORKFLOW_TEMPLATES, so a key with no
-    # template is dead weight.
-}
-
-# Installable workflow templates (ADR-007). "{{param:KEY}}" placeholders are
-# resolved at install time; "{{trigger.*}}" placeholders stay for runtime.
-WORKFLOW_TEMPLATES = [
-    # v3 (client-install-field removal, revision cf1): the old s3 UPDATE_FIELD
-    # step (client.installation_status display cache) is GONE along with the
-    # column itself — s2 is now terminal; cf1's data pass deletes s3 from
-    # already-installed tenant copies. v2 history (doc 16 §5.4,
-    # installation-flow): PENDING_INSTALL-gated trigger so imports/backfills
-    # creating ACTIVE services never spawn install orders; s1 bills the
-    # installation fee (CREATE_ORDER), s2 opens the dispatch task
-    # (CREATE_TASK, linked CLIENT_SERVICE — the Cycle-3 join key; ORDER linkage
-    # is forbidden). Free installs = a Q0 fee product; the order still exists
-    # as history and is settled via settle-zero. Tenants must reinstall to
-    # pick up a new version.
-    # v4 (task-context cycle, doc 32): the installation-fee param is now a
-    # SERVICE PLAN (type "service_plan", item key service_plan_id — the
-    # engine's preferred resolution). The old product param blocked fresh
-    # tenants entirely: legacy products are retired (no create path), so a
-    # new company could never satisfy the required product UUID. Tenants on
-    # v3 keep their installed product_id copies (deprecated-but-honored
-    # during the rollback window).
-    _wt(
-        "new-installation", "New Installation",
-        "When a subscriber service is created pending installation, bill the installation fee "
-        "and open an installation task on the dispatch board.",
-        "installation",
-        [
-            {"key": "installation_fee_plan_id", "label": "Installation fee catalog item (use a Q0 plan for free installs)", "type": "service_plan", "required": True},
-            {"key": "fixed_assignee_ids", "label": "Fallback technicians when the client has no assigned technician", "type": "users", "required": False},
-        ],
-        [{"resource_type": "client_service", "event_type": "CREATED",
-          "field_conditions": {"field": "status", "operator": "equals", "value": "PENDING_INSTALL"}}],
-        [
-            {"ref": "s1", "name": "Create installation order", "action_type": "CREATE_ORDER",
-             "action_config": {
-                 "order_type": "INSTALLATION",
-                 "client_id": "{{trigger.after.client_id}}",
-                 "client_service_id": "{{trigger.resource_id}}",
-                 "items": [{"service_plan_id": "{{param:installation_fee_plan_id}}", "quantity": 1}],
-                 "due_date_offset_days": 0,
-                 "idempotency_key": "install-order-{{trigger.resource_id}}"}},
-            {"ref": "s2", "name": "Create installation task", "action_type": "CREATE_TASK",
-             "action_config": {
-                 "name": "New installation — service {{trigger.resource_id}}",
-                 "description": "Install subscriber service. Client: {{trigger.after.client_id}}. "
-                                "Installation order: {{steps.s1.resource_id}}",
-                 # ts1: no board column any more. The status follows the
-                 # assignment (ASSIGNED with a technician, else PENDING).
-                 "linked_object_type": "CLIENT_SERVICE",
-                 "linked_object_id": "{{trigger.resource_id}}",
-                 "assignee_source": "client_technician",
-                 "assignee_ids": "{{param:fixed_assignee_ids}}",
-                 "client_id": "{{trigger.after.client_id}}",
-                 # tk2 (doc 04 §2.5): without this the automation-created
-                 # task lands with job_kind NULL and renders as an untyped
-                 # row in the redesigned Ordenes de Trabajo table.
-                 "job_kind": "INSTALL"}},
-        ],
-        [{"from": "s1", "to": "s2"}],
-    ),
-    # v2 (Cycle 3 E2, doc 20a workflow-provisioning §3): rewritten from an
-    # explicit `activation_playbook_id` param to topology purpose resolution
-    # (ENQUEUE_PROVISIONING use_service_path). The task's linked_object_id (set by
-    # new-installation's s2 to the client_service that fired new-installation)
-    # is the resolution target; `purpose` is fixed to ACTIVATION (not a
-    # param — the founder flow is specifically install -> activate; purpose
-    # flexibility lives in the workflow editor for hand-built automations).
-    # Tenants with v1 installed keep running mode B (explicit playbook_id)
-    # until they reinstall — mode B is unchanged and stays supported.
-    _wt(
-        "installation-provisioning", "Installation → Provisioning",
-        "When an installation task is marked DONE, resolve the "
-        "linked service's network path and run each device's ACTIVATION playbook.",
-        "installation",
-        [],
-        [{"resource_type": "task", "event_type": "UPDATED",
-          "field_conditions": {"field": "status", "operator": "changed_to",
-                                "value": "DONE"}}],
-        [{"ref": "provision", "name": "Provision service from its network path",
-          "action_type": "ENQUEUE_PROVISIONING",
-          "action_config": {
-              "use_service_path": True,
-              "purpose": "ACTIVATION",
-              "client_service_id": "{{trigger.after.linked_object_id}}",
-              "idempotency_key": "activate-{{trigger.after.linked_object_id}}",
-              "max_attempts": 3}}],
-        [],
-    ),
-    _wt(
-        "service-activation", "Service Activation on Provisioning Success",
-        "When a provisioning job succeeds, mark the linked service ACTIVE (billing starts via the plan's recurring order).",
-        "installation",
-        [],
-        [{"resource_type": "provisioning_job", "event_type": "UPDATED",
-          "field_conditions": {"field": "status", "operator": "changed_to", "value": "SUCCEEDED"}}],
-        [{"ref": "activate", "name": "Activate service", "action_type": "UPDATE_FIELD",
-          "action_config": {"resource_type": "client_service", "resource_id_source": "custom",
-                            "resource_id": "{{trigger.after.client_service_id}}",
-                            "updates": {"status": "ACTIVE"}}}],
-        [],
-    ),
-    # 'suspension' and 'reactivation' REMOVED (service-lifecycle cycle) — the
-    # siblings of 'service-removal' above, retired for the same reason and by
-    # the same mechanism (revision lc2_retire_susp_react, which also
-    # deactivates already-installed tenant copies).
-    #
-    # Both halves of each template are now redundant:
-    #   1. The UPDATE_FIELD billing step — _apply_suspension/_apply_reactivation
-    #      in backend-erp set billing_status natively (PAUSED / ACTIVE, and
-    #      reactivation stamps next_generation_date when NULL so a reactivated
-    #      service does not bill an overdue backlog). Amendment 8's whole point:
-    #      billing must never depend on an installed automation.
-    #   2. The ENQUEUE_PROVISIONING step — the lifecycle endpoint enqueues the
-    #      topology's SUSPENSION/REACTIVATION playbook directly.
-    #
-    # Their v4 idempotency keys ('suspend-{id}'/'reactivate-{id}') would dedupe a
-    # duplicate enqueue ONLY while the native path composes byte-identical keys,
-    # and not at all for the pre-v4 installed shape, which carries no key. Retiring
-    # is the durable fix rather than a guarantee resting on two string literals in
-    # different repos staying in sync.
-    _wt(
-        "plan-change", "Plan Upgrade / Downgrade",
-        "When a service's plan changes, run the plan-change playbook with the new plan id.",
-        "billing",
-        [{"key": "plan_change_playbook_id", "label": "Plan change playbook", "type": "playbook", "required": True}],
-        [{"resource_type": "client_service", "event_type": "UPDATED",
-          "field_conditions": {"field": "service_plan_id", "operator": "changed"}}],
-        [{"ref": "provision", "name": "Apply new plan on the network", "action_type": "ENQUEUE_PROVISIONING",
-          "action_config": {"playbook_id": "{{param:plan_change_playbook_id}}",
-                            "client_service_id": "{{trigger.resource_id}}",
-                            "variables": {"input.client_service_id": "{{trigger.resource_id}}",
-                                          "input.service_plan_id": "{{trigger.after.service_plan_id}}"}}}],
-        [],
-    ),
-    # 'service-removal' REMOVED (service-lifecycle cycle, founder decision 8):
-    # cancelling a service now natively cancels billing and enqueues the
-    # topology's DEPROVISION playbook, in the cancel handler itself. Keeping
-    # the template would double-fire the deprovision job on every cancel for
-    # any tenant that had installed it. Retire-only, same treatment as
-    # fiber-cut/maintenance below: deleted from this list, key added to
-    # RETIRED_TEMPLATE_KEYS, and the retirement pass at the bottom of
-    # _seed_workflow_templates deactivates the TEMPLATE row on the next migrate
-    # (revision lc1_retire_removal_tmpl replays the seed in prod).
-    #
-    # The retirement pass does NOT touch already-installed tenant copies, and
-    # cannot: installing a template materializes an independent `workflow` row
-    # with no template_id/key back-reference, and find_matching_workflows
-    # filters on workflow.is_active alone. Deactivating those installed copies
-    # is done by lc1_retire_removal_tmpl's upgrade() — see that revision's
-    # docstring for the targeting rules and why a stale copy breaks the ADMIN
-    # force-cancel guarantee.
-    _wt(
-        "onu-replacement", "ONU / Equipment Replacement",
-        "When customer equipment is reassigned to a service, run the equipment provisioning playbook with its serial.",
-        "network",
-        [{"key": "equipment_playbook_id", "label": "Equipment provisioning playbook", "type": "playbook", "required": True}],
-        [{"resource_type": "inventory_item", "event_type": "UPDATED",
-          "field_conditions": {"field": "client_service_id", "operator": "changed"}}],
-        [{"ref": "provision", "name": "Provision replacement equipment", "action_type": "ENQUEUE_PROVISIONING",
-          "action_config": {"playbook_id": "{{param:equipment_playbook_id}}",
-                            "inventory_item_id": "{{trigger.resource_id}}",
-                            "client_service_id": "{{trigger.after.client_service_id}}",
-                            "variables": {"input.serial_number": "{{trigger.after.serial_number}}",
-                                          "input.mac_address": "{{trigger.after.mac_address}}"}}}],
-        [],
-    ),
-    # 'fiber-cut' and 'maintenance' REMOVED (Cycle 2 D6): both triggered on
-    # resource_type='network_node', which no longer exists in
-    # workflow_engine.KNOWN_RESOURCE_TYPES once the graph is dropped
-    # (revision c2d_graph_removal). Retire-only per doc 18 D-- "fiber-cut/
-    # maintenance templates: retire only (deactivate; no replacement this
-    # cycle)" — the retirement pass below deactivates any already-seeded rows
-    # for keys no longer in this list.
-]
-
-# Keys the retirement pass must never touch even though they are not (yet)
-# published at every migration position — kept explicit so a future template
-# add/remove doesn't need to touch the retirement logic itself.
-RETIRED_TEMPLATE_KEYS = [
-    "fiber-cut",
-    "maintenance",
-    # service-lifecycle cycle: superseded by native lifecycle handling. The
-    # TEMPLATE rows are deactivated by the convergent retirement pass below;
-    # already-INSTALLED tenant copies are deactivated by revisions
-    # lc1_retire_removal_tmpl / lc2_retire_susp_react, because an installed
-    # workflow is an independent row with no link back to its template.
-    "service-removal",
-    "suspension",
-    "reactivation",
-]
 
 # Cycle 3 E4 (doc 20a admin-categories-sidebar §6): the 13 baseline device
 # categories, duplicated (not imported) from revision
@@ -501,11 +269,10 @@ DEVICE_CATEGORIES = [
 
 
 def seed_isp_data(connection: Connection) -> None:
-    """Seed ISP permissions, roles, tier modules, templates and device categories."""
+    """Seed ISP permissions, roles, tier modules and device categories."""
     _seed_permissions(connection)
     _seed_roles(connection)
     _seed_tier_modules(connection)
-    _seed_workflow_templates(connection)
     _seed_device_categories(connection)
     logger.info("ISP seed completed")
 
@@ -575,121 +342,6 @@ def _seed_tier_modules(connection: Connection) -> None:
                 {"modules": json.dumps(merged), "id": tier_id},
             )
     logger.info("Tier modules updated with ISP modules")
-
-
-def _seed_workflow_templates(connection: Connection) -> None:
-    # Upsert (doc 16 §5.4): templates are global blueprints; installed
-    # workflows are materialized copies, so DO UPDATE is safe and lets template
-    # revisions (e.g. new-installation v2, suspension/reactivation/
-    # service-removal v3) ship without a new key. Release note: tenants
-    # reinstall to pick up a new version.
-    #
-    # Migration-position gate: seeds run after ANY alembic command (including
-    # partial upgrades and downgrades), but a template definition may use step
-    # action types (or, per Cycle 2, columns) added by a LATER revision.
-    # Publishing such a blueprint before the DB can represent it makes install
-    # (or the first trigger fire) 500 — skip templates the database cannot
-    # support yet, at whatever granularity is needed:
-    #   1. stepactiontype enum membership (pre-existing, doc 16 §5.4/43c543c)
-    #   2. required columns (Cycle 2, doc 18 amendment 10) — e.g. v3
-    #      suspension/reactivation/service-removal need
-    #      client_service.billing_status, which only exists from c2b onward
-    #   3. trigger resource types must all be in the engine's KNOWN_RESOURCE_TYPES
-    #      (Cycle 2, topology-networking verifier fix) — catches a template
-    #      whose trigger references a resource the running engine build
-    #      cannot resolve at all (e.g. a template authored against a resource
-    #      type removed by a later revision, or not yet added by an earlier one)
-    supported_actions = {
-        row[0]
-        for row in connection.execute(text(
-            "SELECT e.enumlabel FROM pg_enum e "
-            "JOIN pg_type t ON t.oid = e.enumtypid "
-            "WHERE t.typname = 'stepactiontype'"
-        ))
-    }
-    # The engine's model map as of THIS build, not migration-position-dependent.
-    known_resource_types = set(KNOWN_RESOURCE_TYPES)
-    seeded_keys = []
-
-    for tpl in WORKFLOW_TEMPLATES:
-        required_actions = {
-            step.get("action_type")
-            for step in tpl["definition"].get("steps", [])
-            if step.get("action_type")
-        }
-        missing_actions = required_actions - supported_actions
-        if missing_actions:
-            logger.warning(
-                f"Skipping template '{tpl['key']}': stepactiontype enum lacks "
-                f"{sorted(missing_actions)} at this migration position"
-            )
-            continue
-
-        missing_columns = []
-        for table, column in TEMPLATE_REQUIRED_COLUMNS.get(tpl["key"], []):
-            exists = connection.execute(
-                text(
-                    "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name = :table AND column_name = :column"
-                ),
-                {"table": table, "column": column},
-            ).fetchone()
-            if not exists:
-                missing_columns.append(f"{table}.{column}")
-        if missing_columns:
-            logger.warning(
-                f"Skipping template '{tpl['key']}': missing column(s) "
-                f"{missing_columns} at this migration position"
-            )
-            continue
-
-        trigger_resource_types = {
-            trig.get("resource_type")
-            for trig in tpl["definition"].get("triggers", [])
-            if trig.get("resource_type")
-        }
-        unknown_resources = trigger_resource_types - known_resource_types
-        if unknown_resources:
-            logger.warning(
-                f"Skipping template '{tpl['key']}': trigger resource type(s) "
-                f"{sorted(unknown_resources)} are not in KNOWN_RESOURCE_TYPES"
-            )
-            continue
-
-        connection.execute(
-            text(
-                "INSERT INTO workflow_template (id, created_at, key, name, description, category, definition, is_active) "
-                "VALUES (gen_random_uuid(), :created_at, :key, :name, :description, :category, :definition, TRUE) "
-                "ON CONFLICT (key) DO UPDATE SET "
-                "name = EXCLUDED.name, description = EXCLUDED.description, "
-                "category = EXCLUDED.category, definition = EXCLUDED.definition, "
-                "is_active = TRUE"
-            ),
-            {
-                "created_at": now_gt(),
-                "key": tpl["key"],
-                "name": tpl["name"],
-                "description": tpl["description"],
-                "category": tpl["category"],
-                "definition": json.dumps(tpl["definition"]),
-            },
-        )
-        seeded_keys.append(tpl["key"])
-
-    # Retirement pass (doc 18 amendment 10 / topology-networking verifier
-    # fix): templates are exclusively seed-owned (install is the only other
-    # write path and never touches workflow_template rows), so deactivating
-    # every key NOT in this run's seeded set is safe and convergent on every
-    # migrate — this is what actually retires 'fiber-cut'/'maintenance' (and
-    # any future removed key) without a destructive DELETE, and it also
-    # covers templates skipped above by the gates (they must not stay active
-    # with a stale pre-gate definition).
-    if seeded_keys:
-        connection.execute(
-            text("UPDATE workflow_template SET is_active = FALSE WHERE key <> ALL(:seeded_keys)"),
-            {"seeded_keys": seeded_keys},
-        )
-    logger.info(f"Seeded {len(seeded_keys)}/{len(WORKFLOW_TEMPLATES)} workflow templates")
 
 
 def _seed_device_categories(connection: Connection) -> None:

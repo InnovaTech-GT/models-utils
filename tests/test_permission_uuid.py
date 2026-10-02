@@ -72,7 +72,7 @@ def test_permission_dependency_coerces_string_id(db):
     user = _make_admin_user(db)
     token = create_access_token(user)  # payload id is a string
 
-    dependency = require_permission("products.read", lambda: db)
+    dependency = require_permission("clients.read", lambda: db)
     resolved = asyncio.run(dependency(_request_with_token(token), db=db))
 
     assert resolved.id == user.id

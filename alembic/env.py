@@ -103,23 +103,20 @@ def _run_seeds(connection) -> None:
     from seeds.tier_seed import seed_tier_data
     seed_tier_data(connection)
 
-    # Automatically seed ISP data (permissions, roles, tier modules,
-    # workflow templates) — idempotent; skipped until the isp-platform
-    # revision has created its tables.
+    # Automatically seed ISP data (permissions, roles, tier modules, device
+    # categories) — idempotent; skipped until the isp-platform revision has
+    # created its tables.
     #
-    # Cycle 2 (doc 18 amendment 10): the sentinel used to require BOTH
-    # workflow_template AND network_node_type to exist. c2d_graph_removal
-    # drops network_node_type entirely, which would make this permanently
-    # false on any DB migrated past c2d — the ISP seed (permissions, roles,
-    # tier modules, templates, the new client_services.generate permission)
-    # would silently stop converging forever. workflow_template alone is
-    # sufficient: it is created by cd2f and never dropped. Table-existence
-    # guards for individual sub-seeders that touch tables removed later in
-    # the chain (e.g. network_node_type) now live inside isp_seed.py itself.
+    # Sentinel: client_service (created by cd2f, never dropped). It used to be
+    # workflow_template, which ld1_legacy_drop drops — keeping it would make
+    # this permanently false and silently stop the ISP seed from converging
+    # forever. (Before that it required network_node_type, dropped by
+    # c2d_graph_removal.) Table-existence guards for individual sub-seeders
+    # that touch tables removed later in the chain live inside isp_seed.py.
     from sqlalchemy import text as _text
     isp_tables = connection.execute(_text(
         "SELECT COUNT(*) FROM information_schema.tables "
-        "WHERE table_name = 'workflow_template'"
+        "WHERE table_name = 'client_service'"
     )).scalar()
     if isp_tables == 1:
         from seeds.isp_seed import seed_isp_data
