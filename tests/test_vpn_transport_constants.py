@@ -152,15 +152,13 @@ def test_ac1_permission_matches_the_isp_seed_row():
 
 
 def test_reveal_is_admin_only():
-    """isp_seed._seed_permissions cross-joins every ISP_PERMISSIONS name onto
-    global ADMIN *and* MANAGER minus ADMIN_ONLY_PERMISSIONS, so dropping the
-    name from either tuple silently hands every tenant manager the tenant's ACS
-    password. ADMIN is the ONLY role that may hold it: no ISP_ROLES entry grants
-    it, and ac1 writes no role_permission row of its own."""
+    """ADMIN is the ONLY role that may hold device_credentials.reveal: no
+    ISP_ROLES entry grants it, its action is not 'read' (so VIEWER's
+    convergent filter never matches it), and ac1 writes no role_permission
+    row of its own."""
     isp_seed = _load_isp_seed()
-    rbac_seed = _load_rbac_seed()
-    assert "device_credentials.reveal" in isp_seed.ADMIN_ONLY_PERMISSIONS
-    assert "device_credentials.reveal" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
+    row = next(p for p in isp_seed.ISP_PERMISSIONS if p["name"] == "device_credentials.reveal")
+    assert row["action"] != "read"
     for role_name, spec in isp_seed.ISP_ROLES.items():
         assert "device_credentials.reveal" not in spec["permissions"], role_name
     source = open(

@@ -65,8 +65,7 @@ ISP_PERMISSIONS = [
     # absorbs recurring_order's billing engine).
     {"name": "client_services.generate", "resource": "client_services", "action": "generate", "description": "Manually generate a billing cycle for a service"},
     # Brownfield adoption (doc 30, revision ba1): attest a pre-existing
-    # service as installed. ADMIN-only — listed in ADMIN_ONLY_PERMISSIONS
-    # below so the MANAGER auto-inherit in _seed_permissions skips it
+    # service as installed. ADMIN-only — no ISP_ROLES entry grants it.
     # (payments.refund precedent in rbac_seed). Deliberately granted to NO
     # ISP base role and given NO legacy grant-copy source in rbac_seed step 4.
     {"name": "client_services.adopt", "resource": "client_services", "action": "adopt", "description": "Attest a service as installed (brownfield adoption) - ADMIN only"},
@@ -110,7 +109,7 @@ ISP_PERMISSIONS = [
     {"name": "insights.update", "resource": "insights", "action": "update", "description": "Update insight dashboards/charts"},
     {"name": "insights.delete", "resource": "insights", "action": "delete", "description": "Delete insight dashboards/charts"},
     # Network configuration (Cycle 5 Phase 1: TR-069 / GenieACS) — INSERT-ONLY
-    # convergent (ON CONFLICT DO NOTHING); ADMIN/MANAGER auto-inherit all via
+    # convergent (ON CONFLICT DO NOTHING); ADMIN auto-inherits all via
     # _seed_permissions.
     {"name": "network_access.read", "resource": "network_access", "action": "read", "description": "View network transport paths"},
     {"name": "network_access.create", "resource": "network_access", "action": "create", "description": "Create network transport paths"},
@@ -123,7 +122,7 @@ ISP_PERMISSIONS = [
     # ac1 (Capa 3): a deliberate, audited exception to the write-only-secrets
     # canon — the tenant CWMP Inform password must be readable back because an
     # installer types it into the router by hand. ADMIN role ONLY (see
-    # ADMIN_ONLY_PERMISSIONS); no other base role is granted it.
+    # no ISP_ROLES entry grants it); no other base role is granted it.
     {"name": "device_credentials.reveal", "resource": "device_credentials", "action": "reveal", "description": "Reveal a device credential's plaintext secret (audited)"},
     {"name": "acs_devices.read", "resource": "acs_devices", "action": "read", "description": "View ACS/TR-069 device state"},
     {"name": "acs_devices.action", "resource": "acs_devices", "action": "action", "description": "Run ACS device actions (reboot, factory-reset, refresh)"},
@@ -135,18 +134,6 @@ ISP_PERMISSIONS = [
     {"name": "acs_registrations.delete", "resource": "acs_registrations", "action": "delete", "description": "Release/delete ACS device registrations"},
     {"name": "network_audit.read", "resource": "network_audit", "action": "read", "description": "View the append-only device action log"},
 ]
-
-# ADMIN-only permission names: excluded from the MANAGER auto-inherit below.
-# MUST stay a subset of rbac_seed.MANAGER_EXCLUDED_PERMISSIONS (the two
-# copies are pinned equal-by-membership in tests/test_attested_adoption.py —
-# seeds cannot import each other: tests load them by file path, nc2a
-# duplicated-fragment precedent).
-ADMIN_ONLY_PERMISSIONS = (
-    "client_services.adopt",
-    # ac1: revealing a stored plaintext secret is ADMIN-only. This tuple
-    # keeps it out of the MANAGER cross-join; no ISP_ROLES entry grants it.
-    "device_credentials.reveal",
-)
 
 # New ISP base roles (global: company_id NULL) and their permission grants.
 ISP_ROLES = {
@@ -167,7 +154,7 @@ ISP_ROLES = {
             "dashboard.read",
             # Cycle 4: insights are available to every tenant/role that has
             # the dashboard — read-only for base roles, full CRUD is
-            # ADMIN/MANAGER-only (granted automatically in _seed_permissions).
+            # ADMIN-only (granted automatically in _seed_permissions).
             "insights.read",
             # Cycle 5 Phase 1: field techs register CPEs and read ACS device state.
             "acs_registrations.create", "acs_registrations.read",
@@ -177,80 +164,8 @@ ISP_ROLES = {
             "mobile.technician",
         ],
     },
-    "NOC": {
-        "description": "Network operations: topology, playbooks, provisioning jobs",
-        "permissions": [
-            # Cycle 2 D5: replaces network_node_types.*/network_nodes.*/
-            # network_links.* (full CRUD, same operational role).
-            "topologies.create", "topologies.read", "topologies.update", "topologies.delete",
-            "playbooks.create", "playbooks.read", "playbooks.update", "playbooks.delete",
-            "provisioning.read", "provisioning.create", "provisioning.execute", "provisioning.cancel",
-            "client_services.read",
-            "inventory_items.read", "device_types.read",
-            "workflow_templates.read",
-            "tasks.create", "tasks.read", "tasks.update",
-            "task_states.read",
-            "dashboard.read",
-            "insights.read",
-            # Cycle 5 Phase 1: NOC owns the network-configuration surface.
-            "network_access.read", "network_access.create", "network_access.update", "network_access.delete",
-            "device_credentials.read", "device_credentials.create", "device_credentials.update", "device_credentials.delete",
-            # device_credentials.reveal is deliberately absent: ADMIN only.
-            "acs_devices.read", "acs_devices.action",
-            "acs_registrations.read", "acs_registrations.create", "acs_registrations.update", "acs_registrations.delete",
-            "provisioning_settings.read", "provisioning_settings.update",
-            "network_audit.read",
-        ],
-    },
-    "WAREHOUSE": {
-        "description": "Warehouse custody: device catalog, stock, transfers",
-        "permissions": [
-            "device_types.create", "device_types.read", "device_types.update", "device_types.delete",
-            "warehouses.create", "warehouses.read", "warehouses.update", "warehouses.delete",
-            "inventory_items.create", "inventory_items.read", "inventory_items.update", "inventory_items.delete",
-            "equipment_events.create", "equipment_events.read",
-            "dashboard.read",
-            "insights.read",
-        ],
-    },
-    "SUPPORT": {
-        "description": "Subscriber care: client data, services, suspensions, tickets",
-        "permissions": [
-            "clients.create", "clients.read", "clients.update",
-            "client_services.create", "client_services.read", "client_services.update",
-            "client_services.suspend", "client_services.reactivate",
-            "service_plans.read",
-            "orders.read", "recurring_orders.read",
-            "tasks.create", "tasks.read", "tasks.update",
-            "task_states.read",
-            "provisioning.read",
-            "dashboard.read",
-            "insights.read",
-            # Cycle 5 Phase 1: subscriber-care read visibility into ACS state.
-            "acs_devices.read", "acs_registrations.read",
-            "network_audit.read", "provisioning_settings.read",
-        ],
-    },
-    "BILLING": {
-        "description": "Billing operations: orders, recurring billing, plans",
-        "permissions": [
-            "clients.read",
-            "orders.create", "orders.read", "orders.update",
-            "recurring_orders.create", "recurring_orders.read", "recurring_orders.update",
-            "products.read",
-            "service_plans.read", "client_services.read",
-            # Cycle 2 D1: BILLING owns the manual billing-cycle generation
-            # action that replaces recurring_orders' equivalent.
-            "client_services.generate",
-            "dashboard.read",
-            "insights.read",
-            # cfg3: the collector mobile app. Row declared in
-            # rbac_seed.PERMISSIONS_DATA, granted here.
-            "mobile.collector",
-        ],
-    },
     # tk2 (Figma redesign PR 4, master plan §2.7): the cobrador. Distinct from
-    # BILLING — a collector walks a route with cash, so the grant list is the
+    # a billing clerk — a collector walks a route with cash, so the grant list is the
     # minimum that lets the mobile app show "who owes what" and record the
     # payment: NO order/plan creation, NO client edits.
     "COLLECTOR": {
@@ -605,22 +520,16 @@ def _seed_permissions(connection: Connection) -> None:
             ),
             {"created_at": now_gt(), **perm},
         )
-    # ADMIN and MANAGER inherit all new permissions (matching rbac_seed
-    # policy) — except MANAGER skips the ADMIN_ONLY_PERMISSIONS keys.
-    all_names = [p["name"] for p in ISP_PERMISSIONS]
-    for role_name in ("ADMIN", "MANAGER"):
-        names = all_names if role_name == "ADMIN" else [
-            n for n in all_names if n not in ADMIN_ONLY_PERMISSIONS
-        ]
-        connection.execute(
-            text(
-                "INSERT INTO role_permission (role_id, permission_id) "
-                "SELECT r.id, p.id FROM role r, permission p "
-                "WHERE r.name = :role AND r.company_id IS NULL AND p.name = ANY(:names) "
-                "ON CONFLICT DO NOTHING"
-            ),
-            {"role": role_name, "names": names},
-        )
+    # ADMIN inherits all new permissions (matching rbac_seed policy).
+    connection.execute(
+        text(
+            "INSERT INTO role_permission (role_id, permission_id) "
+            "SELECT r.id, p.id FROM role r, permission p "
+            "WHERE r.name = 'ADMIN' AND r.company_id IS NULL AND p.name = ANY(:names) "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"names": [p["name"] for p in ISP_PERMISSIONS]},
+    )
     logger.info(f"Seeded {len(ISP_PERMISSIONS)} ISP permissions")
 
 

@@ -100,28 +100,24 @@ PERMISSIONS_DATA = [
         # Mobile app access (cfg3_matrix_permissions). These are the Figma
         # permission-matrix rows "App de técnico" / "App de cobrador" and are
         # enforced server-side in backend-erp on top of the existing
-        # tasks.*/payments.* checks. Granted to TECHNICIAN / BILLING via
-        # isp_seed.ISP_ROLES; ADMIN and MANAGER converge automatically.
+        # tasks.*/payments.* checks. Granted to TECHNICIAN / COLLECTOR via
+        # isp_seed.ISP_ROLES; ADMIN converges automatically.
         {"name": "mobile.technician", "resource": "mobile", "action": "technician", "description": "Acceso a la App de técnico"},
         {"name": "mobile.collector", "resource": "mobile", "action": "collector", "description": "Acceso a la App de cobrador"},
 
         # Activity log (cfg3_matrix_permissions). Replaces the ADMIN role gate
-        # on auth-erp's GET /audit-logs. Deliberately NOT in
-        # MANAGER_EXCLUDED_PERMISSIONS: MANAGER sees the activity log (Q3).
+        # on auth-erp's GET /audit-logs.
         {"name": "audit_logs.read", "resource": "audit_logs", "action": "read", "description": "Ver el registro de actividad"},
+
+        # Web dashboard access (rr1_four_builtin_roles). Enforced by
+        # frontend-erp's middleware; mobile-only roles (COLLECTOR,
+        # TECHNICIAN) don't hold it. Pinned against rr1.WEB_ACCESS.
+        {"name": "web.access", "resource": "web", "action": "access", "description": "Acceso a la aplicación web"},
 ]
 
-# Permission names withheld from the MANAGER auto-grants (initial seed AND
-# _ensure_convergent_rbac step 3). Includes seed-owned ADMIN-only keys from
-# other seed modules (isp_seed.ADMIN_ONLY_PERMISSIONS must be a subset —
-# pinned by tests/test_attested_adoption.py; seeds cannot import each other).
-MANAGER_EXCLUDED_PERMISSIONS = (
-    "orders.revert_payment",
-    "payments.refund",
-    "client_services.adopt",  # ba1: brownfield adoption is ADMIN-only
-    "device_credentials.reveal",  # ac1: reading a plaintext secret is ADMIN-only
-)
-_MANAGER_EXCLUDED_SQL = ", ".join(f"'{n}'" for n in MANAGER_EXCLUDED_PERMISSIONS)
+# The four built-in (global) roles. ADMIN/VIEWER are created here;
+# COLLECTOR/TECHNICIAN by isp_seed.ISP_ROLES. Tenants add custom roles on top.
+VIEWER_PERMISSION_FILTER = "p.action = 'read' OR p.name = 'web.access'"
 
 
 def seed_rbac_data(connection: Connection) -> None:
@@ -190,9 +186,7 @@ def seed_rbac_data(connection: Connection) -> None:
         # 2. Create default roles
         roles_data = [
             {"name": "ADMIN", "description": "Administrator with all permissions", "is_system": True},
-            {"name": "MANAGER", "description": "Manager with most permissions except system settings", "is_system": True},
-            {"name": "SALES", "description": "Sales representative with client and order permissions", "is_system": True},
-            {"name": "USER", "description": "Basic user with read-only permissions", "is_system": True},
+            {"name": "VIEWER", "description": "Read access to everything on the web app", "is_system": True},
         ]
 
         role_ids = {}
@@ -235,91 +229,8 @@ def seed_rbac_data(connection: Connection) -> None:
 
         logger.info(f"✓ ADMIN role assigned {len(admin_permissions)} permissions")
 
-        # MANAGER: All permissions except roles, permissions, company settings,
-        # and the ADMIN-only keys in MANAGER_EXCLUDED_PERMISSIONS (payment
-        # reversal + brownfield adoption — mirrors the migration grant-copy).
-        manager_permissions = connection.execute(
-            text(
-                "SELECT id FROM permission WHERE resource NOT IN ('roles', 'permissions', 'company') "
-                f"AND name NOT IN ({_MANAGER_EXCLUDED_SQL})"
-            )
-        ).fetchall()
-
-        for perm_row in manager_permissions:
-            connection.execute(
-                text(
-                    "INSERT INTO role_permission (role_id, permission_id) "
-                    "VALUES (:role_id, :permission_id)"
-                ),
-                {
-                    'role_id': role_ids['MANAGER'],
-                    'permission_id': perm_row[0]
-                }
-            )
-
-        logger.info(f"✓ MANAGER role assigned {len(manager_permissions)} permissions")
-
-        # SALES: CRUD on clients, orders, recurring orders, read on products and dashboard
-        sales_permission_names = [
-            'clients.create', 'clients.read', 'clients.update',
-            'orders.create', 'orders.read', 'orders.update',
-            'payments.record', 'payments.read',
-            'recurring_orders.create', 'recurring_orders.read', 'recurring_orders.update',
-            'products.read',
-            'dashboard.read',
-            'tasks.create', 'tasks.read', 'tasks.update', 'tasks.delete',
-            'task_states.read',
-        ]
-
-        sales_count = 0
-        for perm_name in sales_permission_names:
-            perm_row = connection.execute(
-                text("SELECT id FROM permission WHERE name = :name"),
-                {'name': perm_name}
-            ).fetchone()
-
-            if perm_row:
-                connection.execute(
-                    text(
-                        "INSERT INTO role_permission (role_id, permission_id) "
-                        "VALUES (:role_id, :permission_id)"
-                    ),
-                    {
-                        'role_id': role_ids['SALES'],
-                        'permission_id': perm_row[0]
-                    }
-                )
-                sales_count += 1
-
-        logger.info(f"✓ SALES role assigned {sales_count} permissions")
-
-        # USER: Read-only permissions
-        user_permission_names = [
-            'clients.read', 'orders.read', 'payments.read', 'products.read', 'recurring_orders.read', 'dashboard.read',
-            'tasks.read', 'task_states.read',
-        ]
-
-        user_count = 0
-        for perm_name in user_permission_names:
-            perm_row = connection.execute(
-                text("SELECT id FROM permission WHERE name = :name"),
-                {'name': perm_name}
-            ).fetchone()
-
-            if perm_row:
-                connection.execute(
-                    text(
-                        "INSERT INTO role_permission (role_id, permission_id) "
-                        "VALUES (:role_id, :permission_id)"
-                    ),
-                    {
-                        'role_id': role_ids['USER'],
-                        'permission_id': perm_row[0]
-                    }
-                )
-                user_count += 1
-
-        logger.info(f"✓ USER role assigned {user_count} permissions")
+        # VIEWER's grants (every read permission + web.access) are applied by
+        # _ensure_convergent_rbac below, so future read permissions flow too.
 
         # 4. Migrate existing users to new role system (if any exist)
         # Skip legacy admin column migration - this is no longer needed with UUID migration
@@ -366,15 +277,13 @@ def _ensure_convergent_rbac(connection: Connection) -> None:
         )
     )
 
-    # 3. Global system MANAGER holds everything except role/permission/company
-    #    administration and the ADMIN-only MANAGER_EXCLUDED_PERMISSIONS keys.
+    # 3. Global system VIEWER holds every read permission + web.access.
     connection.execute(
         text(
             "INSERT INTO role_permission (role_id, permission_id) "
             "SELECT r.id, p.id FROM role r CROSS JOIN permission p "
-            "WHERE r.name = 'MANAGER' AND r.company_id IS NULL "
-            "AND p.resource NOT IN ('roles', 'permissions', 'company') "
-            f"AND p.name NOT IN ({_MANAGER_EXCLUDED_SQL}) "
+            "WHERE r.name = 'VIEWER' AND r.company_id IS NULL "
+            f"AND ({VIEWER_PERMISSION_FILTER}) "
             "ON CONFLICT DO NOTHING"
         )
     )

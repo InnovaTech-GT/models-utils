@@ -24,8 +24,9 @@ class PermissionChecker:
 
         # Collect permissions from all user roles
         for role in user.roles:
-            # ADMIN role gets all permissions (wildcard)
-            if role.name == "ADMIN":
+            # The built-in ADMIN role gets all permissions (wildcard). Only the
+            # global role counts — a tenant custom role named "ADMIN" must not.
+            if role.name == "ADMIN" and role.company_id is None:
                 return {'*'}  # Special wildcard permission
 
             for permission in role.permissions:
