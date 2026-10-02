@@ -66,7 +66,13 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   area, `NotificationStatus`, is defined in `schemas/notification.py` (a schema),
   not in the auth model.
 - System role names live in `constants/roles.py` (`Roles`:
-  ADMIN/MANAGER/SALES/USER)
+  ADMIN/VIEWER/COLLECTOR/TECHNICIAN — the only global built-ins since
+  `rr1_four_builtin_roles`; tenants add custom roles with `company_id` set and
+  may not reuse these names). Only the **global** ADMIN role (`company_id IS
+  NULL`) gets the `*` wildcard (`PermissionChecker`) or passes
+  `get_admin_user` / `require_roles` — name matches on tenant roles never count.
+  `web.access` gates the web dashboard (VIEWER + custom roles hold it;
+  COLLECTOR/TECHNICIAN are mobile-only)
 - **Recurrente gateway columns** (`rb1_recurrente_billing`, additive):
   `Tier.recurrente_product_id`/`recurrente_price_id` (monthly)/
   `recurrente_price_yearly_id` — a NULL price id means the tier is not
