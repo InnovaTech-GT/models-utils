@@ -128,7 +128,7 @@ def _run_seeds(connection) -> None:
         connection.commit()
 
         # Final convergence pass: isp_seed may have just created roles
-        # (BILLING, SUPPORT, TECHNICIAN, ...) AFTER the RBAC reconcile ran,
+        # (COLLECTOR, TECHNICIAN) AFTER the RBAC reconcile ran,
         # so derived grants (orders.* -> payments.*) would otherwise only
         # land on the NEXT migrate. Re-reconcile so a single run converges.
         from seeds.rbac_seed import _ensure_convergent_rbac

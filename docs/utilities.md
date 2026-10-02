@@ -282,7 +282,7 @@ Callers must surface any returned error code as a step failure. See
 | `dependencies/db.py` | `get_db` FastAPI session dependency (rollback + close) |
 | `dependencies/audit.py` | `get_client_ip` (proxy-aware) |
 | `middleware/logging_middleware.py` | `LoggingMiddleware` — request-ID + JWT-context + duration ASGI middleware |
-| `constants/roles.py` | `Roles` ADMIN/MANAGER/SALES/USER |
+| `constants/roles.py` | `Roles` ADMIN/VIEWER/COLLECTOR/TECHNICIAN |
 
 ## Connections to Other Components
 

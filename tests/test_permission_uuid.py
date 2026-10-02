@@ -49,7 +49,8 @@ def _make_admin_user(db):
         company_id=company.id,
         is_super_admin=True,
     )
-    role = Role(id=uuid.uuid4(), name="ADMIN", company_id=company.id)
+    # The built-in ADMIN role is global; a tenant role named ADMIN gets no wildcard.
+    role = Role(id=uuid.uuid4(), name="ADMIN", company_id=None)
     user.roles.append(role)
     db.add_all([user, role])
     db.commit()

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **BREAKING (3.0.0)** — built-in roles collapse to ADMIN / VIEWER / COLLECTOR / TECHNICIAN (Alembic `rr1_four_builtin_roles`). `Roles.MANAGER`, `Roles.SALES`, `Roles.USER` are removed; `Roles.VIEWER`, `Roles.COLLECTOR`, `Roles.TECHNICIAN` are added. New permission `web.access` (web dashboard gate). Holders of the removed roles are remapped (MANAGER→ADMIN, BILLING→COLLECTOR, others→VIEWER); seeds no longer create MANAGER/SALES/USER/NOC/WAREHOUSE/SUPPORT/BILLING; `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` and `isp_seed.ADMIN_ONLY_PERMISSIONS` are gone.
+
+### Security
+- Only the **global** ADMIN role (`company_id IS NULL`) gets the `*` wildcard (`PermissionChecker`) or passes `get_admin_user` / `require_roles`; a tenant custom role named "ADMIN" (or any built-in name) no longer escalates. rr1 renames such existing custom roles to `"<name> (custom)"`.
 - Alembic `ci1_category_icons` (data-only): default `device_category.icon` for ROUTER `radio-tower` -> `router` and OLT `radio` -> `server` (customised icons untouched); seed updated to match.
 
 ### Fixed

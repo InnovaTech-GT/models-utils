@@ -276,7 +276,11 @@ async def get_admin_user(
     """
     # Get user's role names from many-to-many relationship
     user_role_names = [role.name for role in user.roles]
-    has_admin_role = "ADMIN" in user_role_names
+    # Only the built-in (global) ADMIN role counts, never a tenant custom role
+    # that happens to share the name.
+    has_admin_role = any(
+        role.name == "ADMIN" and role.company_id is None for role in user.roles
+    )
 
     logger.info(
         "Verifying admin privileges",
@@ -433,8 +437,12 @@ def require_roles(allowed_roles: List[str]) -> Callable:
             }
         )
 
-        # Check if user has any of the allowed roles
-        has_allowed_role = any(role_name in allowed_roles for role_name in user_role_names)
+        # Check if user has any of the allowed roles. Only built-in (global)
+        # roles match by name, so a custom role can't impersonate one.
+        has_allowed_role = any(
+            role.name in allowed_roles and role.company_id is None
+            for role in user.roles
+        )
 
         if not has_allowed_role:
             logger.warning(

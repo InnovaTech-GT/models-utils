@@ -100,8 +100,10 @@ from the start).
   the global system ADMIN **only**. Total downgrade (deletes the permission +
   grants, drops index/FK/columns — attestation data is lost on downgrade).
   The seed changes ride this revision: `isp_seed.ADMIN_ONLY_PERMISSIONS` and
-  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` keep MANAGER excluded at both
-  auto-grant sites (subset-pinned by `tests/test_attested_adoption.py`).
+  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` kept MANAGER excluded at both
+  auto-grant sites. (Both tuples were removed with MANAGER in
+  `rr1_four_builtin_roles`; ADMIN-only now means "no ISP_ROLES grant and not a
+  `read` action", pinned by `tests/test_attested_adoption.py`.)
 - **Client install-field removal (doc 31)**: `cf1_drop_client_install_fields`
   (parent `ba1_attested_adoption`) — hand-written, nc2a/ba1
   house style. **Destructive one-shot** — safe this release only because prod
@@ -566,11 +568,10 @@ authenticates it.
 - The `device_credentials.reveal` permission row (no role grant — ADMIN-only, and ADMIN comes from the convergent seed), cfg3 recipe
   (idempotent `INSERT ... ON CONFLICT (name) DO NOTHING`, per-role grant,
   post-upgrade count assertion, total `downgrade()`). ADMIN comes from the
-  convergent seed; MANAGER is withheld because the name is in BOTH
-  `isp_seed.ADMIN_ONLY_PERMISSIONS` and
-  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`. Dropping it from either tuple hands
-  every tenant manager the tenant's ACS password, which is why
-  `tests/test_attested_adoption.py` pins both.
+  convergent seed. (MANAGER, and the exclusion tuples that withheld this from
+  it, were removed by `rr1_four_builtin_roles`; VIEWER's convergent grant only
+  matches `read` actions, so `reveal` stays ADMIN-only —
+  `tests/test_vpn_transport_constants.py` pins it.)
 
 **No `pending_*` columns, and deliberately no unique index on `(company_id,
 network_access_id)`.** The accept-both rotation window is a SECOND
@@ -809,6 +810,33 @@ On `tr1_transport_axis`. Additive: `inventory_item.parent_port` and
 `parent_port IS NOT NULL` (one parent port feeds one child). `downgrade()` drops
 the index and both columns — loses only the port labels. See
 [network-models.md](network-models.md#link-ports-lp1_link_ports).
+
+## Four built-in roles (rr1_four_builtin_roles)
+
+On `ci1_category_icons`. Product decision 2026-10-02: the global roles collapse
+to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`),
+**COLLECTOR** and **TECHNICIAN** (mobile-only, grants unchanged). Tenant custom
+roles are untouched. The revision:
+
+- inserts the `web.access` permission (gates the web dashboard in
+  frontend-erp) and grants it to VIEWER and to **every existing tenant custom
+  role** (nobody loses the web app; tenants untick it for mobile-only roles);
+- creates VIEWER;
+- renames tenant custom roles whose name collides case-insensitively with a
+  built-in to `"<name> (custom)"`;
+- remaps holders in `user_role`, `user_invitation_role` and
+  `notification.pending_role_ids`: MANAGER→ADMIN, BILLING→COLLECTOR,
+  SALES/USER/NOC/WAREHOUSE/SUPPORT→VIEWER (deduplicated), then deletes those
+  seven global roles.
+
+`rbac_seed` / `isp_seed` were edited in the same commit to stop re-creating the
+removed roles (they run after every alembic command); `_ensure_convergent_rbac`
+step 3 now grants VIEWER every `read` permission + `web.access`
+(`rbac_seed.VIEWER_PERMISSION_FILTER`), so future read permissions converge.
+**Downgrade is lossy**: it restores the seven role rows (USER with its original
+read grants, the rest empty), moves VIEWER holders to USER and drops
+`web.access`, but cannot restore who held MANAGER/SALES/NOC/... Pinned by
+`tests/test_four_builtin_roles.py`.
 
 ## Key rules
 
