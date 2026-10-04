@@ -21,6 +21,7 @@ library, never the reverse).
 | `network_graph.py` | The **only** place the company plant tree is walked (Cycle 10, doc 35 §3) — see below |
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
 | `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5) — see below |
+| `playbook_expr.py` | Declared integer arithmetic for a playbook's `computed` block (doc 40 §3.3.3, ADR-006 amendment) and the shared `is_secret_name`/`_SECRET_HINTS` (moved from backend-erp's renderer, which re-exports them) — see below |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
@@ -65,6 +66,7 @@ on the in-memory SQLite the unit tests build with `create_all`.
 | `descendants(db, item_id, company_id)` | Everything behind a node, excluding the node itself, ordered by depth (nearest first). Impact analysis: "who is affected if I re-parent or take down this OLT?" |
 | `would_create_cycle(db, item_id, new_parent_id, company_id) -> bool` | Service-layer pre-check mirroring the DB trigger, so the API can answer 422 with a readable message instead of surfacing a raised Postgres exception. The trigger remains the guarantee; this is the courtesy, and the two must stay in agreement |
 | `child_count(db, item_id, company_id) -> int` | Immediate children only — the detach guard and the tree UI |
+| `assert_links_consistent(db)` | (doc 40) Test helper: raises `AssertionError` naming every `network_link` whose down item's `parent_id` is not its `up_item_id` (the `NETWORK_LINK_PARENT_MISMATCH` the pt1 deferred triggers enforce on Postgres), or whose ports/items belong to another item or tenant (the composite FKs). SQLite `create_all` schemas have neither, so graph tests here and in backend-erp call it after each write |
 
 Two invariants are load-bearing and appear in every query here:
 
@@ -104,6 +106,18 @@ the service's CPE and walks to the root:
    that is inactive or belongs to another company raises **`PLAYBOOK_INACTIVE`**;
    a per-service parameter that is blank *and* referenced by a playbook on the
    path raises `RESOLUTION_FAILED` with `MISSING_SERVICE_PARAM` errors.
+7. **Resolution-time refusal (doc 40 §3.3.2).** For every step node, the
+   playbook's `computed` block is evaluated (`playbook_expr.evaluate_all`) and
+   every resolver-owned token the executor renders *before* a step runs
+   (templates, http/tr069 `request`, `target_item_id`, preconditions — not
+   `rollback`/`on_failure`) must have a value. For any purpose other than
+   ACTIVATION, every port fact the step reads must also match the last live
+   activation. Everything found is raised once as `RESOLUTION_FAILED` with the
+   whole list (see below). This applies to **every** purpose.
+
+Runs execute leaf → root on frames frozen at creation, so before step 7 a
+missing OLT port failed the OLT step *after* the ONU step had already run; now
+nothing touches a device first.
 
 Step 6 preserves the fatality posture exactly: ACTIVATION fails visibly (a
 half-provisioned install is worse than a refused one), while a SUSPENSION whose
@@ -121,12 +135,17 @@ Returns two dataclasses:
   `item_id`, `serial_number`, `mac_address`, `device_type_id`,
   `device_type_name`, `category_key`, `category_tier`, `mgmt_host`, `mgmt_port`,
   `is_passive`, `playbook_id`, `playbook_source` (`"node"` | `"device_type"` |
-  `None`). `position` is a **fact about the resolved path, never an addressing
-  mechanism** — nothing templates it.
+  `None`), and since doc 40: `label` (`inventory_item.label`), `path_role`
+  (the device type's), `out_slot`/`out_port`/`out_port_name` (see below) and
+  `playbook_version` (the bound playbook's `version`, steps only). `position`
+  is a **fact about the resolved path, never an addressing mechanism** —
+  nothing templates it.
 - `ResolvedProvisioning` — `path` (every node, passives included, so an operator
   can see that a splitter was considered and deliberately skipped rather than
   wondering where it went), `steps` (the subset that will be configured),
-  `shared_variables`, `device_variables` (`item_id → that node's device.* frame`).
+  `shared_variables`, `device_variables` (`item_id → that node's device.* frame`),
+  `ambiguous_roles` (`role → [item_id, …]` for path roles held by more than one
+  node — those get no frame).
 
 **Two dicts, deliberately.** `device.*` means "the box this playbook is running
 on", so it differs per child job; a single flat dict cannot express that. The
@@ -142,6 +161,8 @@ still receive exactly one flat dict and their contract is untouched.
 | `device.<attr>` | the device **this playbook is running on** |
 | `cpe.<attr>` | the subscriber edge device that triggered the run (the leaf, always `path[0]`) |
 | `path.<category_key>.<attr>` | any node on **this run's** path, named by its device-category key; **nearest-to-the-CPE wins** if a role repeats. Passives are addressable too (a playbook may legitimately want the splitter's serial for a description field) |
+| `path.<path_role>.<attr>` | (doc 40) the node whose device type carries this per-company `path_role` (`mufa_principal`), emitted **only when exactly one node on the path holds it** — a repeated role is collected in `ambiguous_roles` instead, because "nearest wins" would silently pick the wrong splitter. A role whose name is already a category frame on the path raises **`ROLE_SHADOWS_CATEGORY`** rather than overwrite it — whatever the number of nodes holding it |
+| `computed.<key>` | (doc 40) a playbook's declared integer arithmetic. Evaluated here for refusal and again by backend-erp's renderer; never stored in the frames |
 | `service_plan.<field\|param>` | plan fields plus the plan's tenant-authored rows (`plan`- and `service`-scoped alike — the author writes `{{service_plan.<key>}}` either way) |
 | `client.<attr>` | built-in subscriber fields plus the tenant's own client custom fields (built-ins win a clash) |
 | `service.<attr>` | the `client_service` itself |
@@ -151,6 +172,51 @@ still receive exactly one flat dict and their contract is untouched.
 "category_tier", "mgmt_host", "mgmt_port", "depth")` — one tuple shared by all
 three device namespaces, built by `build_device_frame(node, prefix)`. `depth` is
 hops from the CPE (`cpe.depth == 0`).
+
+`PORT_ATTRIBUTES = ("out_slot", "out_port", "out_port_name")` (doc 40 §3.3.1) —
+emitted by `build_device_frame` **only when known** (ints for slot/number, the
+port's name as a string, `out_slot` only when the port has a slot). An absent key
+is not `""`: the renderer tests presence as `vars[name] is not None`, so an empty
+string would render `slot  link` and fail open. A frame's keys are therefore
+always ⊇ `DEVICE_ATTRIBUTES` and ⊆ `DEVICE_ATTRIBUTES ∪ PORT_ATTRIBUTES` (the pin
+test). `out_*` of `path[i]` is the port on `path[i]` that `path[i-1]` hangs off,
+read from `path[i-1]`'s `network_link` in **one company-scoped query** joined to
+the upstream ports, and used **only if** `link.up_item_id == path[i].item_id` —
+a reparent committed between the path read and the link read must not lend a
+node another device's port. The CPE never has `out_*`; an unported edge (parent
+but no link) simply has no keys. `out_port_name` is the template (factory) name
+(`ether2`), so RouterOS templates use `[find default-name=…]`.
+
+#### Resolution-time refusal errors (doc 40 §3.3.2)
+
+Namespaces checked are the resolver's own: `device`, `cpe`, `path`,
+`service_plan`, `client`, `service`, `computed`. A token whose body has a
+`| default:` filter (regex `\|\s*default\s*:`, not a substring test) is skipped;
+`input.*` keeps the renderer's required/default rule; bare legacy tokens are
+skipped. A **malformed** construct — a token-shaped body whose head does not
+parse (`{{path.ROUTER.serial}}`, `{{ not a token }}`) or a residual `{{`
+outside any token shape — is `UNRESOLVED_TOKEN` `reason: malformed` (`token` is
+the raw construct, plus `item_id`) whatever its namespace or `| default:`,
+mirroring the executor's leftover guard, which fails the step on it anyway. A
+missing value is explained as one of:
+
+| Code | Fields | When |
+|---|---|---|
+| `ROLE_AMBIGUOUS` | `token`, `role`, `item_ids` | `path.<role>.*` for a role held by more than one node |
+| `PORT_NOT_RECORDED` | `token`, `item_id`, `label`, `position`, `reason: no_link\|no_slot` | a port attribute of a node above the CPE (`no_slot`: the port is known but has no slot) |
+| `UNRESOLVED_TOKEN` | `token`, `reason: not_on_path\|missing_value\|malformed` | anything else (`not_on_path`: no node holds that `path.<segment>`) |
+
+Plus `COMPUTE_*` errors from `evaluate_all` (with `key` and the step's
+`item_id`; an entry skipped for a missing operand is reported once, through its
+operand), and, for non-ACTIVATION purposes, **`PATH_CHANGED_SINCE_ACTIVATION`**
+(`token`, `was`, `now`, `item_id`): a port attribute a step reads (directly or
+as a computed operand) whose value differs from the frames of the service's last
+**SUCCEEDED, non-dry ACTIVATION** run. No baseline run, or a baseline that never
+had that key (activated before doc 40, or the port was not recorded then), means
+no check for that fact. A fact cleared since activation (`now: null`) *is*
+drift, even behind `| default`. This keeps a SUSPENSION or DEPROVISION from
+addressing another subscriber's ONU id after a port correction, without blocking
+on unrelated edits. Identical errors from two playbooks are de-duplicated.
 
 **Retired outright, with no compatibility shim:** `chain[n].*`,
 `edge_devices[n].*`, `core_devices[n].*`, the `position` attribute, and
@@ -174,7 +240,11 @@ access by the back door (ADR-006).
 > ⚠️ **Both token regexes in this module FAIL OPEN.**
 > `_DEVICE_VARIABLE_PATTERN` now recognizes `device|cpe|path.<category>` and
 > `_playbook_references_token` matches a single token; each tolerates the doc-34
-> `| filter` suffix (`_FILTER_SUFFIX`). A namespace that is emitted but not
+> `| filter` suffix (`_FILTER_SUFFIX`). Since doc 40 both also read the
+> `computed` block: an operand in a device namespace makes the playbook
+> device-referencing, a token used only as an operand counts as referenced, and
+> a block that does not parse counts as referencing everything. Path roles and
+> the port attributes are single segments, so the regex itself did not change. A namespace that is emitted but not
 > listed in the pattern does not raise, does not warn, and does not fail a test
 > that is not looking for it — it quietly turns a hard resolution error into a
 > partial run that half-configures a paying customer. Add a namespace here in the
@@ -188,7 +258,7 @@ access by the back door (ADR-006).
 |---|---|
 | `run_idempotency_key(client_service_id, purpose, dry_run)` | `path-{service_id}-{purpose_lower}[-dry]` — deliberately mirrors the shape backend-erp's manual endpoint has always used, so a run and a legacy standalone job never collide in the same namespace |
 | `find_in_flight_run(db, company_id, key)` | Dedupe lookup over `IN_FLIGHT = (QUEUED, RUNNING, PENDING_INFORM)`. That tuple **must** mirror the predicate on `uq_provisioning_run_company_idem`; if they disagree, the dedupe check and the unique index disagree and one of them starts raising `IntegrityError` |
-| `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None)` | Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), snapshots `path`/`plan`/`frames`, opens the run, and queues **only its first child**. Resolution happens exactly once per run |
+| `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None)` | Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), snapshots `path`/`plan`/`frames`, opens the run, and queues **only its first child**. Resolution happens exactly once per run. Plan entries are `{item_id, playbook_id, playbook_version, category_key}` — `playbook_version` lets backend-erp's worker fail a child with `PLAYBOOK_CHANGED_DURING_RUN` before any device I/O when the playbook was edited mid-run |
 | `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. A standalone job (`run_id` NULL) is a **no-op** — ACS reboots and connectivity probes must keep behaving exactly as they did. Any non-SUCCEEDED status stops the run and the run takes that status (continuing to the OLT after the CPE step failed would leave the network configured for a subscriber whose own device is not). On success it queues the next child; when the plan is exhausted the run goes SUCCEEDED, stamps `finished_at`, and — for a non-dry-run ACTIVATION only — clears `client_service.path_changed_at` |
 
 Child jobs derive their idempotency key as `{run_key}#{position}` (so each child
@@ -274,6 +344,38 @@ What the resolver still cannot know is whether a hub's route actually reaches
 successfully either way, and only the driver's connect attempt settles it.
 Callers must surface any returned error code as a step failure. See
 `tests/test_transport_resolver.py` and `tests/test_transport_axis.py`.
+
+## `playbook_expr.py` (doc 40 §3.3.3)
+
+A playbook may declare `computed: [{"key", "expr", "min"?, "max"?}]`
+(`schemas/playbook.py` `ComputedVar`); templates read the results by plain
+lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
+
+- **Grammar:** `expr := term (("+"|"-") term)*`, `term := unary (("*"|"/"|"%") unary)*`,
+  `unary := "-" unary | atom`, `atom := INT | NAME | "(" expr ")"`, `INT` 1–9 digits,
+  `NAME` = a namespace in {`device`, `cpe`, `path`, `service_plan`, `client`,
+  `service`, `computed`} plus dotted segments. `input.*` is not an operand (the
+  resolver cannot see author variables). A hand-written tokenizer and recursive
+  descent return tuples; no `eval`, `ast`, `compile` or `format`
+  (`test_no_dynamic_evaluation_in_the_source`).
+- **Limits:** ≤ 16 entries, ≤ 256 characters, ≤ 64 tokens, paren depth ≤ 8; keys
+  `^[a-z][a-z0-9_]{0,31}$`, unique, not secret-named; an entry reads only earlier
+  `computed.*` keys.
+- **Semantics:** operands are `int` (not `bool`) or strings that `fullmatch`
+  `-?[0-9]{1,9}`; `/` truncates toward zero and `%` is `a − b·trunc(a/b)`, so the
+  TypeScript mirror (`frontend-erp/lib/playbookExpr.ts`) is exact; every operand,
+  intermediate and result satisfies |x| ≤ 2³¹−1.
+- **API:** `parse(expr)` → tuple tree (raises `ExprError(code, detail)`, a
+  `ValueError`), `names(tree)`, `evaluate_all(computed, variables) -> (values,
+  missing, errors)` with `values = {"computed.<key>": int}`, `missing` = operand
+  names absent/None, `errors = [{"code", "key", "detail"}]`. An entry with a
+  missing operand, or reading an earlier failed entry, is skipped without a second
+  error. Codes: `COMPUTE_SYNTAX`, `COMPUTE_LIMIT`, `COMPUTE_NAME`,
+  `COMPUTE_SECRET`, `COMPUTE_TYPE`, `COMPUTE_OVERFLOW`, `COMPUTE_DIV_ZERO`,
+  `COMPUTE_RANGE`.
+- **Pinned by** the hash-locked `tests/fixtures/playbook_expr.json` (copied to
+  `frontend-erp/lib/__fixtures__/`): changing it means changing both
+  implementations and both hash pins.
 
 ## Related packages
 

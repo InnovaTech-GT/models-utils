@@ -22,17 +22,18 @@ from sqlalchemy.orm import Session
 
 from database_utils.database import Base
 from database_utils.models.isp import (
+    PURPOSE_ACTIVATION,
     ClientService,
     DeviceCategory,
     DeviceType,
     DeviceTypePlaybook,
     InventoryItem,
     InventoryItemPlaybook,
+    InventoryItemPort,
+    NetworkLink,
     Playbook,
-    PURPOSE_ACTIVATION,
     ServicePlan,
 )
-
 
 CO_A = uuid.uuid4()
 CO_B = uuid.uuid4()
@@ -140,6 +141,29 @@ class Plant:
             inventory_item_id=item.id, purpose=purpose, playbook_id=playbook.id,
         ))
         self.db.flush()
+
+    def port(self, item, number, name=None, slot=None, medium="PON", direction="DOWN"):
+        p = InventoryItemPort(
+            id=uuid.uuid4(), company_id=self.company_id, item_id=item.id,
+            name=name or str(number), slot=slot, number=number, medium=medium,
+            direction=direction, origin="ITEM",
+        )
+        self.db.add(p)
+        self.db.flush()
+        return p
+
+    def link(self, down_item, up_port, down_port=None):
+        """Link `down_item` to `up_port`. Does NOT touch parent_id — tests
+        that want a consistent graph call assert_links_consistent."""
+        link = NetworkLink(
+            id=uuid.uuid4(), company_id=self.company_id, up_item_id=up_port.item_id,
+            up_port_id=up_port.id, down_item_id=down_item.id,
+            down_port_id=down_port.id if down_port is not None else None,
+            source="OFFICE",
+        )
+        self.db.add(link)
+        self.db.flush()
+        return link
 
     def unbind_type(self, device_type, purpose):
         self.db.execute(sa.delete(DeviceTypePlaybook.__table__).where(
