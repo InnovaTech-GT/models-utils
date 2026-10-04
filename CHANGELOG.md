@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- (4.2.0) Alembic `pd1_client_payment_day`: nullable `client.payment_day` (1..31, CHECK) on model + `ClientBase`/`ClientUpdate`/`ClientOut`.
 - (4.1.0) Alembic `mp1_technician_plan_read`: grants `service_plans.read` to the system TECHNICIAN role (install-order plan picker in uplink-mobile tecnicos); `isp_seed.ISP_ROLES` updated.
 
 ### Removed

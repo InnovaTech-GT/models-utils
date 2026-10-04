@@ -653,6 +653,13 @@ TECHNICIAN role so the tecnicos app's install-order sheet can list plans
 `isp_seed.ISP_ROLES['TECHNICIAN']`; pinned by
 `tests/test_technician_plan_read.py`. `downgrade()` removes only that grant.
 
+### `pd1_client_payment_day` (2026-10-03)
+
+Additive, on `mp1_technician_plan_read`. `client.payment_day` SMALLINT NULL +
+CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
+`ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
+No backfill. `downgrade()` drops the check and the column.
+
 ### `mi2_mobile_field_ops` (2026-09-29)
 
 Field apps on the real system (uplink-mobile cobros + tecnicos). **Additive

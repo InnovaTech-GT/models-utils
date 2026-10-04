@@ -1,5 +1,5 @@
 # schemas/client.py
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
 from typing import Literal, Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -93,6 +93,8 @@ class ClientBase(BaseModel):
     longitude: Optional[float] = None
     gps_precision_m: Optional[float] = None
     service_availability: ServiceAvailability = ServiceAvailability.UNKNOWN
+    # pd1: usual payment day of month (1..31), optional.
+    payment_day: Optional[int] = Field(default=None, ge=1, le=31)
 
 
 class ClientCreate(ClientBase):
@@ -118,6 +120,7 @@ class ClientUpdate(BaseModel):
     longitude: Optional[float] = None
     gps_precision_m: Optional[float] = None
     service_availability: Optional[ServiceAvailability] = None
+    payment_day: Optional[int] = Field(default=None, ge=1, le=31)
     custom_field_values: Optional[List["ClientCustomFieldValueInput"]] = None
 
 
