@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger,
+    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger, Text,
     Table, Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
@@ -744,6 +744,12 @@ class CashSessionStatus(str, enum.Enum):
     # mi1: the closed box's cash was handed in at the bank (slip photo in
     # deposit_slip_photo_id). Terminal — nothing is left on hand.
     DEPOSITED = "DEPOSITED"
+    # cr1 (admin reviews the box): the collector SUBMITs counted cash + deposit
+    # slip; an admin APPROVEs (terminal, "Cerrada") or REJECTs (back to the
+    # collector, who re-submits). CLOSED/DEPOSITED stay readable for legacy rows.
+    SUBMITTED = "SUBMITTED"
+    REJECTED = "REJECTED"
+    APPROVED = "APPROVED"
 
 
 class CollectionRoute(Base):
@@ -829,13 +835,19 @@ class CashSession(Base):
     # later refund cannot rewrite the cut.
     closed_expected_cash_cents = Column(BigInteger, nullable=True)
     reopen_count = Column(Integer, nullable=False, default=0, server_default="0")
+    # --- cr1 (admin review) ---
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_note = Column(Text, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     collector_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     route_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("collection_route.id", ondelete="SET NULL"), nullable=True)
     deposit_slip_photo_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("uploaded_file.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
     company = relationship("Company", back_populates="cash_sessions")
     collector = relationship("User", foreign_keys=[collector_id])
     route = relationship("CollectionRoute")
@@ -844,6 +856,7 @@ class CashSession(Base):
 
     __table_args__ = (
         Index("ix_cash_session_company_collector", "company_id", "collector_id"),
+        Index("ix_cash_session_company_status", "company_id", "status"),
         CheckConstraint("opening_cents >= 0", name="ck_cash_session_opening_nonneg"),
     )
 
