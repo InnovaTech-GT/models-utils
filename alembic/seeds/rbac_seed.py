@@ -95,6 +95,11 @@ PERMISSIONS_DATA = [
         # frontend-erp's middleware; mobile-only roles (COLLECTOR,
         # TECHNICIAN) don't hold it. Pinned against rr1.WEB_ACCESS.
         {"name": "web.access", "resource": "web", "action": "access", "description": "Acceso a la aplicación web"},
+
+        # Cash-box review (cr1_cash_review): admins approve/reject the boxes
+        # collectors submit. ADMIN converges via the `*` step; no other
+        # built-in role holds it (tenants can add it to custom roles).
+        {"name": "cash_sessions.review", "resource": "cash_sessions", "action": "review", "description": "Revisar, aprobar o rechazar cajas de cobradores"},
 ]
 
 # The four built-in (global) roles. ADMIN/VIEWER are created here;

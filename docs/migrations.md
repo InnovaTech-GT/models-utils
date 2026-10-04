@@ -660,6 +660,20 @@ CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
 `ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
 No backfill. `downgrade()` drops the check and the column.
 
+### `cr1_cash_review` (2026-10-03)
+
+Additive, on `pd1_client_payment_day`. Admin (not the collector) closes the
+cash box: `cashsessionstatus += SUBMITTED, REJECTED, APPROVED` (CLOSED /
+DEPOSITED stay for legacy rows; labels added in an autocommit block and unused
+in the same revision); `cash_session` gains `submitted_at`, `reviewed_at`,
+`review_note` (TEXT), `reviewed_by` (FK `user` SET NULL, `CashSession.reviewer`)
+and index `ix_cash_session_company_status`; new permission
+`cash_sessions.review` (row in `rbac_seed.PERMISSIONS_DATA`, granted to the
+global ADMIN only — no base role carries it). `CashSessionOut` gains
+`submitted_at`, `reviewed_at`, `reviewed_by_name`, `review_note`.
+Downgrade drops columns/index/grant; enum labels stay (PG cannot drop them).
+Pinned by `tests/test_cash_review_models.py`.
+
 ### `mi2_mobile_field_ops` (2026-09-29)
 
 Field apps on the real system (uplink-mobile cobros + tecnicos). **Additive
