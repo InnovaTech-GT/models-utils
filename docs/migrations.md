@@ -896,6 +896,31 @@ read grants, the rest empty), moves VIEWER holders to USER and drops
 `web.access`, but cannot restore who held MANAGER/SALES/NOC/... Pinned by
 `tests/test_four_builtin_roles.py`.
 
+## Service history repair (sh1_service_history_repair)
+
+On `cr1_cash_review`. Data-only, one-way (`downgrade()` raises). Reviewed by the
+product owner (2026-10-04) after an investigation of 184 RECURRING orders whose
+single line item named the client's *current* plan while `order.total_cents` and
+the payments held the price actually charged (adoption import attached each
+client to one service; `c1b_backfill` priced lines from the current product).
+
+- Tidy first: services `ACTIVE` + billing `INACTIVE` replaced by a later
+  non-cancelled service of the same client (no order overlap) become
+  `CANCELLED` at the replacement's start; `recurrence_end` = their last billed
+  order, `next_generation_date` NULL (lifecycle cancel side effects).
+- Clean switch (older price run(s) then only the current price): one CANCELLED
+  historical service per run on the company's unique SERVICE-kind plan at that
+  price (installation plans excluded); orders + line items move to it;
+  `recurrence_end` = the run's last order so `detect_missing_periods` expects
+  exactly what it billed; the current service's `activation_date` **and**
+  `created_at` move to its first current-price order (gap detection anchors on
+  `created_at`).
+- Anything else (one-off odd month, first-month discount, unmatched price,
+  multi-line orders): line price := order total / quantity only.
+- Verified on a prod snapshot copy: 39 tidied (1 overlap skipped), 51 historical
+  services, 163 orders moved, 184 lines fixed, 49 start dates shifted, 0 services
+  with new billing gaps; re-running the logic is a no-op.
+
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
