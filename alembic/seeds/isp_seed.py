@@ -158,6 +158,8 @@ ISP_ROLES = {
             # cfg3: the technician mobile app. Row declared in
             # rbac_seed.PERMISSIONS_DATA, granted here.
             "mobile.technician",
+            # mp1_technician_plan_read: plan picker of the install-order sheet.
+            "service_plans.read",
         ],
     },
     # tk2 (Figma redesign PR 4, master plan §2.7): the cobrador. Distinct from

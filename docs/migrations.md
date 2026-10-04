@@ -645,6 +645,14 @@ oldest have no `jti` either) and auth-erp accepts each once, migrating it into
 a new family. `downgrade()` drops the table. Verified up/down/up on a scratch
 Postgres 16.
 
+### `mp1_technician_plan_read` (2026-10-03)
+
+Data-only, on `ld1_legacy_drop`. Grants `service_plans.read` to the global
+TECHNICIAN role so the tecnicos app's install-order sheet can list plans
+(`POST /tasks` with `service_plan_id` in backend-erp). Mirrored in
+`isp_seed.ISP_ROLES['TECHNICIAN']`; pinned by
+`tests/test_technician_plan_read.py`. `downgrade()` removes only that grant.
+
 ### `mi2_mobile_field_ops` (2026-09-29)
 
 Field apps on the real system (uplink-mobile cobros + tecnicos). **Additive

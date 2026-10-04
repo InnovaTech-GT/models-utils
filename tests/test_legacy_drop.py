@@ -43,7 +43,7 @@ def test_single_head():
         d = re.search(r'^down_revision[^=]*=\s*(.+)$', body, re.M)
         revs.add(r.group(1))
         downs.update(re.findall(r'["\'](.+?)["\']', d.group(1)))
-    assert revs - downs == {"ld1_legacy_drop"}
+    assert len(revs - downs) == 1  # one linear head (the tip moves each cycle)
 
 
 def test_env_seed_sentinel_is_not_a_dropped_table():
