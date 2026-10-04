@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`ci1_category_icons`**) — plus the idempotent seed
+`alembic/versions/` (head: **`ld1_legacy_drop`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -55,7 +55,7 @@ After `upgrade`, `env.py` runs `_run_seeds(connection)`:
 |---|---|
 | `alembic/seeds/rbac_seed.py` | Permissions and roles |
 | `alembic/seeds/tier_seed.py` | SaaS tiers |
-| `alembic/seeds/isp_seed.py` | ISP permissions, tier modules, purpose-based workflow-template blueprints (+ a convergent retirement pass that sets `is_active = FALSE` on every key in `RETIRED_TEMPLATE_KEYS` — `fiber-cut`, `maintenance`, `service-removal` — never DELETE, so run history survives; it reaches the TEMPLATE row only, not installed tenant copies), device_category baseline (Cycle 7: entries carry a CORE/EDGE tier, column-existence-gated for pre-nc2a positions; a backfill classifies existing rows only while no row has a tier yet, so admin tier edits — including clear-to-NULL — survive re-seeds) |
+| `alembic/seeds/isp_seed.py` | ISP permissions, tier modules (the workflow-template catalog + retirement pass were removed by `ld1_legacy_drop`), device_category baseline (Cycle 7: entries carry a CORE/EDGE tier, column-existence-gated for pre-nc2a positions; a backfill classifies existing rows only while no row has a tier yet, so admin tier edits — including clear-to-NULL — survive re-seeds) |
 
 The modules are importable as `seeds.*` because `env.py` adds the alembic dir to
 `sys.path`. All seeds are idempotent (ON CONFLICT / upsert), so re-runs converge
@@ -588,7 +588,36 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `ci1_category_icons` (2026-10-01, head)
+### `ld1_legacy_drop` (2026-10-02, head) - DESTRUCTIVE, models-utils 4.0.0
+
+Drops `product`, `recurring_order`, `recurring_order_item`, `task_state`,
+`workflow_template` and the FK columns `order.recurring_order_id`,
+`order_item.product_id`, `service_plan.product_id`,
+`client_service.recurring_order_id`, `task.task_state_id` (with
+`uq_order_active_recurring_due_date`, `idx_order_item_product`,
+`uq_service_plan_product`). Hand-written, `lock_timeout = 5s`, idempotent
+(every step guarded by table/column existence), irreversible
+(`downgrade()` raises `NotImplementedError`, like `ng2_topology_drop`).
+Order: (a) grant-copy `products.*`->`service_plans.*`,
+`recurring_orders.*`->`client_services.*` (incl. suspend/reactivate/generate)
+once; (b) every ACTIVE `recurring_order` that no `client_service` bills
+becomes a `client_service` (same shape as c2b Pass 2, `migration_source='ld1'`)
+and its orders are repointed via `order.client_service_id` - a row without a
+client, with other than one item, or without a bridged plan RAISES (nothing is
+silently dropped); (c) delete workflows triggered on / referencing
+`recurring_order`, `product`, `task_state` (or `task_state_id`, `product_id`,
+`recurring_order_id` in step config / trigger conditions); (d) delete the
+`products.%`, `recurring_orders.%`, `task_states.%`, `workflow_templates.%`
+permissions; (e) drop columns + indexes; (f) drop tables and the
+`taskstatecolor` enum; (g) post-asserts. Tasks/templates linked via the
+`RECURRING_ORDER` enum label are nulled (the PG label stays; the Python member
+is gone). `recurrenceenum` / `recurringorderstatus` stay.
+`alembic/env.py` now gates the ISP seed on `client_service` instead of
+`workflow_template`. **Release order:** consumers must deploy code that no
+longer touches these tables before this revision reaches a database.
+Guardrails: `tests/test_legacy_drop.py`.
+
+### `ci1_category_icons` (2026-10-01)
 
 One lucide icon mapping across seed, DB, backoffice and mobile (feature
 `category-icons`). **Data-only**, with no schema or model change.

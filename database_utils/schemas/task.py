@@ -34,7 +34,6 @@ class TaskBase(BaseModel):
 class TaskCreate(TaskBase):
     # Omitted or PENDING/ASSIGNED: derived from the technician assignment.
     status: Optional[TaskStatus] = None
-    task_state_id: Optional[UUID] = None
     assignee_ids: Optional[List[UUID]] = []
     position: Optional[int] = None
     time_spent_minutes: Optional[int] = None
@@ -45,7 +44,6 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     due_date: Optional[datetime] = None
     status: Optional[TaskStatus] = None
-    task_state_id: Optional[UUID] = None
     assignee_ids: Optional[List[UUID]] = None
     position: Optional[int] = None
     linked_object_type: Optional[TaskLinkedObjectType] = None
@@ -57,7 +55,6 @@ class TaskOut(TaskBase):
     id: UUID
     company_id: UUID
     status: TaskStatus = "PENDING"
-    task_state_id: Optional[UUID] = None
     position: int
     created_by: Optional[UUID] = None
     created_at: datetime

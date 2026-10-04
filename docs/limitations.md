@@ -2,17 +2,12 @@
 
 ## Transitional / rollback-window debt
 
-- **Dual-write rollback window is still open** (Cycle 2 entity merge):
-  - `ClientService` still dual-writes into the legacy `recurring_order` table
-    (see the comment near `isp.py:256`).
-  - `order_item.product_id` is deprecated but still honored
-    (`schemas/order_item.py`).
-  - Bridge-less legacy products are treated as `SERVICE` by the workflow
-    engine (`workflow_engine.py`, catalog-merge handling).
-  - Removal awaits a post-production bake period.
-- **Legacy models retained**: `Product`, `RecurringOrder`/`RecurringOrderItem`
-  are kept for the transition and because `cron-erp` still consumes
-  RecurringOrder for recurring order generation.
+- **Dual-write rollback window: RESOLVED by `ld1_legacy_drop` (4.0.0).** The
+  legacy `product`, `recurring_order`, `recurring_order_item`, `task_state` and
+  `workflow_template` tables, their FK columns and the `products.*` /
+  `recurring_orders.*` / `task_states.*` / `workflow_templates.*` permissions are
+  gone; unbridged ACTIVE recurring orders were migrated into `client_service`.
+  The migration is irreversible (see [migrations.md](migrations.md)).
 - **`tier_change_request` table retained, model dropped**: the manual
   tier-change approval workflow (`TierChangeRequest` model, its routers, and
   its frontend UI) was removed — superseded by Recurrente self-serve

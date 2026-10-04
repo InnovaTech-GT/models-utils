@@ -11,16 +11,6 @@ from database_utils.models.crm import TASK_STATUSES
 ASSIGNMENT_STATUSES = ("PENDING", "ASSIGNED")
 OPEN_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS")
 
-# How a legacy task_state.kind maps onto the fixed status. ASSIGNED is refined
-# by derive_status() once the assignment is known.
-STATUS_FROM_STATE_KIND = {
-    "ASSIGNED": "ASSIGNED",
-    "IN_PROGRESS": "IN_PROGRESS",
-    "DONE": "DONE",
-    "CANCELLED": "DONE",
-}
-
-
 def derive_status(status: Optional[str], has_technician: bool) -> str:
     if status is not None and status not in TASK_STATUSES:
         raise ValueError(f"invalid task status {status!r}")

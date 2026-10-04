@@ -302,7 +302,7 @@ Three phases, in this order and no other.
    *instances*; deriving one from the other would mean inventing parent edges —
    fabricating physical facts about someone's plant.
 2. **Idempotent rewrite.** `workflow_step.action_config` and
-   `workflow_template.definition` get the `ENQUEUE_PROVISIONING` config key
+   `workflow_template.definition` (table since dropped) get the `ENQUEUE_PROVISIONING` config key
    `"use_topology"` → `"use_service_path"`. Predicate-guarded
    (`WHERE ... LIKE '%use_topology%'`) on both sides, so a second run matches
    nothing and leaves every row byte-identical. Only the key changes; values are

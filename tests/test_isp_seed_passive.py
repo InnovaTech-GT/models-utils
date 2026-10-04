@@ -64,9 +64,3 @@ def test_the_classification_is_gated_like_the_tier_backfill():
     body = SRC.read_text()
     assert "SELECT COUNT(*) FROM device_category WHERE is_passive" in body
     assert "if not any_passive:" in body
-
-
-def test_templates_no_longer_reference_the_retired_config_key():
-    body = SRC.read_text()
-    assert '"use_topology"' not in body
-    assert '"use_service_path": True' in body

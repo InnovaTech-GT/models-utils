@@ -129,19 +129,6 @@ def test_workflow_fields_client_registry():
     assert "service_availability" in names
 
 
-# --- seed template (new-installation v3) ---
-
-def test_seed_new_installation_template():
-    seed = _load_isp_seed()
-    tpl = next(t for t in seed.WORKFLOW_TEMPLATES if t["key"] == "new-installation")
-    refs = {step["ref"] for step in tpl["definition"]["steps"]}
-    assert refs == {"s1", "s2"}  # s3 (client install-status cache sync) gone
-    assert tpl["definition"]["edges"] == [{"from": "s1", "to": "s2"}]  # s2 terminal
 
 
-def test_seed_has_no_dropped_field_references():
-    seed = _load_isp_seed()
-    import json
-    blob = json.dumps(seed.WORKFLOW_TEMPLATES)
-    for field in _DROPPED_FIELDS:
-        assert field not in blob
+

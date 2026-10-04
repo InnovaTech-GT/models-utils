@@ -425,22 +425,11 @@ class ServicePlan(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Billing bridge: the Product SKU this plan bills through (recurring orders).
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("product.id", ondelete="SET NULL"), nullable=True
-    )
 
     company = relationship("Company", back_populates="service_plans")
-    product = relationship("Product")
     client_services = relationship("ClientService", back_populates="service_plan")
 
     __table_args__ = (
-        # Makes the c2a Product->ServicePlan billing bridge deterministic (one
-        # plan per product). Created by revision c2a_catalog_merge.
-        Index(
-            "uq_service_plan_product", "product_id",
-            unique=True, postgresql_where=text("product_id IS NOT NULL"),
-        ),
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
         Index("ix_service_plan_company_group", "company_id", "service_group"),
     )
@@ -547,12 +536,6 @@ class ClientService(Base):
     cpe_item_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True
     )
-    # Billing link into the legacy recurring-order engine. Still dual-written
-    # during the Cycle-2 rollback window (doc 18 amendment 1) but is NEVER
-    # PATCHable — it is migration-critical bridge state, not user data.
-    recurring_order_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("recurring_order.id", ondelete="SET NULL"), nullable=True
-    )
     # SET NULL: deleting the attesting user must not erase the attestation
     # fact (adopted_at/adoption_note survive; only authorship is lost) —
     # mirrors ServiceSuspension.created_by (isp.py:410-415).
@@ -563,7 +546,6 @@ class ClientService(Base):
     company = relationship("Company", back_populates="client_services")
     client = relationship("Client", back_populates="services")
     service_plan = relationship("ServicePlan", back_populates="client_services")
-    recurring_order = relationship("RecurringOrder")
     suspensions = relationship(
         "ServiceSuspension", back_populates="client_service", cascade="all, delete-orphan"
     )

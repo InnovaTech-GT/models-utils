@@ -11,7 +11,6 @@ from .auth import (
 
 from .crm import (
     Client,
-    Product,
     Order,
     OrderItem,
     OrderStatus,
@@ -23,8 +22,6 @@ from .crm import (
     Invoice,
     CustomFieldDefinition,
     ClientCustomFieldValue,
-    TaskState,
-    TaskStateColor,
     Task,
     TaskJobKind,
     TaskMaterial,
@@ -95,7 +92,6 @@ from .isp import (
 )
 
 from .workflow import (
-    WorkflowTemplate,
     Workflow,
     WorkflowTrigger,
     WorkflowStep,
@@ -120,7 +116,6 @@ __all__ = [
     "PasswordResetToken",
     # CRM
     "Client",
-    "Product",
     "Order",
     "OrderItem",
     "OrderStatus",
@@ -132,8 +127,6 @@ __all__ = [
     "Invoice",
     "CustomFieldDefinition",
     "ClientCustomFieldValue",
-    "TaskState",
-    "TaskStateColor",
     "Task",
     "TaskJobKind",
     "TaskMaterial",
@@ -200,7 +193,6 @@ __all__ = [
     "PROXY_KINDS",
     "ACS_STALE_AFTER_SECONDS",
     # Workflows
-    "WorkflowTemplate",
     "Workflow",
     "WorkflowTrigger",
     "WorkflowStep",
