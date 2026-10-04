@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float,
+    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger,
     Table, Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
@@ -159,6 +159,8 @@ class Client(Base):
         Enum(ServiceAvailability), nullable=False,
         default=ServiceAvailability.UNKNOWN, server_default='UNKNOWN'
     )
+    # pd1: the client's usual payment day of month (1..31); NULL = unknown.
+    payment_day = Column(SmallInteger, nullable=True)
     # installation_status/installation_date dropped (cf1): install truth is
     # per-service (client_service.install_state); lists derive count rollups.
 
@@ -195,6 +197,7 @@ class Client(Base):
               postgresql_where=text("dpi IS NOT NULL")),
         # Both list tabs filter company_id + deactivated_at IS [NOT] NULL.
         Index("ix_client_company_active", "company_id", "deactivated_at"),
+        CheckConstraint("payment_day IS NULL OR (payment_day BETWEEN 1 AND 31)", name="ck_client_payment_day_range"),
     )
 
 
