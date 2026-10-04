@@ -61,8 +61,8 @@ matters when reading `__init__.py`:
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper
-- `order_item.product_id` is deprecated but still honored (catalog-merge
-  rollback window — see [limitations.md](limitations.md))
+- `order_item.product_id` is gone (`ld1_legacy_drop`); `OrderItemBase.service_plan_id`
+  is required
 - UUID fields serialize as strings in JSON responses
 
 ### Cycle 7 (core config, doc 25) — extensions to existing modules
