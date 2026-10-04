@@ -660,6 +660,21 @@ CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
 `ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
 No backfill. `downgrade()` drops the check and the column.
 
+### `pt1_port_topology` (2026-10-04, head) — models-utils 4.4.0
+
+Additive and inert, on `sh1_service_history_repair`; hand-written (lock_timeout,
+`IF NOT EXISTS`, existence-guarded `ADD CONSTRAINT`, post-upgrade assertions).
+Doc 40 §3.1.1: `device_type.port_template`/`path_role` +
+`ck_device_type_ports_serialized`; `inventory_item.uq_inventory_item_id_company`;
+tables `inventory_item_port` and `network_link` with composite
+(port, item, company) FKs (port FKs NO ACTION); the deferred constraint triggers
+`trg_network_link_parent_sync` / `trg_inventory_item_link_sync` and their
+plpgsql functions (`NETWORK_LINK_PARENT_MISMATCH` at COMMIT), Alembic-only.
+No rows are created. `downgrade()` refuses while any `network_link` row or
+`origin = 'ITEM'` port exists (iv1 precedent), otherwise drops everything.
+Details: [network-models.md](network-models.md). Pinned by
+`tests/test_port_topology.py` (static + SQLite) and `tests/pg` (CI job `pg`).
+
 ### `cr1_cash_review` (2026-10-03)
 
 Additive, on `pd1_client_payment_day`. Admin (not the collector) closes the

@@ -21,6 +21,7 @@ library, never the reverse).
 | `network_graph.py` | The **only** place the company plant tree is walked (Cycle 10, doc 35 §3) — see below |
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
 | `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5) — see below |
+| `playbook_expr.py` | Declared integer arithmetic for a playbook's `computed` block (doc 40 §3.3.3, ADR-006 amendment) and the shared `is_secret_name`/`_SECRET_HINTS` (moved from backend-erp's renderer, which re-exports them) — see below |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
@@ -274,6 +275,38 @@ What the resolver still cannot know is whether a hub's route actually reaches
 successfully either way, and only the driver's connect attempt settles it.
 Callers must surface any returned error code as a step failure. See
 `tests/test_transport_resolver.py` and `tests/test_transport_axis.py`.
+
+## `playbook_expr.py` (doc 40 §3.3.3)
+
+A playbook may declare `computed: [{"key", "expr", "min"?, "max"?}]`
+(`schemas/playbook.py` `ComputedVar`); templates read the results by plain
+lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
+
+- **Grammar:** `expr := term (("+"|"-") term)*`, `term := unary (("*"|"/"|"%") unary)*`,
+  `unary := "-" unary | atom`, `atom := INT | NAME | "(" expr ")"`, `INT` 1–9 digits,
+  `NAME` = a namespace in {`device`, `cpe`, `path`, `service_plan`, `client`,
+  `service`, `computed`} plus dotted segments. `input.*` is not an operand (the
+  resolver cannot see author variables). A hand-written tokenizer and recursive
+  descent return tuples; no `eval`, `ast`, `compile` or `format`
+  (`test_no_dynamic_evaluation_in_the_source`).
+- **Limits:** ≤ 16 entries, ≤ 256 characters, ≤ 64 tokens, paren depth ≤ 8; keys
+  `^[a-z][a-z0-9_]{0,31}$`, unique, not secret-named; an entry reads only earlier
+  `computed.*` keys.
+- **Semantics:** operands are `int` (not `bool`) or strings that `fullmatch`
+  `-?[0-9]{1,9}`; `/` truncates toward zero and `%` is `a − b·trunc(a/b)`, so the
+  TypeScript mirror (`frontend-erp/lib/playbookExpr.ts`) is exact; every operand,
+  intermediate and result satisfies |x| ≤ 2³¹−1.
+- **API:** `parse(expr)` → tuple tree (raises `ExprError(code, detail)`, a
+  `ValueError`), `names(tree)`, `evaluate_all(computed, variables) -> (values,
+  missing, errors)` with `values = {"computed.<key>": int}`, `missing` = operand
+  names absent/None, `errors = [{"code", "key", "detail"}]`. An entry with a
+  missing operand, or reading an earlier failed entry, is skipped without a second
+  error. Codes: `COMPUTE_SYNTAX`, `COMPUTE_LIMIT`, `COMPUTE_NAME`,
+  `COMPUTE_SECRET`, `COMPUTE_TYPE`, `COMPUTE_OVERFLOW`, `COMPUTE_DIV_ZERO`,
+  `COMPUTE_RANGE`.
+- **Pinned by** the hash-locked `tests/fixtures/playbook_expr.json` (copied to
+  `frontend-erp/lib/__fixtures__/`): changing it means changing both
+  implementations and both hash pins.
 
 ## Related packages
 

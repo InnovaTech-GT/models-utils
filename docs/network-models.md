@@ -159,6 +159,78 @@ Two free-text labels describe the `parent_id` edge itself:
 parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
 Both describe the current link, so backend-erp's reparent and detach clear them;
 attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
+Doc 40 supersedes them with real ports and links (below): once a node is linked
+the API derives both labels from the link's port names, and the columns are
+dropped later (C8b).
+
+### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
+
+Additive and inert: the revision creates no rows. Ports and links only appear
+once a backend that writes them (cycle C2) is deployed.
+
+**Templates.** `device_type.port_template` (JSON, `none_as_null`, NULL = no
+template) is a list of port groups, e.g.
+`[{"name": "{slot}/{n}", "slots": [1], "start": 1, "count": 16, "medium": "PON", "direction": "DOWN"}]`.
+`schemas/inventory.py` validates it (`PortTemplateGroup` + `validate_port_template`)
+and `expand_port_template` turns it into one `PortSpec(slot, number, name,
+medium, direction)` per port: only `{slot}`/`{n}` placeholders (`str.replace`,
+never `str.format`), slots 0–255, start 0–4095, count 1–256, ≤ 32 groups and
+≤ 1,024 ports, names matching `PORT_NAME_PATTERN`
+(`^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$` — they reach device CLIs), unique
+case-insensitively, PON ports unique on (slot, number, direction).
+`ck_device_type_ports_serialized` (`port_template IS NULL OR is_serialized`)
+backs the schema's `PORT_TEMPLATE_REQUIRES_SERIALIZED`. `device_type.path_role`
+(VARCHAR(32), `PATH_ROLE_PATTERN`, not secret-named, not unique) names the
+node for `path.<role>.*`; `path_role_shadows_category(db, role)` is the DB half
+of the backend's 422 `PATH_ROLE_SHADOWS_CATEGORY`.
+
+**`InventoryItemPort`** (`inventory_item_port`):
+
+| Column | Definition |
+|---|---|
+| `item_id`, `company_id` | composite FK `fk_item_port_item` → `inventory_item (id, company_id)` ON DELETE CASCADE |
+| `name` | VARCHAR(32): "1/4", "9:1", "ether2", "OUT 6", "IN", "PON" |
+| `slot` | SMALLINT NULL, 0–255 — structural only, an OLT slot is not a line card |
+| `number` | SMALLINT, 0–4095 |
+| `medium` / `direction` / `origin` | `PORT_MEDIA` (ETH, PON) / `PORT_DIRECTIONS` (UP, DOWN, ANY) / `PORT_ORIGINS` (TEMPLATE, ITEM = per-item addition) |
+
+Indexes: `uq_item_port_name` on `(item_id, lower(name))`; `uq_item_port_pon_number`
+on `(item_id, coalesce(slot, -1), number, direction) WHERE medium = 'PON'`
+(partial on both Postgres and SQLite); `uq_item_port_identity (id, item_id,
+company_id)` is the target of the link FKs. `inventory_item` gains
+`uq_inventory_item_id_company (id, company_id)` as the item-side target.
+
+**`NetworkLink`** (`network_link`) — one row per device whose upstream port is
+known: `up_item_id`/`up_port_id` (NOT NULL), `down_item_id`/`down_port_id`
+(port nullable), `source` (`NETWORK_LINK_SOURCES`: OFFICE, FIELD, IMPORT),
+`task_id` (SET NULL), `created_by_id` (SET NULL).
+
+| Constraint | Rule |
+|---|---|
+| `fk_link_up_port` | `(up_port_id, up_item_id, company_id)` → port identity, NO ACTION |
+| `fk_link_down_item` | `(down_item_id, company_id)` → item, ON DELETE CASCADE |
+| `fk_link_down_port` | `(down_port_id, down_item_id, company_id)` → port identity, NO ACTION (MATCH SIMPLE) |
+| `uq_link_up_port`, `uq_link_down_port`, `uq_link_down_item` | a port feeds one link; a device has one upstream link — still a tree |
+| `ck_link_not_self` | `up_item_id <> down_item_id` |
+
+The composite FKs make cross-tenant links, and links naming another item's port,
+impossible on Postgres. Deleting only a device's own linked port fails
+(NO ACTION); deleting the whole leaf ONU passes because Postgres checks NO ACTION
+after the statement's cascades. ANY ports cannot be held twice (once up, once
+down) by a constraint — the backend's single writer checks both under a lock.
+
+**`parent_id` stays derived.** Invariant: for every link,
+`inventory_item[down_item_id].parent_id = up_item_id` (the reverse does not hold:
+a parent with no link is an *unported edge*). One backend helper writes both;
+two **deferred** constraint triggers (`trg_network_link_parent_sync` on link
+insert/update, `trg_inventory_item_link_sync` on `UPDATE OF parent_id`) call
+`network_link_assert_parent()` at COMMIT and raise
+`NETWORK_LINK_PARENT_MISMATCH` otherwise. Like the ng1 guards they live only in
+the revision, never in SQLAlchemy metadata. `downgrade()` refuses while any link
+or ITEM port exists. ORM relationships are all view-only:
+`InventoryItem.ports`/`.uplink`, `InventoryItemPort.item`,
+`NetworkLink.up_port`/`.down_port`/`.down_item`. Postgres-only behaviour is
+pinned by `tests/pg/test_port_topology_pg.py` (CI job `pg`).
 
 ### Both guard triggers (ng1 only, never in SQLAlchemy metadata)
 

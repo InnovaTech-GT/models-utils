@@ -46,3 +46,40 @@ jobs:
           POSTGRES_PORT: "5432"
           POSTGRES_DB: test
         run: pytest -v
+
+  # Postgres-only guarantees (doc 40 §4.2 C1): deferred triggers, composite
+  # FKs, NO ACTION deletes and migration refusals cannot be shown on SQLite.
+  pg:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: test
+      DB_URL: postgresql://test:test@localhost:5432/test
+      PG_TEST_URL: postgresql://test:test@localhost:5432/test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install . -r requirements-dev.txt
+      - name: Migrate to head
+        run: alembic upgrade head
+      - name: Postgres tests
+        run: pytest -v -m pg tests/pg

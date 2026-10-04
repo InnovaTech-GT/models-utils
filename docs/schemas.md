@@ -192,6 +192,35 @@ matters when reading `__init__.py`:
 > No Pydantic schema exists for `ProvisioningRun` — backend-erp shapes the
 > `/automations/runs` response itself.
 
+### Port-level topology (4.4.0, doc 40, revision `pt1_port_topology`)
+
+`schemas/inventory.py`:
+
+- `PortTemplateGroup` (`name`, `slots?`, `start` = 1, `count`, `medium`,
+  `direction`), `PortSpec`, `expand_port_template(groups)` (accepts models or
+  the raw stored dicts), `validate_port_template` (list rules; `[]` → `None`).
+  See [network-models.md](network-models.md) for every limit.
+- `DeviceTypeCreate`/`DeviceTypeUpdate`/`DeviceTypeOut` gain `port_template` and
+  `path_role`. A template on a lot type is a 422
+  `PORT_TEMPLATE_REQUIRES_SERIALIZED` (on Update only when both fields are sent;
+  the backend checks a lone template against the stored flag). `path_role` goes
+  through `normalize_path_role` (strip, blank → `None`, `PATH_ROLE_PATTERN`, not
+  secret-named); `path_role_shadows_category(db, role)` is the DB check behind
+  the backend's `PATH_ROLE_SHADOWS_CATEGORY`. On Update an explicit `null`
+  clears the template (`model_fields_set`).
+- No port/link response schemas here: backend-erp owns `PortOut`/`UplinkOut`
+  (`schemas/network_graph.py`).
+
+`schemas/playbook.py`:
+
+- `ComputedVar` (`key`, `expr`, `min?`, `max?` as strict ints) and
+  `PlaybookDefinition.computed: List[ComputedVar] = []`. Declared because the
+  library routes store `model_dump()`, which drops unknown keys. The validator
+  parses every `expr` (`utils/playbook_expr.py`), refuses secret-named keys and
+  operands, `input.*`, forward/self references, more than 16 entries, and any
+  `{{computed.x}}` token (templates, requests, preconditions, `on_failure`,
+  rollback) whose key is not declared.
+
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 
 - **`InsightChartSpec` is deleted.** Chart `spec` is an opaque `Dict[str, Any]`.
