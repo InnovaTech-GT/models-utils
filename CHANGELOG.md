@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **4.3.1** - data repair `sh1_service_history_repair` (one-way, no schema change): reconstructs client-service history for plan changes the ISP adoption import missed. For services whose RECURRING orders switch once from an older price to the current plan's price, each older run becomes a CANCELLED historical `client_service` (`migration_source='sh1'`, on the single SERVICE plan with that price) and its orders + line items move to it; the current service's `activation_date`/`created_at` move to its first current-price order. Other mismatched single-line orders get their line price set to the order total. Services left ACTIVE with billing INACTIVE after being replaced by a later service are cancelled at the replacement's start (`recurrence_end` = their last billed order). Order totals and payments are untouched.
+
 ### Added
 - (4.3.0) Alembic `cr1_cash_review`: `CashSessionStatus` SUBMITTED/REJECTED/APPROVED; `cash_session.submitted_at/reviewed_at/reviewed_by/review_note`; permission `cash_sessions.review` (ADMIN); `CashSessionOut` review fields.
 - (4.2.0) Alembic `pd1_client_payment_day`: nullable `client.payment_day` (1..31, CHECK) on model + `ClientBase`/`ClientUpdate`/`ClientOut`.
