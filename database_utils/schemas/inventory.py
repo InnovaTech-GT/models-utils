@@ -80,8 +80,10 @@ class PortTemplateGroup(BaseModel):
 
     Only `{slot}` and `{n}` are placeholders, substituted with str.replace,
     never str.format. Without `slots` the ports get slot NULL."""
-    name: str
-    slots: Optional[List[StrictInt]] = None
+    # Bounded BEFORE expansion: expanded names are capped at 32 characters,
+    # but that check runs only after every port has been built.
+    name: str = Field(max_length=64)
+    slots: Optional[List[StrictInt]] = Field(default=None, max_length=256)
     start: StrictInt = 1
     count: StrictInt
     medium: str

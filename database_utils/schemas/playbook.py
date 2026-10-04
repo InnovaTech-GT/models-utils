@@ -27,7 +27,6 @@ Integer arithmetic is declared, never inline: an optional `computed` block
 (doc 40 §3.3.3, utils/playbook_expr.py) whose results templates read by plain
 lookup as {{computed.<key>}}.
 """
-import json
 import re
 
 from pydantic import BaseModel, ConfigDict, StrictInt, field_validator, model_validator
@@ -220,9 +219,10 @@ class ComputedVar(BaseModel):
         return self
 
 
-# {{computed.<key>}} with an optional filter suffix, matched in the JSON dump
-# of the steps (templates, requests, preconditions, on_failure, rollback).
-_COMPUTED_TOKEN = re.compile(r"\{\{\s*computed\.([a-z][a-z0-9_]*)")
+# The head of a {{computed.<key>}} token body, with the renderer's own
+# leading-blank rule ([ \t]*). Matched against each raw step string's
+# TOKEN_SHAPE bodies, never a JSON dump: JSON escapes a tab to `\t`.
+_COMPUTED_HEAD = re.compile(r"[ \t]*computed\.([a-z][a-z0-9_]*)")
 
 
 class PlaybookDefinition(BaseModel):
@@ -264,10 +264,15 @@ class PlaybookDefinition(BaseModel):
                         f"computed keys, not '{operand}'"
                     )
             earlier.add(name)
-        blob = json.dumps(
-            [s.model_dump() for s in self.steps] + [s.model_dump() for s in self.rollback]
-        )
-        for key in dict.fromkeys(_COMPUTED_TOKEN.findall(blob)):
+        # templates, requests, preconditions, on_failure and rollback
+        steps = [s.model_dump() for s in self.steps] + [s.model_dump() for s in self.rollback]
+        used = [
+            head.group(1)
+            for text in playbook_expr.strings(steps)
+            for match in playbook_expr.TOKEN_SHAPE.finditer(text)
+            if (head := _COMPUTED_HEAD.match(match.group("body")))
+        ]
+        for key in dict.fromkeys(used):
             if f"computed.{key}" not in earlier:
                 raise ValueError(
                     f"COMPUTE_NAME: {{{{computed.{key}}}}} is used but not declared in 'computed'"

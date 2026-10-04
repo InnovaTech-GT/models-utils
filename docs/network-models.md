@@ -174,7 +174,8 @@ template) is a list of port groups, e.g.
 `schemas/inventory.py` validates it (`PortTemplateGroup` + `validate_port_template`)
 and `expand_port_template` turns it into one `PortSpec(slot, number, name,
 medium, direction)` per port: only `{slot}`/`{n}` placeholders (`str.replace`,
-never `str.format`), slots 0–255, start 0–4095, count 1–256, ≤ 32 groups and
+never `str.format`), a group `name` pattern of at most 64 characters and at
+most 256 `slots` entries (both bounded before expansion), slots 0–255, start 0–4095, count 1–256, ≤ 32 groups and
 ≤ 1,024 ports, names matching `PORT_NAME_PATTERN`
 (`^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$` — they reach device CLIs), unique
 case-insensitively, PON ports unique on (slot, number, direction).

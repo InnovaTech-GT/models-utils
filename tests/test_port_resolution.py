@@ -252,6 +252,20 @@ def test_a_role_never_overwrites_a_category_frame(csr):
     assert exc.value.errors[0]["role"] == "olt"
 
 
+def test_a_repeated_role_named_like_a_category_still_shadows(csr):
+    """Two holders would otherwise be ROLE_AMBIGUOUS while the SPLITTER
+    category frame silently answered path.splitter.*."""
+    db, plant = csr.db, csr.plant
+    shadow = _role_type(db, plant, "splitter")
+    plant.spl1.device_type_id = plant.spl2.device_type_id = shadow.id
+    db.flush()
+    db.expire_all()
+    with pytest.raises(ResolutionError) as exc:
+        resolve_provisioning(db, csr.service)
+    assert exc.value.code == "ROLE_SHADOWS_CATEGORY"
+    assert exc.value.errors[0]["role"] == "splitter"
+
+
 # ------------------------------------------------- resolution-time refusal
 
 def test_a_missing_link_is_port_not_recorded_no_link(csr):
@@ -295,8 +309,23 @@ def test_a_path_segment_nobody_holds_is_not_on_path(csr):
 def test_default_input_and_bare_tokens_are_not_checked(csr):
     _set_def(csr, "onu-activation", _template(
         '{{ path.switch.serial | default:"none" }} {{path.switch.mac|default :"x"}} '
-        "{{input.vlan}} {{vlan}} {{ not a token }}"))
+        "{{input.vlan}} {{vlan}} {{list[0].x}}"))
     resolve_provisioning(csr.db, csr.service)
+
+
+def test_a_malformed_token_refuses_the_run_before_any_device(csr):
+    """The executor fails a step on any `{{` left after rendering, whatever
+    its namespace; the HG260 scratch playbook's upper-case segment is one."""
+    definition = copy.deepcopy(ROUTER_DEF)
+    definition["steps"][0]["template"] += " {{path.ROUTER.serial}}"
+    _set_def(csr, "router-activation", definition)
+    _set_def(csr, "onu-activation", _template('{{ not a token }} {{ x | f:"{0}" }}'))
+    errors = _errors(csr)
+    assert {(e["code"], e["token"], e["reason"]) for e in errors} == {
+        ("UNRESOLVED_TOKEN", "{{path.ROUTER.serial}}", "malformed"),
+        ("UNRESOLVED_TOKEN", "{{ not a token }}", "malformed"),
+        ("UNRESOLVED_TOKEN", '{{ x | f:"{0}" }}', "malformed"),
+    }
 
 
 def test_a_literal_containing_default_is_still_checked(csr):

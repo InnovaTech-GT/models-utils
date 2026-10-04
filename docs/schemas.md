@@ -219,7 +219,9 @@ matters when reading `__init__.py`:
   parses every `expr` (`utils/playbook_expr.py`), refuses secret-named keys and
   operands, `input.*`, forward/self references, more than 16 entries, and any
   `{{computed.x}}` token (templates, requests, preconditions, `on_failure`,
-  rollback) whose key is not declared.
+  rollback) whose key is not declared — matched on each raw step string's
+  token bodies with the renderer's `[ \t]*` head rule, never on a JSON dump
+  (which escapes a tab).
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 

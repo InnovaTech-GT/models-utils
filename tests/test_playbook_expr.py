@@ -126,6 +126,13 @@ def test_computed_tokens_in_requests_and_on_failure_are_checked():
         _definition([_CSR], steps=[_STEP, step])
 
 
+def test_a_tab_led_computed_token_is_checked():
+    # JSON escapes a tab to backslash-t; the renderer's head allows [ \t]*.
+    with pytest.raises(ValidationError, match="not declared"):
+        _definition([_CSR], steps=[{"name": "t", "driver": "simulator",
+                                    "template": "{{\tcomputed.nope}}"}])
+
+
 def test_evaluate_all_accepts_validated_models():
     computed = _definition([_CSR]).computed
     values, missing, errors = evaluate_all(computed, {

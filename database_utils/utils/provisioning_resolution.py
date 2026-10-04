@@ -477,32 +477,27 @@ def _attach_ports(db: Session, path: List[ResolvedNode], company_id: Any) -> Non
 # ours either.
 RESOLVER_NAMESPACES = frozenset(playbook_expr.NAMESPACES)
 
-# Mirrors backend-erp renderer.TOKEN_SHAPE (the one "this is a token" rule).
-_TOKEN_SHAPE = re.compile(r"\{\{(?P<body>[^{}\n]{0,512})\}\}")
+# The renderer's _VAR_HEAD (name, optional [i] index after the first segment),
+# followed by a filter pipe or the end of the body.
 _TOKEN_HEAD = re.compile(
-    r"[ \t]*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)[ \t]*(?:\||$)"
+    r"[ \t]*([a-z][a-z0-9_]*(?:\[\d{1,3}\])?(?:\.[a-z][a-z0-9_]*)*)[ \t]*(?:\||$)"
 )
 # A regex, not a substring test: `| default:` is the filter, `defaults` in a
 # literal argument is not (doc 40 §5 PS-3).
 _DEFAULT_FILTER = re.compile(r"\|\s*default\s*:")
 
 
-def _rendered_strings(value: Any) -> Iterable[str]:
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for v in value.values():
-            yield from _rendered_strings(v)
-    elif isinstance(value, list):
-        for v in value:
-            yield from _rendered_strings(v)
+def _step_tokens(definition: Any) -> tuple:
+    """(tokens, malformed) for every string the executor renders BEFORE a
+    step runs: templates, http/tr069 requests, target_item_id and
+    preconditions. rollback and on_failure are excluded — they run only after
+    a failure, and a run must not be refused over a compensation it may never
+    need.
 
-
-def _step_tokens(definition: Any) -> List[tuple]:
-    """(name, has_default) for every token the executor renders BEFORE a step
-    runs: templates, http/tr069 requests, target_item_id and preconditions.
-    rollback and on_failure are excluded — they run only after a failure, and
-    a run must not be refused over a compensation it may never need."""
+    tokens is (name, has_default) per parseable token. malformed is every
+    construct the renderer leaves in place — a token-shaped body whose head
+    does not parse, or a residual `{{` outside any token shape — which the
+    executor's leftover guard fails the step on, whatever its namespace."""
     fields = []
     for step in (definition or {}).get("steps") or []:
         if not isinstance(step, dict):
@@ -511,14 +506,18 @@ def _step_tokens(definition: Any) -> List[tuple]:
         pre = step.get("precondition")
         if isinstance(pre, dict):
             fields += [pre.get("template"), pre.get("request"), pre.get("target_item_id")]
-    out = []
-    for text in _rendered_strings(fields):
-        for match in _TOKEN_SHAPE.finditer(text):
+    tokens, malformed = [], []
+    for text in playbook_expr.strings(fields):
+        for match in playbook_expr.TOKEN_SHAPE.finditer(text):
             body = match.group("body")
             head = _TOKEN_HEAD.match(body)
-            if head:  # an unparseable body is literal text, as in the renderer
-                out.append((head.group(1), bool(_DEFAULT_FILTER.search(body))))
-    return out
+            if head:
+                tokens.append((head.group(1), bool(_DEFAULT_FILTER.search(body))))
+            else:
+                malformed.append(match.group(0))
+        rest = playbook_expr.TOKEN_SHAPE.sub("", text)
+        malformed += [rest[m.start():m.start() + 40] for m in re.finditer(r"\{\{", rest)]
+    return tokens, malformed
 
 
 def _is_port_token(name: str) -> bool:
@@ -540,7 +539,7 @@ class _Explainer:
         node = None
         if parts[0] == "path" and len(parts) == 3:
             segment = parts[1]
-            if segment in self.ambiguous_roles and segment not in self.path_nodes:
+            if segment in self.ambiguous_roles:
                 return {
                     "code": "ROLE_AMBIGUOUS", "token": name, "role": segment,
                     "item_ids": self.ambiguous_roles[segment],
@@ -652,7 +651,12 @@ def _refusals(db: Session, client_service: Any, purpose: str,
         variables |= values
         declared = {f"computed.{e.get('key')}" for e in computed}
 
-        tokens = _step_tokens(definition)
+        tokens, malformed = _step_tokens(definition)
+        errors += [{
+            "code": "UNRESOLVED_TOKEN", "token": raw, "reason": "malformed",
+            "item_id": str(node.item_id),
+            "detail": f"'{raw}' is not a valid token; the step would fail on it",
+        } for raw in malformed]
         for name, has_default in tokens:
             if has_default or name.split(".", 1)[0] not in RESOLVER_NAMESPACES:
                 continue
@@ -856,7 +860,9 @@ def resolve_provisioning(
     # roles a category cannot tell apart (doc 40 §3.3.1). Emitted only when
     # exactly one node holds it: "nearest wins" would silently pick the wrong
     # splitter of two, so a repeated role is reported instead (ROLE_AMBIGUOUS,
-    # when a playbook reads it). A role never overwrites a category frame.
+    # when a playbook reads it). A role never overwrites a category frame, and
+    # a role named like a category on the path fails closed whatever its
+    # holder count — else the category frame silently answers path.<role>.*.
     holders: Dict[str, List[ResolvedNode]] = defaultdict(list)
     for node in path:
         role = (node.path_role or "").strip().lower()
@@ -864,9 +870,6 @@ def resolve_provisioning(
             holders[role].append(node)
     ambiguous_roles: Dict[str, List[str]] = {}
     for role, nodes in holders.items():
-        if len(nodes) > 1:
-            ambiguous_roles[role] = [str(n.item_id) for n in nodes]
-            continue
         if role in path_nodes:
             raise ResolutionError(
                 "ROLE_SHADOWS_CATEGORY",
@@ -879,6 +882,9 @@ def resolve_provisioning(
                                f"device category on this path; rename the role"),
                 }],
             )
+        if len(nodes) > 1:
+            ambiguous_roles[role] = [str(n.item_id) for n in nodes]
+            continue
         path_nodes[role] = nodes[0]
         shared.update(build_device_frame(nodes[0], f"path.{role}"))
 

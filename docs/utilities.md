@@ -161,7 +161,7 @@ still receive exactly one flat dict and their contract is untouched.
 | `device.<attr>` | the device **this playbook is running on** |
 | `cpe.<attr>` | the subscriber edge device that triggered the run (the leaf, always `path[0]`) |
 | `path.<category_key>.<attr>` | any node on **this run's** path, named by its device-category key; **nearest-to-the-CPE wins** if a role repeats. Passives are addressable too (a playbook may legitimately want the splitter's serial for a description field) |
-| `path.<path_role>.<attr>` | (doc 40) the node whose device type carries this per-company `path_role` (`mufa_principal`), emitted **only when exactly one node on the path holds it** — a repeated role is collected in `ambiguous_roles` instead, because "nearest wins" would silently pick the wrong splitter. A role whose name is already a category frame on the path raises **`ROLE_SHADOWS_CATEGORY`** rather than overwrite it |
+| `path.<path_role>.<attr>` | (doc 40) the node whose device type carries this per-company `path_role` (`mufa_principal`), emitted **only when exactly one node on the path holds it** — a repeated role is collected in `ambiguous_roles` instead, because "nearest wins" would silently pick the wrong splitter. A role whose name is already a category frame on the path raises **`ROLE_SHADOWS_CATEGORY`** rather than overwrite it — whatever the number of nodes holding it |
 | `computed.<key>` | (doc 40) a playbook's declared integer arithmetic. Evaluated here for refusal and again by backend-erp's renderer; never stored in the frames |
 | `service_plan.<field\|param>` | plan fields plus the plan's tenant-authored rows (`plan`- and `service`-scoped alike — the author writes `{{service_plan.<key>}}` either way) |
 | `client.<attr>` | built-in subscriber fields plus the tenant's own client custom fields (built-ins win a clash) |
@@ -192,15 +192,19 @@ but no link) simply has no keys. `out_port_name` is the template (factory) name
 Namespaces checked are the resolver's own: `device`, `cpe`, `path`,
 `service_plan`, `client`, `service`, `computed`. A token whose body has a
 `| default:` filter (regex `\|\s*default\s*:`, not a substring test) is skipped;
-`input.*` keeps the renderer's required/default rule; bare legacy tokens and
-bodies that do not parse (literal text) are skipped. A missing value is
-explained as one of:
+`input.*` keeps the renderer's required/default rule; bare legacy tokens are
+skipped. A **malformed** construct — a token-shaped body whose head does not
+parse (`{{path.ROUTER.serial}}`, `{{ not a token }}`) or a residual `{{`
+outside any token shape — is `UNRESOLVED_TOKEN` `reason: malformed` (`token` is
+the raw construct, plus `item_id`) whatever its namespace or `| default:`,
+mirroring the executor's leftover guard, which fails the step on it anyway. A
+missing value is explained as one of:
 
 | Code | Fields | When |
 |---|---|---|
 | `ROLE_AMBIGUOUS` | `token`, `role`, `item_ids` | `path.<role>.*` for a role held by more than one node |
 | `PORT_NOT_RECORDED` | `token`, `item_id`, `label`, `position`, `reason: no_link\|no_slot` | a port attribute of a node above the CPE (`no_slot`: the port is known but has no slot) |
-| `UNRESOLVED_TOKEN` | `token`, `reason: not_on_path\|missing_value` | anything else (`not_on_path`: no node holds that `path.<segment>`) |
+| `UNRESOLVED_TOKEN` | `token`, `reason: not_on_path\|missing_value\|malformed` | anything else (`not_on_path`: no node holds that `path.<segment>`) |
 
 Plus `COMPUTE_*` errors from `evaluate_all` (with `key` and the step's
 `item_id`; an entry skipped for a missing operand is reported once, through its

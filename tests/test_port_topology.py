@@ -88,6 +88,8 @@ def test_placeholders_use_replace_not_format():
     ({"name": "p{n}", "count": 1, "medium": "COAX"}, "medium"),
     ({"name": "p{n}", "count": 1, "direction": "down"}, "direction"),
     ({"name": "p{n}", "count": True}, "count"),
+    ({"name": "p" * 65, "count": 1}, "at most 64 characters"),
+    ({"name": "p{n}", "slots": list(range(257)), "count": 1}, "at most 256 items"),
 ])
 def test_group_limits(group, needle):
     full = {"medium": "ETH", "direction": "ANY", **group}

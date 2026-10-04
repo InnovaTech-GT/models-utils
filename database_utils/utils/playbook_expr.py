@@ -72,6 +72,23 @@ MAX_DEPTH = 8
 INT_LIMIT = 2**31 - 1
 KEY_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,31}")
 
+# Mirrors backend-erp renderer.TOKEN_SHAPE (the one "this is a token" rule),
+# shared by the save-time check (schemas/playbook.py) and the resolver.
+TOKEN_SHAPE = re.compile(r"\{\{(?P<body>[^{}\n]{0,512})\}\}")
+
+
+def strings(value: Any) -> Iterable[str]:
+    """Every string in a JSON-shaped value, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from strings(v)
+
+
 _SEGMENT = r"[a-z][a-z0-9_]*"
 _NAME = re.compile(r"(" + _SEGMENT + r")((?:\." + _SEGMENT + r")+)")
 _OPERAND_STR = re.compile(r"-?[0-9]{1,9}")
