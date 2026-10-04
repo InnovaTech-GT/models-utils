@@ -230,7 +230,20 @@ the revision, never in SQLAlchemy metadata. `downgrade()` refuses while any link
 or ITEM port exists. ORM relationships are all view-only:
 `InventoryItem.ports`/`.uplink`, `InventoryItemPort.item`,
 `NetworkLink.up_port`/`.down_port`/`.down_item`. Postgres-only behaviour is
-pinned by `tests/pg/test_port_topology_pg.py` (CI job `pg`).
+pinned by `tests/pg/test_port_topology_pg.py` (CI job `pg`). SQLite test schemas
+have neither the triggers nor enforced FKs, so graph tests call
+`network_graph.assert_links_consistent(db)` instead.
+
+**What provisioning reads (doc 40 §3.3).** The resolver loads the links of the
+path in one company-scoped query and gives each node the port the node below
+it hangs off — `out_slot`/`out_port`/`out_port_name`, only if the link's
+`up_item_id` is that node (a reparent between the two reads must not borrow a
+port) and never on the CPE. A device type's `path_role` becomes a
+`path.<role>.*` frame when exactly one node on the path holds it. Templates read
+the CO0648 values as `path.mufa_principal.out_port` (6), `path.mufa_secundaria.out_port`
+(4) and `device.out_slot`/`device.out_port` on the OLT (1, 4). See
+[utilities.md](utilities.md#provisioning_resolutionpy) for the variables and the
+resolution-time refusal codes.
 
 ### Both guard triggers (ng1 only, never in SQLAlchemy metadata)
 
@@ -324,7 +337,7 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, category_key}]` |
+| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, playbook_version, category_key}]` (`playbook_version` since doc 40; the worker refuses a child whose playbook was edited mid-run). `path` entries likewise gain `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` — JSON, so no revision |
 | `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}}`, resolved **once** at run creation. Later children are built from this rather than re-resolved, so a re-parent landing mid-run cannot silently redirect the remaining steps to devices the operator never saw |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |

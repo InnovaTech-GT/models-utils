@@ -1302,10 +1302,12 @@ class ProvisioningRun(Base):
     # The whole resolved path INCLUDING passive nodes, snapshotted at creation:
     # the run detail view must show what the path was when it ran, not what it
     # is now. [{position, item_id, serial, device_type_name, category_key,
-    #           category_tier, is_passive, playbook_id, playbook_source}]
+    #           category_tier, is_passive, playbook_id, playbook_source,
+    #           label, path_role, out_slot, out_port, out_port_name,
+    #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, category_key}]
+    # [{item_id, playbook_id, playbook_version, category_key}]
     plan = Column(JSON, nullable=False)
     # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than

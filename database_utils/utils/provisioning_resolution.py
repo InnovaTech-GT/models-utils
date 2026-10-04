@@ -34,6 +34,11 @@ playbook that still contains them.
   path.<category_key>.<attr> any other node on THIS RUN's path, named by its
                              device-category role; nearest-to-the-CPE wins if a
                              role repeats
+  path.<path_role>.<attr>    a node whose device type carries a per-company
+                             path role ("mufa_principal"); emitted only when
+                             exactly one node on the path holds it (doc 40)
+  computed.<key>             a playbook's declared integer arithmetic, evaluated
+                             here (refusal) and again by the renderer (doc 40)
   service_plan.<field|param> plan fields + the plan's tenant-authored rows
   client.<attr>              built-in subscriber fields + the tenant's own
                              custom client attributes (built-ins win a clash)
@@ -65,20 +70,26 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from database_utils.models.isp import (
+    PURPOSE_ACTIVATION,
     ClientService,
     DeviceTypePlaybook,
     InventoryItem,
     InventoryItemPlaybook,
+    InventoryItemPort,
+    NetworkLink,
     Playbook,
-    PURPOSE_ACTIVATION,
+    ProvisioningJobStatus,
+    ProvisioningRun,
 )
+from database_utils.utils import playbook_expr
 from database_utils.utils.network_graph import GraphError, resolve_path
 
 
@@ -123,6 +134,18 @@ class ResolvedNode:
     # "node" (an inventory_item_playbook override), "device_type" (the type's
     # default), or None (nothing bound).
     playbook_source: Optional[str] = None
+    # --- port-level topology (doc 40 §3.3.1) ---------------------------------
+    label: Optional[str] = None
+    path_role: Optional[str] = None
+    # The port on THIS node that the next node toward the CPE hangs off, read
+    # from that node's network_link. None = unknown (no link, or a stale one):
+    # the frame then omits the key rather than emitting "" (see PORT_ATTRIBUTES).
+    out_slot: Optional[int] = None
+    out_port: Optional[int] = None
+    out_port_name: Optional[str] = None
+    # playbook.version at resolution; the worker refuses a child whose playbook
+    # was edited since (PLAYBOOK_CHANGED_DURING_RUN, backend-erp).
+    playbook_version: Optional[int] = None
 
 
 @dataclass
@@ -139,6 +162,9 @@ class ResolvedProvisioning:
     steps: List[ResolvedNode] = field(default_factory=list)
     shared_variables: Dict[str, Any] = field(default_factory=dict)
     device_variables: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
+    # {role: [item_id, ...]} for path roles held by more than one node on this
+    # path. Such a role gets no path.<role>.* frame (doc 40 §3.3.1).
+    ambiguous_roles: Dict[str, List[str]] = field(default_factory=dict)
 
 
 INPUT_NAMESPACE = "input"
@@ -299,6 +325,12 @@ DEVICE_ATTRIBUTES = (
     "mgmt_host", "mgmt_port", "depth",
 )
 
+# Port attributes (doc 40 §3.3.1), emitted per device only when the port is
+# recorded, so a frame's keys are DEVICE_ATTRIBUTES plus a subset of these.
+# Mirrored with DEVICE_ATTRIBUTES in frontend-erp lib/playbookGrammar.ts. All
+# single segments, so _DEVICE_VARIABLE_PATTERN already matches them.
+PORT_ATTRIBUTES = ("out_slot", "out_port", "out_port_name")
+
 
 def build_device_frame(node: ResolvedNode, prefix: str) -> Dict[str, Any]:
     """Flat dotted keys for one device under one namespace prefix.
@@ -316,23 +348,50 @@ def build_device_frame(node: ResolvedNode, prefix: str) -> Dict[str, Any]:
         f"{prefix}.mgmt_host": node.mgmt_host or "",
         f"{prefix}.mgmt_port": str(node.mgmt_port) if node.mgmt_port else "",
         f"{prefix}.depth": node.position,
+    } | {
+        # Emitted only when known (doc 40 §3.3.1). An absent key is NOT "":
+        # the renderer tests presence as `vars[name] is not None`, so an empty
+        # string would render `slot  link` and fail open.
+        f"{prefix}.{attr}": getattr(node, attr)
+        for attr in PORT_ATTRIBUTES
+        if getattr(node, attr) is not None
     }
+
+_DEVICE_NAMESPACES = ("device", "cpe", "path")
+
+
+def _computed_names(definition: Any) -> Optional[set]:
+    """Every operand name read by the definition's `computed` block, or None
+    when the block cannot be parsed. Callers treat None as "references
+    everything" — the fail-open posture of this module's two regexes."""
+    try:
+        names: set = set()
+        for entry in (definition or {}).get("computed") or []:
+            names.update(playbook_expr.names(playbook_expr.parse(entry["expr"])))
+        return names
+    except Exception:  # noqa: BLE001 — any malformed shape is "unknown"
+        return None
 
 
 def _playbook_references_token(playbook: Playbook, token: str) -> bool:
-    """Whether the playbook's own definition templates this exact token.
+    """Whether the playbook's own definition templates this exact token, or
+    reads it as a `computed` operand.
 
     Used to decide whether a missing per-service parameter is fatal: declaring
     `pppoe_user` per-service must not block a SUSPENSION playbook that never
     reads it. Same posture as `_playbook_references_device_variables` — fail
-    safe (treat as referenced) when the definition cannot be introspected."""
+    safe (treat as referenced) when the definition cannot be introspected,
+    including a `computed` block that does not parse (doc 40 §3.3.2)."""
     try:
         blob = json.dumps(playbook.definition)
     except (TypeError, ValueError):
         return True
-    return re.search(
+    if re.search(
         r"\{\{\s*" + re.escape(token) + _FILTER_SUFFIX + r"\s*\}\}", blob
-    ) is not None
+    ) is not None:
+        return True
+    names = _computed_names(playbook.definition)
+    return names is None or token in names
 
 
 def _playbook_references_device_variables(playbook: Playbook) -> bool:
@@ -349,7 +408,14 @@ def _playbook_references_device_variables(playbook: Playbook) -> bool:
         blob = json.dumps(playbook.definition)
     except (TypeError, ValueError):
         return True  # cannot introspect -> fail safe, treat as device-referencing
-    return bool(_DEVICE_VARIABLE_PATTERN.search(blob))
+    if _DEVICE_VARIABLE_PATTERN.search(blob):
+        return True
+    # A computed operand reads a device as surely as a template does (doc 40
+    # §3.3.2 fail-open fix); an unparseable block counts as referencing.
+    names = _computed_names(playbook.definition)
+    return names is None or any(
+        n.split(".", 1)[0] in _DEVICE_NAMESPACES for n in names
+    )
 
 
 def _node_from_item(db: Session, item: InventoryItem, position: int,
@@ -368,10 +434,242 @@ def _node_from_item(db: Session, item: InventoryItem, position: int,
         mgmt_host=item.mgmt_host,
         mgmt_port=item.mgmt_port,
         is_passive=bool(getattr(category, "is_passive", False)),
+        label=getattr(item, "label", None),
+        path_role=getattr(device_type, "path_role", None),
     )
     if not node.is_passive:
         node.playbook_id, node.playbook_source = resolve_playbook_for(db, item, purpose)
     return node
+
+
+def _attach_ports(db: Session, path: List[ResolvedNode], company_id: Any) -> None:
+    """Fill out_* on every node from the links of the node below it.
+
+    One company-scoped query for the whole path, joined to the upstream ports.
+    path[i].out_* is the port on path[i] that path[i-1] hangs off — but ONLY if
+    that link's up_item_id is path[i]: the path (parent_id) and the links are
+    read in separate statements, and a reparent committed in between must not
+    hand this node another device's port (doc 40 §5 DI-11). The CPE (i = 0)
+    has nothing below it and never gets out_*.
+    """
+    rows = db.execute(
+        sa.select(NetworkLink.down_item_id, NetworkLink.up_item_id,
+                  InventoryItemPort.slot, InventoryItemPort.number,
+                  InventoryItemPort.name)
+        .join(InventoryItemPort, InventoryItemPort.id == NetworkLink.up_port_id)
+        .where(
+            NetworkLink.company_id == company_id,
+            NetworkLink.down_item_id.in_([n.item_id for n in path]),
+        )
+    ).all()
+    by_down = {row.down_item_id: row for row in rows}
+    for below, node in zip(path, path[1:]):
+        link = by_down.get(below.item_id)
+        if link is None or link.up_item_id != node.item_id:
+            continue
+        node.out_slot, node.out_port, node.out_port_name = link.slot, link.number, link.name
+
+
+# --- resolution-time refusal (doc 40 §3.3.2) --------------------------------
+
+# Namespaces the resolver fills. `input.*` is the backend renderer's (declared
+# variables with their own required/default rule); bare legacy tokens are not
+# ours either.
+RESOLVER_NAMESPACES = frozenset(playbook_expr.NAMESPACES)
+
+# Mirrors backend-erp renderer.TOKEN_SHAPE (the one "this is a token" rule).
+_TOKEN_SHAPE = re.compile(r"\{\{(?P<body>[^{}\n]{0,512})\}\}")
+_TOKEN_HEAD = re.compile(
+    r"[ \t]*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)[ \t]*(?:\||$)"
+)
+# A regex, not a substring test: `| default:` is the filter, `defaults` in a
+# literal argument is not (doc 40 §5 PS-3).
+_DEFAULT_FILTER = re.compile(r"\|\s*default\s*:")
+
+
+def _rendered_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _rendered_strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _rendered_strings(v)
+
+
+def _step_tokens(definition: Any) -> List[tuple]:
+    """(name, has_default) for every token the executor renders BEFORE a step
+    runs: templates, http/tr069 requests, target_item_id and preconditions.
+    rollback and on_failure are excluded — they run only after a failure, and
+    a run must not be refused over a compensation it may never need."""
+    fields = []
+    for step in (definition or {}).get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        fields += [step.get("template"), step.get("request"), step.get("target_item_id")]
+        pre = step.get("precondition")
+        if isinstance(pre, dict):
+            fields += [pre.get("template"), pre.get("request"), pre.get("target_item_id")]
+    out = []
+    for text in _rendered_strings(fields):
+        for match in _TOKEN_SHAPE.finditer(text):
+            body = match.group("body")
+            head = _TOKEN_HEAD.match(body)
+            if head:  # an unparseable body is literal text, as in the renderer
+                out.append((head.group(1), bool(_DEFAULT_FILTER.search(body))))
+    return out
+
+
+def _is_port_token(name: str) -> bool:
+    parts = name.split(".")
+    return parts[-1] in PORT_ATTRIBUTES and parts[0] in ("device", "path")
+
+
+class _Explainer:
+    """Turns "token X has no value on node n" into one of the three doc 40
+    §3.3.2 errors, naming the device and the reason."""
+
+    def __init__(self, path_nodes: Dict[str, ResolvedNode],
+                 ambiguous_roles: Dict[str, List[str]]):
+        self.path_nodes = path_nodes  # path segment (role or category) -> node
+        self.ambiguous_roles = ambiguous_roles
+
+    def __call__(self, name: str, step: ResolvedNode) -> Dict[str, Any]:
+        parts = name.split(".")
+        node = None
+        if parts[0] == "path" and len(parts) == 3:
+            segment = parts[1]
+            if segment in self.ambiguous_roles and segment not in self.path_nodes:
+                return {
+                    "code": "ROLE_AMBIGUOUS", "token": name, "role": segment,
+                    "item_ids": self.ambiguous_roles[segment],
+                    "detail": (f"'{name}': more than one device on this path "
+                               f"has the role '{segment}'"),
+                }
+            node = self.path_nodes.get(segment)
+            if node is None:
+                return {
+                    "code": "UNRESOLVED_TOKEN", "token": name, "reason": "not_on_path",
+                    "detail": f"'{name}': no device on this path is a '{segment}'",
+                }
+        elif parts[0] == "device" and len(parts) == 2:
+            node = step
+        if node is not None and node.position > 0 and parts[-1] in PORT_ATTRIBUTES:
+            reason = "no_slot" if node.out_port is not None else "no_link"
+            return {
+                "code": "PORT_NOT_RECORDED", "token": name,
+                "item_id": str(node.item_id),
+                "label": node.label or node.serial_number or node.device_type_name,
+                "position": node.position, "reason": reason,
+                "detail": (
+                    f"'{name}': the port on "
+                    f"'{node.label or node.serial_number or node.device_type_name}' "
+                    + ("has no slot" if reason == "no_slot"
+                       else "that the next device connects to is not recorded")
+                ),
+            }
+        return {
+            "code": "UNRESOLVED_TOKEN", "token": name, "reason": "missing_value",
+            "detail": f"'{name}' has no value for this service",
+        }
+
+
+def _last_activation_frames(db: Session, client_service: Any) -> Optional[Dict[str, Any]]:
+    """Frames of the service's last SUCCEEDED, non-dry ACTIVATION run — the
+    port facts the devices were actually configured with."""
+    return db.execute(
+        sa.select(ProvisioningRun.frames)
+        .where(
+            ProvisioningRun.company_id == client_service.company_id,
+            ProvisioningRun.client_service_id == client_service.id,
+            ProvisioningRun.purpose == PURPOSE_ACTIVATION,
+            ProvisioningRun.dry_run.is_(False),
+            ProvisioningRun.status == ProvisioningJobStatus.SUCCEEDED,
+        )
+        .order_by(ProvisioningRun.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _port_fact_drift(baseline: Dict[str, Any], step: ResolvedNode,
+                     names: Iterable[str], variables: Dict[str, Any],
+                     path_nodes: Dict[str, ResolvedNode]) -> List[Dict[str, Any]]:
+    """PATH_CHANGED_SINCE_ACTIVATION for each port fact this step reads whose
+    value differs from the baseline frames (doc 40 §3.3.2, §5 PS-1).
+
+    A key absent from the baseline means the activation never knew that port
+    (activated before this feature, or the port was not recorded yet), which
+    is "no baseline" for that fact, not drift. A fact cleared since activation
+    (now None) IS drift: the `| default` skip must not let it render a guess.
+    """
+    errors = []
+    for name in names:
+        if not _is_port_token(name):
+            continue
+        if name.startswith("device."):
+            owner = step
+            frame = ((baseline.get("device") or {}).get(str(step.item_id)) or {})
+        else:
+            owner = path_nodes.get(name.split(".")[1])
+            frame = baseline.get("shared") or {}
+        was, now = frame.get(name), variables.get(name)
+        if was is not None and was != now:
+            errors.append({
+                "code": "PATH_CHANGED_SINCE_ACTIVATION", "token": name,
+                "was": was, "now": now,
+                "item_id": str(owner.item_id) if owner is not None else None,
+                "detail": (f"'{name}' was {was!r} when this service was activated "
+                           f"and is {now!r} now; re-activate it first"),
+            })
+    return errors
+
+
+def _refusals(db: Session, client_service: Any, purpose: str,
+              steps: List[ResolvedNode], playbooks: Dict[Any, Playbook],
+              shared: Dict[str, Any], device_variables: Dict[Any, Dict[str, Any]],
+              path_nodes: Dict[str, ResolvedNode],
+              ambiguous_roles: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    """Every error that would otherwise surface mid-run, after earlier devices
+    were already configured (doc 40 §3.3.2). Runs go leaf -> root on frozen
+    frames, so a missing OLT port would fail the OLT step after the ONU step
+    ran; refusing here means nothing touches a device first."""
+    explain = _Explainer(path_nodes, ambiguous_roles)
+    errors: List[Dict[str, Any]] = []
+    baseline = (_last_activation_frames(db, client_service)
+                if purpose != PURPOSE_ACTIVATION else None)
+    for node in steps:
+        definition = playbooks[node.playbook_id].definition or {}
+        variables = dict(shared) | device_variables.get(node.item_id, {})
+        computed = definition.get("computed") or []
+        if not isinstance(computed, list) or not all(isinstance(e, dict) for e in computed):
+            errors.append({"code": "COMPUTE_SYNTAX", "item_id": str(node.item_id),
+                           "detail": "the playbook's 'computed' block is malformed"})
+            computed = []
+        values, missing, compute_errors = playbook_expr.evaluate_all(computed, variables)
+        errors += [err | {"item_id": str(node.item_id)} for err in compute_errors]
+        errors += [explain(name, node) for name in missing]
+        variables |= values
+        declared = {f"computed.{e.get('key')}" for e in computed}
+
+        tokens = _step_tokens(definition)
+        for name, has_default in tokens:
+            if has_default or name.split(".", 1)[0] not in RESOLVER_NAMESPACES:
+                continue
+            if name in declared and name not in values:
+                continue  # its own failure is already reported above
+            if variables.get(name) is None:
+                errors.append(explain(name, node))
+
+        if baseline:
+            read = [name for name, _ in tokens] + list(_computed_names(definition) or ())
+            errors += _port_fact_drift(baseline, node, dict.fromkeys(read),
+                                       variables, path_nodes)
+
+    unique: Dict[str, Dict[str, Any]] = {}
+    for err in errors:  # one path.* token read by two playbooks is one problem
+        unique.setdefault(json.dumps(err, sort_keys=True, default=str), err)
+    return list(unique.values())
 
 
 def resolve_provisioning(
@@ -382,7 +680,7 @@ def resolve_provisioning(
     """Resolve a service's configuration path, its per-node playbooks and its
     variable frames — or raise ResolutionError.
 
-    Algorithm (doc 35 §3.2):
+    Algorithm (doc 35 §3.2, doc 40 §3.3):
 
     1. client_service.cpe_item_id unset            -> CPE_NOT_SET
     2. that CPE not attached to the graph          -> CPE_NOT_ATTACHED
@@ -391,6 +689,10 @@ def resolve_provisioning(
     5. every other node resolves node override -> device-type default -> none
     6. an ACTIVE node with no playbook for `purpose` is reported
        PLAYBOOK_NOT_BOUND — fatal for ACTIVATION, non-fatal otherwise
+    7. every step playbook's `computed` block and every resolver-owned token it
+       renders must have a value, and (other than for ACTIVATION) every port
+       fact it reads must match the last live activation — else
+       RESOLUTION_FAILED with the whole list, before any device is touched
 
     Step 6 preserves the pre-existing fatality posture exactly: ACTIVATION
     fails visibly (a half-provisioned install is worse than a refused one),
@@ -424,6 +726,7 @@ def resolve_provisioning(
         _node_from_item(db, item, position, purpose)
         for position, item in enumerate(path_items)
     ]
+    _attach_ports(db, path, client_service.company_id)
     steps = [n for n in path if not n.is_passive and n.playbook_id is not None]
 
     errors: List[Dict[str, Any]] = [
@@ -466,6 +769,8 @@ def resolve_provisioning(
             f"The {purpose} playbook bound to "
             f"'{inactive[0].device_type_name}' is not active",
         )
+    for n in steps:
+        n.playbook_version = playbooks[n.playbook_id].version
 
     missing_service_params: List[Dict[str, Any]] = []
     shared: Dict[str, Any] = {"service.id": str(client_service.id)}
@@ -539,13 +844,43 @@ def resolve_provisioning(
     # Passives are addressable too: a playbook may legitimately want the serial
     # of the splitter a subscriber hangs off for a description field, even
     # though nothing is ever configured ON it.
-    seen: set = set()
+    path_nodes: Dict[str, ResolvedNode] = {}
     for node in path:
         key = (node.category_key or "").lower()
-        if not key or key in seen or not _REFERENCEABLE_KEY.match(key):
+        if not key or key in path_nodes or not _REFERENCEABLE_KEY.match(key):
             continue
-        seen.add(key)
+        path_nodes[key] = node
         shared.update(build_device_frame(node, f"path.{key}"))
+
+    # path.<role>.* — a per-company device-type role ("mufa_principal") for the
+    # roles a category cannot tell apart (doc 40 §3.3.1). Emitted only when
+    # exactly one node holds it: "nearest wins" would silently pick the wrong
+    # splitter of two, so a repeated role is reported instead (ROLE_AMBIGUOUS,
+    # when a playbook reads it). A role never overwrites a category frame.
+    holders: Dict[str, List[ResolvedNode]] = defaultdict(list)
+    for node in path:
+        role = (node.path_role or "").strip().lower()
+        if role and _REFERENCEABLE_KEY.match(role):
+            holders[role].append(node)
+    ambiguous_roles: Dict[str, List[str]] = {}
+    for role, nodes in holders.items():
+        if len(nodes) > 1:
+            ambiguous_roles[role] = [str(n.item_id) for n in nodes]
+            continue
+        if role in path_nodes:
+            raise ResolutionError(
+                "ROLE_SHADOWS_CATEGORY",
+                f"The path role '{role}' has the same name as a device category "
+                f"on this path; rename the role",
+                errors=[{
+                    "code": "ROLE_SHADOWS_CATEGORY", "role": role,
+                    "item_id": str(nodes[0].item_id),
+                    "detail": (f"The path role '{role}' has the same name as a "
+                               f"device category on this path; rename the role"),
+                }],
+            )
+        path_nodes[role] = nodes[0]
+        shared.update(build_device_frame(nodes[0], f"path.{role}"))
 
     device_variables = {n.item_id: build_device_frame(n, "device") for n in steps}
 
@@ -586,9 +921,20 @@ def resolve_provisioning(
             errors=referenced_missing,
         )
 
+    refusals = _refusals(db, client_service, purpose, steps, playbooks, shared,
+                         device_variables, path_nodes, ambiguous_roles)
+    if refusals:
+        raise ResolutionError(
+            "RESOLUTION_FAILED",
+            "One or more values the playbooks on this path need are missing or "
+            "have changed",
+            errors=refusals,
+        )
+
     return ResolvedProvisioning(
         path=path,
         steps=steps,
         shared_variables=shared,
         device_variables=device_variables,
+        ambiguous_roles=ambiguous_roles,
     )

@@ -168,8 +168,11 @@ def create_run(
                            "device_type_id": str(n.device_type_id),
                            "playbook_id": str(n.playbook_id) if n.playbook_id else None}
               for n in resolved.path],
+        # playbook_version lets the worker refuse a child whose playbook was
+        # edited after the run was resolved (PLAYBOOK_CHANGED_DURING_RUN).
         plan=[{"item_id": str(n.item_id),
                "playbook_id": str(n.playbook_id),
+               "playbook_version": n.playbook_version,
                "category_key": (n.category_key or "").lower()}
               for n in resolved.steps],
         frames={
