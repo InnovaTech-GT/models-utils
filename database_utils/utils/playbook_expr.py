@@ -49,6 +49,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from pydantic import BaseModel
+
 # --- secret names -----------------------------------------------------------
 # Moved here from backend-erp provisioning/renderer.py (doc 40 §3.3.3) so the
 # schemas can refuse secret-named path roles and computed keys with the same
@@ -276,8 +278,16 @@ def _evaluate(node: tuple, env: dict[str, int]) -> int:
 
 
 def _field(entry: Any, name: str) -> Any:
-    """Entries are ComputedVar models or the raw dicts stored in a definition."""
-    return (entry if isinstance(entry, dict) else entry.model_dump()).get(name)
+    """Entries are ComputedVar models or the raw dicts stored in a definition.
+    Anything else (a row stored before validation existed) reads as empty, and
+    evaluate_all reports it as COMPUTE_SYNTAX instead of raising."""
+    if isinstance(entry, dict):
+        return entry.get(name)
+    return entry.model_dump().get(name) if isinstance(entry, BaseModel) else None
+
+
+def _is_bound(value: Any) -> bool:
+    return value is None or (isinstance(value, int) and not isinstance(value, bool))
 
 
 def evaluate_all(
@@ -298,10 +308,20 @@ def evaluate_all(
     missing: list[str] = []
     errors: list[dict[str, Any]] = []
     declared: set = set()
+    if computed and not isinstance(computed, (list, tuple)):
+        # A stored definition that never went through PlaybookDefinition.
+        return values, missing, [{"code": "COMPUTE_SYNTAX", "key": None,
+                                  "detail": "computed must be a list of entries"}]
     for entry in computed or []:
         key = _field(entry, "key")
+        if not isinstance(key, str) or not isinstance(_field(entry, "expr"), str):
+            errors.append({"code": "COMPUTE_SYNTAX", "key": key if isinstance(key, str) else None,
+                           "detail": "computed entry needs string 'key' and 'expr'"})
+            continue
         declared.add(f"{COMPUTED_NAMESPACE}.{key}")
         try:
+            if not (_is_bound(_field(entry, "min")) and _is_bound(_field(entry, "max"))):
+                raise ExprError("COMPUTE_TYPE", "min/max must be integers")
             tree = parse(_field(entry, "expr"))
             env: dict[str, int] = {}
             skip = False
