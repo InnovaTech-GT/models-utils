@@ -85,7 +85,9 @@ def test_admin_only_permissions_stay_out_of_viewer():
     # keys must never match VIEWER's filter, i.e. never have action 'read'.
     rbac_seed = _load_rbac_seed()
     isp_seed = _load_isp_seed()
-    assert rbac_seed.VIEWER_PERMISSION_FILTER == "p.action = 'read' OR p.name = 'web.access'"
+    assert rbac_seed.VIEWER_PERMISSION_FILTER == (
+        "(p.action = 'read' AND p.name <> 'device_credentials.read') OR p.name = 'web.access'"
+    )
     rows = {p["name"]: p for p in [*rbac_seed.PERMISSIONS_DATA, *isp_seed.ISP_PERMISSIONS]}
     for name in ("client_services.adopt", "device_credentials.reveal",
                  "orders.revert_payment", "payments.refund"):

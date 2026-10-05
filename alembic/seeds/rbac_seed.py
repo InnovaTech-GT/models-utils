@@ -104,7 +104,11 @@ PERMISSIONS_DATA = [
 
 # The four built-in (global) roles. ADMIN/VIEWER are created here;
 # COLLECTOR/TECHNICIAN by isp_seed.ISP_ROLES. Tenants add custom roles on top.
-VIEWER_PERMISSION_FILTER = "p.action = 'read' OR p.name = 'web.access'"
+# device_credentials.read is excluded (vw1_viewer_no_credential_read): read-only
+# users must not see device credentials.
+VIEWER_PERMISSION_FILTER = (
+    "(p.action = 'read' AND p.name <> 'device_credentials.read') OR p.name = 'web.access'"
+)
 
 
 def seed_rbac_data(connection: Connection) -> None:
