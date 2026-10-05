@@ -316,7 +316,9 @@ def test_pt1_chains_to_the_current_head():
         for line in text.splitlines():
             if line.startswith("down_revision"):
                 downs.add(line)
-    assert not any("pt1_port_topology" in d for d in downs), "pt1 must be the head"
+    # Only cc1_client_code may build on pt1 (it was the head when pt1 shipped).
+    builds_on_pt1 = [d for d in downs if "pt1_port_topology" in d]
+    assert len(builds_on_pt1) <= 1, "pt1 must not branch the history"
 
 
 def test_pt1_is_additive():
