@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`ld1_legacy_drop`**) — plus the idempotent seed
+`alembic/versions/` (head: **`vw1_viewer_no_credential_read`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -975,3 +975,11 @@ column still insert a code. `ck_client_code_format` (`^[A-Z0-9-]{1,16}$`,
 Alembic-only — PG regex) + `uq_client_company_code` on `(company_id, upper(code))`.
 `downgrade()` drops the index, CHECK, column and function.
 
+
+### `vw1_viewer_no_credential_read` (2026-10-05)
+
+Data-only, on `cc1_client_code`. Deletes the global VIEWER role's
+`device_credentials.read` grant (rr1 gave VIEWER every `*.read`); founder
+decision D2 of the v1.0.0 release plan. `rbac_seed.VIEWER_PERMISSION_FILTER`
+excludes it in the same commit, otherwise the post-upgrade seed would re-grant
+it. Downgrade re-grants it.
