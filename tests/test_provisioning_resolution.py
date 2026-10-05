@@ -260,3 +260,15 @@ def test_an_ungrammatical_custom_key_is_skipped(db):
 def test_a_missing_client_relationship_does_not_crash(db, plant):
     v = resolve_provisioning(db, _detached_service(plant, None)).shared_variables
     assert "client.id" not in v
+
+
+def test_client_code_is_a_builtin_variable_and_wins_a_collision(db, plant):
+    # cc1: client.code is built in; a tenant custom field keyed `code` must not shadow it.
+    client = SimpleNamespace(
+        id=uuid.uuid4(), name="Ana", email="", phone="", address="", code="CO0648",
+        custom_field_values=[SimpleNamespace(
+            value="shadow", field_definition=SimpleNamespace(
+                field_key="code", field_type="TEXT"))],
+    )
+    v = resolve_provisioning(db, _detached_service(plant, client)).shared_variables
+    assert v["client.code"] == "CO0648"

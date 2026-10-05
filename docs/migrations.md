@@ -963,3 +963,15 @@ client to one service; `c1b_backfill` priced lines from the current product).
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+### `cc1_client_code` (2026-10-05)
+
+Additive, on `pt1_port_topology`. `client.code` VARCHAR(16) NOT NULL: a short
+per-company client id. Backfill: `[LEGACY_ID:<code>]` in `observations` (uppercased)
+when well-formed and unique within the company; every other client gets a random
+6-char code. DB default `client_code_generate()` (plpgsql, alphabet without
+0/O/1/I/L, hand-synced with `utils/client_code.py`) so writers that predate the
+column still insert a code. `ck_client_code_format` (`^[A-Z0-9-]{1,16}$`,
+Alembic-only — PG regex) + `uq_client_company_code` on `(company_id, upper(code))`.
+`downgrade()` drops the index, CHECK, column and function.
+

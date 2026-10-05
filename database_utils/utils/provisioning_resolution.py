@@ -786,6 +786,8 @@ def resolve_provisioning(
     if client is not None:
         shared["client.id"] = str(client.id)
         shared["client.name"] = client.name or ""
+        # cc1: the short per-company client id (legacy "CO0648" or random).
+        shared["client.code"] = getattr(client, "code", None) or ""
         shared["client.email"] = client.email or ""
         shared["client.phone"] = client.phone or ""
         shared["client.address"] = client.address or ""

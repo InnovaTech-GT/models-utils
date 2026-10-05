@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from database_utils.database import Base
 from ..utils.timezone_utils import now_gt
+from ..utils.client_code import generate_client_code
 
 import enum
 import uuid
@@ -161,6 +162,10 @@ class Client(Base):
     )
     # pd1: the client's usual payment day of month (1..31); NULL = unknown.
     payment_day = Column(SmallInteger, nullable=True)
+    # cc1: short per-company unique id (legacy "CO0648" or a random 6-char
+    # code), overrideable by the office. The DB also defaults it
+    # (client_code_generate(), Alembic-only) for writers that predate it.
+    code = Column(String(16), nullable=False, default=generate_client_code)
     # installation_status/installation_date dropped (cf1): install truth is
     # per-service (client_service.install_state); lists derive count rollups.
 
@@ -198,6 +203,8 @@ class Client(Base):
         # Both list tabs filter company_id + deactivated_at IS [NOT] NULL.
         Index("ix_client_company_active", "company_id", "deactivated_at"),
         CheckConstraint("payment_day IS NULL OR (payment_day BETWEEN 1 AND 31)", name="ck_client_payment_day_range"),
+        # cc1: case-insensitive unique per company (codes are stored upper).
+        Index("uq_client_company_code", "company_id", text("upper(code)"), unique=True),
     )
 
 
