@@ -256,15 +256,35 @@ access by the back door (ADR-006).
 
 | Function | Behaviour |
 |---|---|
-| `run_idempotency_key(client_service_id, purpose, dry_run)` | `path-{service_id}-{purpose_lower}[-dry]` — deliberately mirrors the shape backend-erp's manual endpoint has always used, so a run and a legacy standalone job never collide in the same namespace |
+| `run_idempotency_key(client_service_id, purpose, dry_run=False)` | **The single shared run key** (provisioning-concurrency fix): `deprovision-{service_id}` for DEPROVISION (the bare string the retired `service-removal` template composes, so a still-active copy dedupes against the native run), otherwise `path-provision-{service_id}-{purpose_lower}`; `-dry` appended for a dry run. `/provision`, backend-erp's lifecycle hooks and the workflow engine's default all use it, so they dedupe against each other |
 | `find_in_flight_run(db, company_id, key)` | Dedupe lookup over `IN_FLIGHT = (QUEUED, RUNNING, PENDING_INFORM)`. That tuple **must** mirror the predicate on `uq_provisioning_run_company_idem`; if they disagree, the dedupe check and the unique index disagree and one of them starts raising `IntegrityError` |
 | `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None)` | Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), snapshots `path`/`plan`/`frames`, opens the run, and queues **only its first child**. Resolution happens exactly once per run. Plan entries are `{item_id, playbook_id, playbook_version, category_key}` — `playbook_version` lets backend-erp's worker fail a child with `PLAYBOOK_CHANGED_DURING_RUN` before any device I/O when the playbook was edited mid-run |
-| `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. A standalone job (`run_id` NULL) is a **no-op** — ACS reboots and connectivity probes must keep behaving exactly as they did. Any non-SUCCEEDED status stops the run and the run takes that status (continuing to the OLT after the CPE step failed would leave the network configured for a subscriber whose own device is not). On success it queues the next child; when the plan is exhausted the run goes SUCCEEDED, stamps `finished_at`, and — for a non-dry-run ACTIVATION only — clears `client_service.path_changed_at` |
+| `create_or_get_run(db, client_service, purpose, dry_run, idempotency_key=None, **create_run_kwargs) -> (run, created)` | `create_run` deduped on the run key (`idempotency_key` or `run_idempotency_key(...)`): an in-flight run with that key comes back with `created=False`. The INSERT runs in a **SAVEPOINT**, so losing a race to a concurrent producer (`uq_provisioning_run_company_idem`) rolls back only the savepoint and returns the winner — the caller's session stays usable. Any other `IntegrityError` (no winner found) and every other error propagate |
+| `repair_stranded_runs(db, limit=100) -> int` | Backstop, called by the worker's reaper: an in-flight run quiet for > 30 s (`STRANDED_RUN_GRACE`) with **no in-flight child**, taken `FOR UPDATE SKIP LOCKED` (a run a settle is advancing right now is skipped). Per run, in its own savepoint, it re-reads the last child: still in flight → skip; quiet longer than `STRANDED_RUN_MAX_AGE` (1 h, measured from the last child's `finished_at`, else the run's `updated_at`) → run closed FAILED and `STRANDED_RUN_EXPIRED` logged, never advanced from a stale plan; none → queue child 0; terminal → `advance_run`. Locks run rows only (no deadlock cycle with a settle). A failing run is logged and skipped. Returns the number repaired; the caller commits |
+| `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. Locks the run row (`SELECT … FOR UPDATE`, `populate_existing`; lock order everywhere is job row, then run row) and is a **no-op** when the run is already terminal (a late settle never resurrects it), when `job` is still in flight, or when a later child already exists (a duplicate or stale advance queues nothing). A standalone job (`run_id` NULL) is a **no-op** — ACS reboots and connectivity probes must keep behaving exactly as they did. Any non-SUCCEEDED status stops the run and the run takes that status (continuing to the OLT after the CPE step failed would leave the network configured for a subscriber whose own device is not). On success it queues the next child; when the plan is exhausted the run goes SUCCEEDED, stamps `finished_at`, and — for a non-dry-run ACTIVATION only — clears `client_service.path_changed_at` |
+
+Callers (backend-erp, provisioning-concurrency fix): `POST /client-services/{id}/provision`
+and the lifecycle hooks (`services/client_service_lifecycle.enqueue_lifecycle_run`)
+both open runs through `create_or_get_run` with `run_idempotency_key`
+(`/provision` answers `created=False` with 409 `PROVISIONING_ALREADY_QUEUED` +
+`run_id`; the lifecycle hook returns the winner's id); the workflow engine's
+ENQUEUE_PROVISIONING does too. `POST /provisioning/jobs/{id}/cancel` expires the
+CAS-cancelled child before `advance_run`, because `advance_run` no-ops while the
+job still looks in flight; `POST /provisioning/jobs/{id}/retry` refuses a run
+child (409 `RUN_CHILD_NOT_RETRYABLE`): `advance_run` never resurrects a terminal
+run, so a re-queued child would execute outside it. The real-Postgres races
+(claim, fence, journal, reaper, producers) are covered by backend-erp's
+`tests/pg/test_provisioning_concurrency.py`; this repo's
+`tests/pg/test_provisioning_runs_pg.py` covers the module itself.
 
 Child jobs derive their idempotency key as `{run_key}#{position}` (so each child
-is still individually unique under `uq_provisioning_job_company_idem`), carry
-`device_lock_key = "{company_id}:item:{item_id}"`, and get their `variables` from
-`shared | device[item_id]`.
+is still individually unique under `uq_provisioning_job_company_idem`), are
+inserted with **`device_lock_key` NULL**, and get their `variables` from
+`shared | device[item_id]`. **Producers never lock:** only backend-erp's worker
+claim writes the device lock (never for a dry run). Writing it at INSERT made the
+commit that recorded child N's outcome fail whenever child N+1's device was busy
+with another run or a probe (the 2026-10-06 incident); now a busy device just
+means the worker's claim skips that child until the device frees.
 
 **What this module does not do:** it does not evaluate the provisioning gates
 (kill switch, dry-run gate). Those live in backend-erp and are called by its

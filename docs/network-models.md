@@ -40,7 +40,13 @@ pre-baked chain.
 - `pending_step_index` (int) — the parked step to settle on inform.
 - `pending_task_ids` (JSON) — GenieACS NBI task ids being polled.
 - `heartbeat_at` (datetime) — the lease reaper re-queues stale RUNNING jobs.
-- `device_lock_key` (str) — per-device serialization key.
+- `device_lock_key` (str) — per-device serialization key. Since the
+  provisioning-concurrency fix it is written **only by the worker's claim**
+  (never for dry runs) and cleared on every terminal transition; producers
+  insert it NULL.
+- `claim_token` (UUID, revision `pc1_provisioning_claim_token`) — fence token,
+  set per claim, NULL when not executing; every worker write after the claim is
+  conditional on `(id, status, claim_token)`.
 - **Indexes**: the idempotency partial-unique index now includes PENDING_INFORM in the
   in-flight set; a new `uq_provisioning_job_device_lock` partial-unique index enforces
   at most one live job per `device_lock_key` (canon C11).
@@ -366,11 +372,15 @@ in flight dedupes instead of opening a second one.
 Children are created **lazily, one at a time**, so at most one child of a run is
 QUEUED or RUNNING at once. That needed no new `ProvisioningJobStatus` value (a
 "BLOCKED" state would have had to be understood by every status consumer across
-three services) and no change to the worker's claim query — it still picks the
-oldest QUEUED job, it simply never sees a child that does not exist yet. What
-this buys: the per-device lock is finally correct (each child locks exactly the
-device it configures), retry and cancel become per-device, and `PENDING_INFORM`
-applies to the CPE child alone instead of stalling the whole path. The mechanics
+three services). Children are inserted with `device_lock_key` NULL; the worker's
+claim takes the device lock, skips a child whose device is held, and keeps runs
+on one service in FIFO order (provisioning-concurrency fix). What this buys: the
+per-device lock is finally correct (each child locks exactly the device it
+configures, at claim time), cancel becomes per-device (backend-erp's cancel
+releases the child's lock and stops its run via `advance_run` in one commit;
+a child is never retried on its own, `RUN_CHILD_NOT_RETRYABLE`, because its
+terminal status already stopped the run), and `PENDING_INFORM` applies to the
+CPE child alone instead of stalling the whole path. The mechanics
 live in `utils/provisioning_runs.py` — see [utilities.md](utilities.md).
 
 ### `ng2_topology_drop` — guard, rewrite, then drop

@@ -6,6 +6,7 @@ and SUSPENSION bound to the router/olt/onu device types.
 """
 
 import uuid
+from datetime import timedelta
 
 import sqlalchemy as sa
 
@@ -15,12 +16,16 @@ from database_utils.models.isp import (
     ProvisioningJobStatus,
     PURPOSE_ACTIVATION,
 )
+from database_utils.utils import provisioning_runs
 from database_utils.utils.provisioning_runs import (
     advance_run,
+    create_or_get_run,
     create_run,
     find_in_flight_run,
+    repair_stranded_runs,
     run_idempotency_key,
 )
+from database_utils.utils.timezone_utils import now_gt
 
 
 
@@ -82,10 +87,35 @@ def test_each_child_gets_shared_plus_its_own_device_frame(db, plant):
     assert first.variables["cpe.serial"] == "ONT-1"
 
 
-def test_each_child_locks_exactly_the_device_it_configures(db, plant):
+def test_children_are_created_without_device_lock(db, plant):
+    """Producers never lock: only the worker's claim writes device_lock_key."""
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
     first = _children(db, run)[0]
-    assert first.device_lock_key == f"{plant.company_id}:item:{plant.cpe.id}"
+    assert first.device_lock_key is None
+    first.status = ProvisioningJobStatus.SUCCEEDED
+    assert advance_run(db, first).device_lock_key is None
+
+
+def test_create_run_on_busy_device_succeeds(db, plant):
+    """The 2026-10-06 incident: a probe (or a parked TR-069 job) holding the
+    device must not make opening or advancing a run fail. SQLite builds
+    uq_provisioning_job_device_lock without its predicate, so a keyed child
+    would collide here too."""
+    pb = plant._playbook("core-connectivity")
+    for item in (plant.cpe, plant.olt):
+        db.add(ProvisioningJob(
+            id=uuid.uuid4(), company_id=plant.company_id, playbook_id=pb.id,
+            inventory_item_id=item.id, variables={},
+            status=ProvisioningJobStatus.PENDING_INFORM,
+            device_lock_key=f"{plant.company_id}:item:{item.id}"))
+    db.flush()
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    first = _children(db, run)[0]
+    assert first.status == ProvisioningJobStatus.QUEUED
+    assert first.device_lock_key is None
+    first.status = ProvisioningJobStatus.SUCCEEDED
+    nxt = advance_run(db, first)
+    assert nxt.inventory_item_id == plant.olt.id and nxt.device_lock_key is None
 
 
 def test_author_variables_are_namespaced_and_cannot_shadow(db, plant):
@@ -154,6 +184,49 @@ def test_a_dry_run_clears_nothing(db, plant):
     assert plant.service.path_changed_at is not None, "a simulation proves nothing"
 
 
+def test_advance_run_noop_on_terminal_run(db, plant):
+    """A late settle (reaped executor, cancel race) never resurrects a run."""
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    first = _children(db, run)[0]
+    run.status = ProvisioningJobStatus.CANCELLED
+    db.flush()
+    first.status = ProvisioningJobStatus.SUCCEEDED
+    assert advance_run(db, first) is None
+    assert run.status == ProvisioningJobStatus.CANCELLED
+    assert len(_children(db, run)) == 1
+
+
+def test_advance_run_noop_while_job_in_flight(db, plant):
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    first = _children(db, run)[0]
+    first.status = ProvisioningJobStatus.RUNNING
+    assert advance_run(db, first) is None
+    assert run.status == ProvisioningJobStatus.QUEUED
+    assert len(_children(db, run)) == 1
+
+
+def test_double_advance_is_noop(db, plant):
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    first = _children(db, run)[0]
+    first.status = ProvisioningJobStatus.SUCCEEDED
+    assert advance_run(db, first).run_position == 1
+    assert advance_run(db, first) is None, "a duplicate settle queues nothing"
+    assert [j.run_position for j in _children(db, run)] == [0, 1]
+    assert run.status == ProvisioningJobStatus.RUNNING
+
+
+def test_stale_child_advance_is_noop(db, plant):
+    """An older child's late terminal write cannot stop a run that moved on."""
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    first = _children(db, run)[0]
+    first.status = ProvisioningJobStatus.SUCCEEDED
+    advance_run(db, first)
+    first.status = ProvisioningJobStatus.FAILED
+    assert advance_run(db, first) is None
+    assert run.status == ProvisioningJobStatus.RUNNING
+    assert run.finished_at is None
+
+
 def test_standalone_jobs_are_untouched(db, plant):
     """ACS reboots and connectivity probes have no run and must not gain one."""
     pb = plant._playbook("core-connectivity")
@@ -194,3 +267,118 @@ def test_child_keys_are_derived_from_the_run_key(db, plant):
 def test_a_run_is_company_scoped(db, plant):
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
     assert find_in_flight_run(db, uuid.uuid4(), run.idempotency_key) is None
+
+
+def test_run_idempotency_key_shapes():
+    sid = uuid.uuid4()
+    assert run_idempotency_key(sid, "ACTIVATION", False) == f"path-provision-{sid}-activation"
+    assert run_idempotency_key(sid, "SUSPENSION", False) == f"path-provision-{sid}-suspension"
+    assert run_idempotency_key(sid, "DEPROVISION", False) == f"deprovision-{sid}"
+    assert run_idempotency_key(sid, "ACTIVATION", True) == f"path-provision-{sid}-activation-dry"
+    assert run_idempotency_key(sid, "DEPROVISION", True) == f"deprovision-{sid}-dry"
+
+
+def test_create_or_get_run_dedupes(db, plant):
+    run, created = create_or_get_run(db, plant.service, PURPOSE_ACTIVATION)
+    assert created is True
+    assert run.idempotency_key == run_idempotency_key(plant.service.id, PURPOSE_ACTIVATION)
+    again, created = create_or_get_run(db, plant.service, PURPOSE_ACTIVATION)
+    assert created is False and again.id == run.id
+    dry, created = create_or_get_run(db, plant.service, PURPOSE_ACTIVATION, dry_run=True)
+    assert created is True and dry.id != run.id
+
+
+def test_create_or_get_run_race_loser_gets_the_winner(db, plant, monkeypatch):
+    """The pre-check misses a concurrent winner; the unique index catches it,
+    only the savepoint rolls back and the session stays usable."""
+    winner = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    real = provisioning_runs.find_in_flight_run
+    calls = []
+
+    def _blind_once(*a, **kw):
+        calls.append(1)
+        return None if len(calls) == 1 else real(*a, **kw)
+
+    monkeypatch.setattr(provisioning_runs, "find_in_flight_run", _blind_once)
+    run, created = create_or_get_run(db, plant.service, PURPOSE_ACTIVATION)
+    assert created is False and run.id == winner.id
+    db.commit()
+    assert db.execute(sa.select(sa.func.count()).select_from(ProvisioningRun)).scalar() == 1
+    assert len(_children(db, winner)) == 1
+
+
+def test_workflow_enqueue_dedupes_on_the_shared_key(db, plant):
+    from database_utils.utils.workflow_engine import _execute_enqueue_provisioning_path
+    cfg = {"client_service_id": str(plant.service.id), "purpose": "ACTIVATION"}
+    first = _execute_enqueue_provisioning_path(db, cfg, plant.company_id)
+    assert first["enqueued"] is True
+    second = _execute_enqueue_provisioning_path(db, cfg, plant.company_id)
+    assert second["deduped"] is True and second["run_id"] == first["run_id"]
+
+
+def _age(db, run):
+    run.updated_at = now_gt() - timedelta(minutes=5)
+    db.flush()
+
+
+def test_repair_stranded_runs(db, plant):
+    from database_utils.models.isp import PURPOSE_SUSPENSION
+    ok = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    bad = create_run(db, plant.service, PURPOSE_SUSPENSION)
+    live = create_run(db, plant.service, PURPOSE_ACTIVATION, dry_run=True)
+    young = create_run(db, plant.service, PURPOSE_SUSPENSION, dry_run=True)
+    # Terminal children whose advance never committed (the stranded state).
+    _children(db, ok)[0].status = ProvisioningJobStatus.SUCCEEDED
+    _children(db, bad)[0].status = ProvisioningJobStatus.FAILED
+    _children(db, young)[0].status = ProvisioningJobStatus.SUCCEEDED
+    for r in (ok, bad, live):
+        _age(db, r)
+
+    assert repair_stranded_runs(db) == 2
+
+    assert ok.status == ProvisioningJobStatus.RUNNING
+    assert [j.run_position for j in _children(db, ok)] == [0, 1]
+    assert bad.status == ProvisioningJobStatus.FAILED and bad.finished_at is not None
+    assert len(_children(db, bad)) == 1
+    assert live.status == ProvisioningJobStatus.QUEUED, "an in-flight child is left alone"
+    assert len(_children(db, live)) == 1
+    assert young.status == ProvisioningJobStatus.QUEUED, "inside the grace window"
+    assert len(_children(db, young)) == 1
+    # Idempotent: the repaired run now has a live child.
+    assert repair_stranded_runs(db) == 0
+
+
+def test_repair_requeues_a_run_with_no_child(db, plant):
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    db.delete(_children(db, run)[0])
+    _age(db, run)
+    assert repair_stranded_runs(db) == 1
+    assert [j.run_position for j in _children(db, run)] == [0]
+
+
+def test_repair_closes_a_run_stranded_past_the_max_age(db, plant):
+    """A run stranded before the backstop existed (e.g. by the 2026-10-06
+    incident) must not wake up weeks later and configure the next device from
+    a stale plan: it is closed FAILED instead of advanced."""
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    _children(db, run)[0].status = ProvisioningJobStatus.SUCCEEDED
+    run.updated_at = now_gt() - timedelta(days=21)
+    db.flush()
+
+    assert repair_stranded_runs(db) == 1
+    assert [j.run_position for j in _children(db, run)] == [0]
+    assert run.status == ProvisioningJobStatus.FAILED and run.finished_at is not None
+
+
+def test_repair_still_advances_a_long_run_whose_child_just_finished(db, plant):
+    """Age is measured from the last child's finish, not the run row: a run row
+    is not touched while its child sits in PENDING_INFORM for hours."""
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    child = _children(db, run)[0]
+    child.status = ProvisioningJobStatus.SUCCEEDED
+    child.finished_at = now_gt() - timedelta(minutes=5)
+    run.updated_at = now_gt() - timedelta(hours=3)
+    db.flush()
+
+    assert repair_stranded_runs(db) == 1
+    assert [j.run_position for j in _children(db, run)] == [0, 1]

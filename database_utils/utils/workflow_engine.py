@@ -1319,7 +1319,7 @@ def _execute_enqueue_provisioning_path(
     from database_utils.utils.provisioning_resolution import (
         ResolutionError, input_key,
     )
-    from database_utils.utils.provisioning_runs import create_run, find_in_flight_run
+    from database_utils.utils.provisioning_runs import create_or_get_run, find_in_flight_run
 
     rid = _uuid_or_none(config.get("client_service_id"))
     if rid is None:
@@ -1363,8 +1363,12 @@ def _execute_enqueue_provisioning_path(
         for key, value in (config.get("variables") or {}).items()
     }
 
+    # create_or_get_run dedupes on the shared run key (the engine's default key
+    # is the same one /provision and the lifecycle hooks use) and inserts in a
+    # SAVEPOINT, so losing a race to a concurrent producer returns the winner's
+    # run instead of poisoning the session — the WorkflowExecution still commits.
     try:
-        run = create_run(
+        run, created = create_or_get_run(
             db, svc, purpose=purpose,
             triggered_by=ProvisioningTrigger.WORKFLOW,
             idempotency_key=idempotency_key,
@@ -1375,6 +1379,9 @@ def _execute_enqueue_provisioning_path(
             f"Provisioning resolution failed for service {rid} (purpose={purpose}): "
             f"{e.code} — {e.detail}. Errors: {json.dumps(e.errors)}"
         )
+    if not created:
+        return {"enqueued": False, "deduped": True,
+                "run_id": str(run.id), "idempotency_key": run.idempotency_key}
 
     return {
         "enqueued": True,

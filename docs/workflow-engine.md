@@ -90,8 +90,15 @@ mode B would enqueue nothing and look like a healthy no-op forever.
 `_execute_enqueue_provisioning_path` opens a **`ProvisioningRun`, not a single
 job** — a path spans several devices and therefore several playbooks. It queues
 the run's first child; the worker advances the rest via
-`provisioning_runs.advance_run`. The step result is
-`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`.
+`provisioning_runs.advance_run`. The run is opened with
+`provisioning_runs.create_or_get_run`: the default key (no `idempotency_key` in
+the config) is the shared `run_idempotency_key`, the same one `/provision` and
+backend-erp's lifecycle hooks use, and the INSERT runs in a SAVEPOINT, so a race
+lost to a concurrent producer returns the winner and the WorkflowExecution still
+commits. The step result is
+`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`, or
+`{"enqueued": false, "deduped": true, "run_id": ..., "idempotency_key": ...}` when
+a run with that key was already in flight.
 
 Order of operations is **skip rule → idempotency dedupe → resolve → open run**.
 The idempotency key never depends on resolution output, so a re-fire while a run
