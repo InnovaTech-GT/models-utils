@@ -987,9 +987,18 @@ it. Downgrade re-grants it.
 
 ### `pt2_unmap_port_labels` (2026-10-06)
 
-No-op, on `vw1_viewer_no_credential_read` (doc 40 §4.2 C8a). The model stops
-mapping `inventory_item.parent_port` / `uplink_port` and
-`uq_inventory_item_parent_port`; the DB keeps all three so a backend still on
-the old models keeps working during the rollout. The revision exists for the CI
-migration guard. The drop is `pt3_drop_port_labels` (C8b), which ships only
-after every backend deployed against the database runs C8a (doc 40 DI-13).
+On `vw1_viewer_no_credential_read` (doc 40 §4.2 C8a). The model stops mapping
+`inventory_item.parent_port` / `uplink_port` and
+`uq_inventory_item_parent_port`. The DB keeps both columns, so a backend still
+on the old models keeps working during the rollout, but the revision drops the
+index (`DROP INDEX IF EXISTS`, `lock_timeout`, post-upgrade assert): a C8a
+backend no longer clears a re-parented item's label, so moving an item whose
+legacy label ("PON 1") a new sibling already carries would otherwise be a
+unique violation (a 500 on attach, reparent, the tecnicos connect step and the
+xlsx re-parent). No data is lost; an old backend still checks label uniqueness
+in code (`set_link_ports`). `downgrade()` recreates the index (IF NOT EXISTS)
+and fails if two siblings came to share a label meanwhile; rolling an old
+backend back does not need it. `tests/pg/test_port_labels_pg.py` covers the
+re-parent and the round trip. The column drop is `pt3_drop_port_labels` (C8b),
+which ships only after every backend deployed against the database runs C8a
+(doc 40 DI-13).
