@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **4.5.2** - `computed` block hardening (ADR-006 integration review F1–F3). F1: `PlaybookDefinition` refuses any `{{computed…}}` token that is not exactly `{{computed.<key>}}` (+ filters) — `{{computed.onu.y}}`/`{{computed[0].x}}` could otherwise be filled by a caller-supplied value. F2: the resolver's `| default:` detection ignores quoted filter arguments (`replace:"|default:","x"` no longer skips the up-front refusal). F3: `evaluate_all` reports malformed stored blocks/entries (non-list, non-dict, non-string key/expr, non-int min/max) as `COMPUTE_SYNTAX`/`COMPUTE_TYPE` instead of raising.
+
 ### Added
 - **4.5.1** - VIEWER no longer reads device credentials (Alembic `vw1_viewer_no_credential_read`, data-only, on `cc1_client_code`). Deletes the global VIEWER role's `device_credentials.read` grant; `rbac_seed.VIEWER_PERMISSION_FILTER` now excludes it so the post-upgrade seed does not re-grant it. Founder decision D2 of the v1.0.0 release plan. `downgrade()` re-grants it.
 - **4.5.0** - client short codes (Alembic `cc1_client_code`, additive). `client.code` VARCHAR(16) NOT NULL: a per-company unique id, case-insensitive (`uq_client_company_code` on `(company_id, upper(code))`), format `^[A-Z0-9-]{1,16}$` (`ck_client_code_format`, Alembic-only). Backfilled from `[LEGACY_ID:<code>]` observation tags where unique per company, otherwise random. New clients get a random 6-char code (`utils/client_code.py`: `generate_client_code`, `normalize_client_code`; DB default `client_code_generate()` for writers that predate the column). `ClientCreate/ClientUpdate.code` (optional override, normalized) and `ClientOut.code`. Playbook variable `client.code`.

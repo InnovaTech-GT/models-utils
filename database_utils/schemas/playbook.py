@@ -222,7 +222,12 @@ class ComputedVar(BaseModel):
 # The head of a {{computed.<key>}} token body, with the renderer's own
 # leading-blank rule ([ \t]*). Matched against each raw step string's
 # TOKEN_SHAPE bodies, never a JSON dump: JSON escapes a tab to `\t`.
-_COMPUTED_HEAD = re.compile(r"[ \t]*computed\.([a-z][a-z0-9_]*)")
+_COMPUTED_HEAD = re.compile(r"[ \t]*computed\b")
+# A well-formed computed token: exactly one segment, then optional blanks and
+# an optional filter chain. `computed.onu.y` / `computed[0].x` are refused —
+# they would never be produced by evaluate_all, so only a caller-supplied
+# value could fill them (security review F1).
+_COMPUTED_TOKEN = re.compile(r"[ \t]*computed\.([a-z][a-z0-9_]*)[ \t]*(?:\|.*)?\Z", re.S)
 
 
 class PlaybookDefinition(BaseModel):
@@ -266,12 +271,19 @@ class PlaybookDefinition(BaseModel):
             earlier.add(name)
         # templates, requests, preconditions, on_failure and rollback
         steps = [s.model_dump() for s in self.steps] + [s.model_dump() for s in self.rollback]
-        used = [
-            head.group(1)
-            for text in playbook_expr.strings(steps)
-            for match in playbook_expr.TOKEN_SHAPE.finditer(text)
-            if (head := _COMPUTED_HEAD.match(match.group("body")))
-        ]
+        used = []
+        for text in playbook_expr.strings(steps):
+            for match in playbook_expr.TOKEN_SHAPE.finditer(text):
+                body = match.group("body")
+                if not _COMPUTED_HEAD.match(body):
+                    continue
+                token = _COMPUTED_TOKEN.match(body)
+                if token is None:
+                    raise ValueError(
+                        f"COMPUTE_NAME: {{{{{body.strip()}}}}} is not a valid computed "
+                        "reference; use {{computed.<key>}}"
+                    )
+                used.append(token.group(1))
         for key in dict.fromkeys(used):
             if f"computed.{key}" not in earlier:
                 raise ValueError(

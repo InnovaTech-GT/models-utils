@@ -485,6 +485,14 @@ _TOKEN_HEAD = re.compile(
 # A regex, not a substring test: `| default:` is the filter, `defaults` in a
 # literal argument is not (doc 40 §5 PS-3).
 _DEFAULT_FILTER = re.compile(r"\|\s*default\s*:")
+# Quoted filter arguments are literals: `replace:"|default:","x"` must not read
+# as a default filter, or the up-front refusal would skip a token that then
+# fails mid-run (security review F2).
+_QUOTED_ARG = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+
+
+def _has_default_filter(body: str) -> bool:
+    return bool(_DEFAULT_FILTER.search(_QUOTED_ARG.sub("", body)))
 
 
 def _step_tokens(definition: Any) -> tuple:
@@ -512,7 +520,7 @@ def _step_tokens(definition: Any) -> tuple:
             body = match.group("body")
             head = _TOKEN_HEAD.match(body)
             if head:
-                tokens.append((head.group(1), bool(_DEFAULT_FILTER.search(body))))
+                tokens.append((head.group(1), _has_default_filter(body)))
             else:
                 malformed.append(match.group(0))
         rest = playbook_expr.TOKEN_SHAPE.sub("", text)
