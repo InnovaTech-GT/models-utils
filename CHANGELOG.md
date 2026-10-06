@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+On `develop` (Railway development, head `pc1_provisioning_claim_token`), not yet
+on `main`: the v1.0.1 cycle.
+
 ### Fixed
 - **5.1.0** - provisioning concurrency (release-v1.0.0/provisioning-concurrency; Alembic `pc1_provisioning_claim_token`, additive, metadata-only, on `pt2_unmap_port_labels`). `provisioning_job.claim_token` UUID NULL: the worker's per-claim fence token. **Producers never lock:** `_queue_child` inserts every run child with `device_lock_key` NULL (`_device_lock_key` deleted) — the lock is written only by the worker claim, so settling child N no longer rolls back when child N+1's device is busy (the 2026-10-06 incident). `advance_run` locks the run row (`FOR UPDATE`, `populate_existing`) and no-ops on a terminal run, on an in-flight job, and when a later child already exists (duplicate/stale advance). New `create_or_get_run(db, svc, ...) -> (run, created)`: dedupes on the run key and inserts in a SAVEPOINT, so a lost race returns the winner instead of an IntegrityError. New `repair_stranded_runs(db, limit=100)`: advances in-flight runs with no in-flight child (quiet > 30 s, `FOR UPDATE SKIP LOCKED`, one savepoint per run); a run whose last child finished over an hour ago (`STRANDED_RUN_MAX_AGE`) is closed FAILED instead (`STRANDED_RUN_EXPIRED`), so the first deploy does not resume runs stranded long before it. **Key change:** `run_idempotency_key` is now the single shared key — `deprovision-{id}` for DEPROVISION, else `path-provision-{id}-{purpose}`, `-dry` suffix (was `path-{id}-{purpose}`); the workflow engine's `ENQUEUE_PROVISIONING` (service path) uses `create_or_get_run` and returns `deduped: true` with the existing `run_id`, so it dedupes against `/provision` and the lifecycle hooks. New `tests/pg/test_provisioning_runs_pg.py`.
 ### Removed
@@ -14,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **4.5.2** - `computed` block hardening (ADR-006 integration review F1–F3). F1: `PlaybookDefinition` refuses any `{{computed…}}` token that is not exactly `{{computed.<key>}}` (+ filters) — `{{computed.onu.y}}`/`{{computed[0].x}}` could otherwise be filled by a caller-supplied value. F2: the resolver's `| default:` detection ignores quoted filter arguments (`replace:"|default:","x"` no longer skips the up-front refusal). F3: `evaluate_all` reports malformed stored blocks/entries (non-list, non-dict, non-string key/expr, non-int min/max) as `COMPUTE_SYNTAX`/`COMPUTE_TYPE` instead of raising.
+
+## [4.5.1] - 2026-10-06 — released to production as Uplink v1.0.0
+
+`main` `67c2af4` (tag `uplink-v1.0.0`), prod Alembic head
+`vw1_viewer_no_credential_read`. Promotes every models-utils change since prod's
+1.33.0 (`iv1_insights_v2`): the 2.0.0 – 4.5.1 entries below, 19 revisions, four
+of them one-way (among them `ld1_legacy_drop` and `sh1_service_history_repair`,
+whose `downgrade()` raises). Rehearsed on a prod snapshot first.
 
 ### Added
 - **4.5.1** - VIEWER no longer reads device credentials (Alembic `vw1_viewer_no_credential_read`, data-only, on `cc1_client_code`). Deletes the global VIEWER role's `device_credentials.read` grant; `rbac_seed.VIEWER_PERMISSION_FILTER` now excludes it so the post-upgrade seed does not re-grant it. Founder decision D2 of the v1.0.0 release plan. `downgrade()` re-grants it.
@@ -41,6 +52,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Workflow engine `CREATE_TASK` assigns only company users holding the TECHNICIAN role (tasks are for technicians; mirrors backend-erp's 422 `ASSIGNEE_NOT_TECHNICIAN`). Rejected ids are skipped and reported in the step result (`skipped_assignee_ids`, `warning`) instead of failing the run; the task is created unassigned (PENDING) if nobody qualifies. No migration.
+
+## [2.4.0] - 2026-09-30
+
+Bug fix `session-revocation`: logging out or disabling a user did not stop
+their access tokens.
+
+### Added
+- `utils/sessions.py`: `check_session` / `is_session_revoked` (indexed
+  `auth_refresh_token.family_id` lookup, 30 s per-process cache; a revoked
+  verdict stays cached until cleared) and `revoke_user_sessions()` (revokes every
+  refresh family of a user or a whole company).
+- Access tokens issued with a refresh pair carry `sid` = the refresh `family_id`.
+
+### Changed
+- `get_current_user` / `require_permission` reject a token whose family has a
+  revoked row with 401 `SESSION_REVOKED`. Legacy tokens without `sid` are
+  accepted until they expire. No migration (`ix_auth_refresh_token_family_id`
+  already exists).
 
 ## [2.3.1] - 2026-09-30
 
@@ -93,6 +122,34 @@ same four statuses instead of tenant-defined board columns.
 - `TaskMove` and `TaskBulkReorder` take `status` instead of `task_state_id`. **Breaking** for backend-erp, which moves to `status` in the same re-pin.
 - Workflow engine CREATE_TASK: `status` is optional and follows the assignment. A legacy `task_state_id` is still accepted and mapped through its kind, and an unresolved `{{param:...}}` is ignored. Position is computed within the status. The step output carries `status`.
 - Seed templates `new-installation` (no board-column parameter) and `installation-provisioning` (fires on `status` changed to `DONE`, no parameter), gated on the `task.status` column.
+
+## [2.0.0] - 2026-09-27
+
+Transport and Capa 3 (canon C9/C17). Four revisions on `iv1_insights_v2`.
+
+### Added
+- Alembic `vpn1_vpn_socks5`: `vpn` transport mode (WireGuard hub + SOCKS5 hop,
+  dials `mgmt_host` directly) with its `vpn_socks5` endpoint; renamed from the
+  lab-validated `tun1_tunnel_socks5` and re-parented onto the real head.
+- Alembic `ac1_acs_tenant_auth` (Capa 3): per-tenant CWMP Inform auth gate
+  `acs_auth_required` (default OFF = ALLOW, CHECK-limited to the ACS row), the
+  ADMIN-only `device_credentials.reveal` permission and the partial UNIQUE
+  `uq_acs_registration_serial_no_oui` (serial WHERE `oui IS NULL`).
+
+### Changed
+- Alembic `na1_kind_outbound`: `network_access.kind` `olt` renamed `outbound`
+  (the tenant's default outbound path for any device); CHECK narrowed to
+  `('acs','outbound')`.
+- **BREAKING** — Alembic `tr1_transport_axis`: the `network_access` table and
+  `NetworkAccess` model are deleted and folded into `ProvisioningSettings`
+  (`dial_target` `device|gateway`, `proxy_kind` `none|socks5`, `proxy_address`,
+  `gateway_host`, read-only `acs_base_url`, `acs_auth_required`,
+  `cwmp_credential_id` / `cwmp_pending_credential_id`, five CHECKs).
+  `DIAL_TARGETS` / `PROXY_KINDS` replace `NETWORK_ACCESS_KINDS` /
+  `NETWORK_ACCESS_MODES` / `NAT_MODES`; `DeviceCredential.network_access_id` is
+  gone. `utils/transport.py`: `resolve_endpoint(db, item, company_id,
+  default_port, settings=None)` and `company_provisioning_settings()`.
+  `downgrade()` runs but is not a true inverse (`mgmt_subnets` unrecoverable).
 
 ## [1.33.0] - 2026-09-18
 

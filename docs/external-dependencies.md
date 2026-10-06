@@ -4,7 +4,7 @@
 
 | Dependency | Version | Used for |
 |---|---|---|
-| `sqlalchemy` | >= 2.0 | ORM models, engine, sessions |
+| `sqlalchemy` | >= 2.0, < 2.1 | ORM models, engine, sessions (the cap is load-bearing: 2.1 switches a bare `postgresql://` URL to psycopg v3, which is not shipped) |
 | `alembic` | >= 1.12 | Schema migrations |
 | `psycopg2-binary` | — | PostgreSQL driver |
 | `pydantic` | >= 2.12.5 | Request/response schemas |
@@ -24,7 +24,7 @@
 |---|---|
 | **PostgreSQL** | The single shared database. Local: compose `postgres` service (`erp`/`erp`/`erp` @ `localhost:5432`). Production: Railway managed Postgres. |
 | **GitHub Actions** | CI (`ci.yml`: migration guard, ruff advisory, pytest) and Railway DB migrations (`migrate.yml`: `alembic upgrade head` against the `development` / `production` environment's `DB_URL` secret on push to `develop` / `main`). |
-| **Railway** | Only indirect — the production DB whose `DB_URL` the migration workflow uses. This library is never deployed as a Railway service. |
+| **Railway** | Only indirect — the `development` and `production` Postgres DBs whose `DB_URL`s the migration workflow uses. This library is never deployed as a Railway service. |
 | **SMTP server** | Transactional email transport (host/credentials supplied by the consuming service; see [email-service.md](email-service.md)). |
 | **Honeycomb** | Indirect — this repo ships OTEL API helpers only; consumers export the traces. |
 

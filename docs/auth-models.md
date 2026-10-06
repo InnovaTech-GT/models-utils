@@ -72,7 +72,9 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   NULL`) gets the `*` wildcard (`PermissionChecker`) or passes
   `get_admin_user` / `require_roles` — name matches on tenant roles never count.
   `web.access` gates the web dashboard (VIEWER + custom roles hold it;
-  COLLECTOR/TECHNICIAN are mobile-only)
+  COLLECTOR/TECHNICIAN are mobile-only). VIEWER holds every `read` permission
+  except `device_credentials.read` (`vw1_viewer_no_credential_read`,
+  `rbac_seed.VIEWER_PERMISSION_FILTER`)
 - **Recurrente gateway columns** (`rb1_recurrente_billing`, additive):
   `Tier.recurrente_product_id`/`recurrente_price_id` (monthly)/
   `recurrente_price_yearly_id` — a NULL price id means the tier is not

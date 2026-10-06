@@ -123,7 +123,7 @@ length differed — which in a real plant it always does.
 
 Two revisions, deliberately split so a reviewer can read "what appears" and "what
 disappears" independently. The chain is
-`lc2_retire_susp_react` → **`ng1_network_graph`** → **`ng2_topology_drop`** (head).
+`lc2_retire_susp_react` → **`ng1_network_graph`** → **`ng2_topology_drop`** (the Cycle-10 head at the time).
 
 ### The tree lives on `inventory_item` (ng1, doc 35 §2.1)
 
