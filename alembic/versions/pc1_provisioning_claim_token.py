@@ -1,7 +1,7 @@
 """provisioning_job.claim_token: the worker's per-claim fence token
 
 Revision ID: pc1_provisioning_claim_token
-Revises: vw1_viewer_no_credential_read
+Revises: pt2_unmap_port_labels
 Create Date: 2026-10-06
 
 Provisioning concurrency fix (release-v1.0.0/provisioning-concurrency). The
@@ -21,7 +21,7 @@ from alembic import op
 from sqlalchemy.sql import text
 
 revision: str = "pc1_provisioning_claim_token"
-down_revision: Union[str, Sequence[str], None] = "vw1_viewer_no_credential_read"
+down_revision: Union[str, Sequence[str], None] = "pt2_unmap_port_labels"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

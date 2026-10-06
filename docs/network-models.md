@@ -163,11 +163,14 @@ Two free-text labels describe the `parent_id` edge itself:
 
 `uq_inventory_item_parent_port` — partial unique index on `(parent_id,
 parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
-Both describe the current link, so backend-erp's reparent and detach clear them;
-attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
-Doc 40 supersedes them with real ports and links (below): once a node is linked
-the API derives both labels from the link's port names, and the columns are
-dropped later (C8b).
+**Unmapped since `pt2_unmap_port_labels` (doc 40 §4.2 C8a, 5.0.0).** Doc 40
+supersedes them with real ports and links (below): the model no longer maps the
+two columns or the index, backend-erp stopped reading and writing them
+(`PATCH /network/nodes/{id}/link` is gone) and derives `NetworkNodeOut.parent_port`
+/ `uplink_port` from the link only. `pt2` drops the index (a C8a backend no
+longer clears a re-parented item's label, so the index would turn a move next
+to a same-labelled sibling into a unique violation); the DB keeps the two
+columns until `pt3_drop_port_labels` (C8b) drops them.
 
 ### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
 
