@@ -879,13 +879,10 @@ class InventoryItem(Base):
     network_attached = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    # Link ports (revision lp1_link_ports). Free-text labels describing the
-    # parent_id edge: `parent_port` is the port ON THE PARENT this item plugs
-    # into ("PON 16", "OUT 3"); `uplink_port` is this item's own port facing
-    # the parent ("GE1"). Both describe the current link, so reparent/detach
-    # clear them.
-    parent_port = Column(String(64), nullable=True)
-    uplink_port = Column(String(64), nullable=True)
+    # The lp1 free-text labels (`parent_port`, `uplink_port` and the
+    # uq_inventory_item_parent_port index) are unmapped since pt2 (doc 40
+    # §4.2 C8a): the ports of an edge are network_link + inventory_item_port.
+    # The DB keeps them until pt3_drop_port_labels (C8b).
     # mi2: where the item physically is (plant: MUFA / NAP geolocated by the
     # technician in the field). WGS84 degrees; precision in metres.
     latitude = Column(Float, nullable=True)
@@ -964,13 +961,6 @@ class InventoryItem(Base):
         Index(
             "ix_inventory_item_company_attached", "company_id",
             postgresql_where=text("network_attached"),
-        ),
-        # lp1: a parent port feeds exactly one child.
-        Index(
-            "uq_inventory_item_parent_port",
-            "parent_id", "parent_port",
-            unique=True,
-            postgresql_where=text("parent_port IS NOT NULL"),
         ),
         # Figma redesign PR 8 (08-inventario §2.3).
         CheckConstraint(

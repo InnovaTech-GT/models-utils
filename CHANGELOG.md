@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING (5.0.0)** - `InventoryItem.parent_port` / `uplink_port` and the `uq_inventory_item_parent_port` Index are no longer mapped (doc 40 §4.2 C8a; Alembic `pt2_unmap_port_labels`, a no-op on `vw1_viewer_no_credential_read`). The lp1 free-text labels are superseded by `network_link` + `inventory_item_port`; the DB keeps the columns until C8b (`pt3_drop_port_labels`), which must not migrate a database before every backend deployed on it runs C8a. Consumers that read or write the attributes must drop them first (backend-erp: `PATCH /network/nodes/{id}/link` and the legacy-label holder logic).
+
 ### Security
 - **4.5.2** - `computed` block hardening (ADR-006 integration review F1–F3). F1: `PlaybookDefinition` refuses any `{{computed…}}` token that is not exactly `{{computed.<key>}}` (+ filters) — `{{computed.onu.y}}`/`{{computed[0].x}}` could otherwise be filled by a caller-supplied value. F2: the resolver's `| default:` detection ignores quoted filter arguments (`replace:"|default:","x"` no longer skips the up-front refusal). F3: `evaluate_all` reports malformed stored blocks/entries (non-list, non-dict, non-string key/expr, non-int min/max) as `COMPUTE_SYNTAX`/`COMPUTE_TYPE` instead of raising.
 
