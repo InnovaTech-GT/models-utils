@@ -71,7 +71,6 @@ class ServicePlanBase(BaseModel):
     installation_price_cents: Optional[int] = None
     is_active: bool = True
     provisioning_params: Optional[List[ProvisioningParam]] = None
-    product_id: Optional[UUID] = None
     # Cycle 2 D1/D2: what this plan bills for (drives Order.order_type
     # derivation). Absorbed-from-Product: stock (NULL = not stock-tracked).
     kind: CatalogKind = CatalogKind.SERVICE
@@ -100,7 +99,6 @@ class ServicePlanUpdate(BaseModel):
     installation_price_cents: Optional[int] = None
     is_active: Optional[bool] = None
     provisioning_params: Optional[List[ProvisioningParam]] = None
-    product_id: Optional[UUID] = None
     kind: Optional[CatalogKind] = None
     stock: Optional[int] = None
 

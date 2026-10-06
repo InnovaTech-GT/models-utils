@@ -42,18 +42,6 @@ PERMISSIONS_DATA = [
         {"name": "payments.read", "resource": "payments", "action": "read", "description": "View order payment ledgers"},
         {"name": "payments.refund", "resource": "payments", "action": "refund", "description": "Refund recorded payments (ADMIN only)"},
 
-        # Product permissions
-        {"name": "products.create", "resource": "products", "action": "create", "description": "Create new products"},
-        {"name": "products.read", "resource": "products", "action": "read", "description": "View product information"},
-        {"name": "products.update", "resource": "products", "action": "update", "description": "Update product information"},
-        {"name": "products.delete", "resource": "products", "action": "delete", "description": "Delete products"},
-
-        # Recurring order permissions
-        {"name": "recurring_orders.create", "resource": "recurring_orders", "action": "create", "description": "Create recurring orders"},
-        {"name": "recurring_orders.read", "resource": "recurring_orders", "action": "read", "description": "View recurring orders"},
-        {"name": "recurring_orders.update", "resource": "recurring_orders", "action": "update", "description": "Update recurring orders"},
-        {"name": "recurring_orders.delete", "resource": "recurring_orders", "action": "delete", "description": "Delete recurring orders"},
-
         # User management permissions
         {"name": "users.create", "resource": "users", "action": "create", "description": "Create new users"},
         {"name": "users.read", "resource": "users", "action": "read", "description": "View user information"},
@@ -85,12 +73,6 @@ PERMISSIONS_DATA = [
         {"name": "tasks.update", "resource": "tasks", "action": "update", "description": "Update task information"},
         {"name": "tasks.delete", "resource": "tasks", "action": "delete", "description": "Delete tasks"},
 
-        # Task state permissions
-        {"name": "task_states.create", "resource": "task_states", "action": "create", "description": "Create task states/columns"},
-        {"name": "task_states.read", "resource": "task_states", "action": "read", "description": "View task states/columns"},
-        {"name": "task_states.update", "resource": "task_states", "action": "update", "description": "Update task states/columns"},
-        {"name": "task_states.delete", "resource": "task_states", "action": "delete", "description": "Delete task states/columns"},
-
         # Integration permissions
         {"name": "integrations.create", "resource": "integrations", "action": "create", "description": "Create external API integrations"},
         {"name": "integrations.read", "resource": "integrations", "action": "read", "description": "View external API integrations"},
@@ -100,27 +82,33 @@ PERMISSIONS_DATA = [
         # Mobile app access (cfg3_matrix_permissions). These are the Figma
         # permission-matrix rows "App de técnico" / "App de cobrador" and are
         # enforced server-side in backend-erp on top of the existing
-        # tasks.*/payments.* checks. Granted to TECHNICIAN / BILLING via
-        # isp_seed.ISP_ROLES; ADMIN and MANAGER converge automatically.
+        # tasks.*/payments.* checks. Granted to TECHNICIAN / COLLECTOR via
+        # isp_seed.ISP_ROLES; ADMIN converges automatically.
         {"name": "mobile.technician", "resource": "mobile", "action": "technician", "description": "Acceso a la App de técnico"},
         {"name": "mobile.collector", "resource": "mobile", "action": "collector", "description": "Acceso a la App de cobrador"},
 
         # Activity log (cfg3_matrix_permissions). Replaces the ADMIN role gate
-        # on auth-erp's GET /audit-logs. Deliberately NOT in
-        # MANAGER_EXCLUDED_PERMISSIONS: MANAGER sees the activity log (Q3).
+        # on auth-erp's GET /audit-logs.
         {"name": "audit_logs.read", "resource": "audit_logs", "action": "read", "description": "Ver el registro de actividad"},
+
+        # Web dashboard access (rr1_four_builtin_roles). Enforced by
+        # frontend-erp's middleware; mobile-only roles (COLLECTOR,
+        # TECHNICIAN) don't hold it. Pinned against rr1.WEB_ACCESS.
+        {"name": "web.access", "resource": "web", "action": "access", "description": "Acceso a la aplicación web"},
+
+        # Cash-box review (cr1_cash_review): admins approve/reject the boxes
+        # collectors submit. ADMIN converges via the `*` step; no other
+        # built-in role holds it (tenants can add it to custom roles).
+        {"name": "cash_sessions.review", "resource": "cash_sessions", "action": "review", "description": "Revisar, aprobar o rechazar cajas de cobradores"},
 ]
 
-# Permission names withheld from the MANAGER auto-grants (initial seed AND
-# _ensure_convergent_rbac step 3). Includes seed-owned ADMIN-only keys from
-# other seed modules (isp_seed.ADMIN_ONLY_PERMISSIONS must be a subset —
-# pinned by tests/test_attested_adoption.py; seeds cannot import each other).
-MANAGER_EXCLUDED_PERMISSIONS = (
-    "orders.revert_payment",
-    "payments.refund",
-    "client_services.adopt",  # ba1: brownfield adoption is ADMIN-only
+# The four built-in (global) roles. ADMIN/VIEWER are created here;
+# COLLECTOR/TECHNICIAN by isp_seed.ISP_ROLES. Tenants add custom roles on top.
+# device_credentials.read is excluded (vw1_viewer_no_credential_read): read-only
+# users must not see device credentials.
+VIEWER_PERMISSION_FILTER = (
+    "(p.action = 'read' AND p.name <> 'device_credentials.read') OR p.name = 'web.access'"
 )
-_MANAGER_EXCLUDED_SQL = ", ".join(f"'{n}'" for n in MANAGER_EXCLUDED_PERMISSIONS)
 
 
 def seed_rbac_data(connection: Connection) -> None:
@@ -189,9 +177,7 @@ def seed_rbac_data(connection: Connection) -> None:
         # 2. Create default roles
         roles_data = [
             {"name": "ADMIN", "description": "Administrator with all permissions", "is_system": True},
-            {"name": "MANAGER", "description": "Manager with most permissions except system settings", "is_system": True},
-            {"name": "SALES", "description": "Sales representative with client and order permissions", "is_system": True},
-            {"name": "USER", "description": "Basic user with read-only permissions", "is_system": True},
+            {"name": "VIEWER", "description": "Read access to everything on the web app", "is_system": True},
         ]
 
         role_ids = {}
@@ -234,91 +220,8 @@ def seed_rbac_data(connection: Connection) -> None:
 
         logger.info(f"✓ ADMIN role assigned {len(admin_permissions)} permissions")
 
-        # MANAGER: All permissions except roles, permissions, company settings,
-        # and the ADMIN-only keys in MANAGER_EXCLUDED_PERMISSIONS (payment
-        # reversal + brownfield adoption — mirrors the migration grant-copy).
-        manager_permissions = connection.execute(
-            text(
-                "SELECT id FROM permission WHERE resource NOT IN ('roles', 'permissions', 'company') "
-                f"AND name NOT IN ({_MANAGER_EXCLUDED_SQL})"
-            )
-        ).fetchall()
-
-        for perm_row in manager_permissions:
-            connection.execute(
-                text(
-                    "INSERT INTO role_permission (role_id, permission_id) "
-                    "VALUES (:role_id, :permission_id)"
-                ),
-                {
-                    'role_id': role_ids['MANAGER'],
-                    'permission_id': perm_row[0]
-                }
-            )
-
-        logger.info(f"✓ MANAGER role assigned {len(manager_permissions)} permissions")
-
-        # SALES: CRUD on clients, orders, recurring orders, read on products and dashboard
-        sales_permission_names = [
-            'clients.create', 'clients.read', 'clients.update',
-            'orders.create', 'orders.read', 'orders.update',
-            'payments.record', 'payments.read',
-            'recurring_orders.create', 'recurring_orders.read', 'recurring_orders.update',
-            'products.read',
-            'dashboard.read',
-            'tasks.create', 'tasks.read', 'tasks.update', 'tasks.delete',
-            'task_states.read',
-        ]
-
-        sales_count = 0
-        for perm_name in sales_permission_names:
-            perm_row = connection.execute(
-                text("SELECT id FROM permission WHERE name = :name"),
-                {'name': perm_name}
-            ).fetchone()
-
-            if perm_row:
-                connection.execute(
-                    text(
-                        "INSERT INTO role_permission (role_id, permission_id) "
-                        "VALUES (:role_id, :permission_id)"
-                    ),
-                    {
-                        'role_id': role_ids['SALES'],
-                        'permission_id': perm_row[0]
-                    }
-                )
-                sales_count += 1
-
-        logger.info(f"✓ SALES role assigned {sales_count} permissions")
-
-        # USER: Read-only permissions
-        user_permission_names = [
-            'clients.read', 'orders.read', 'payments.read', 'products.read', 'recurring_orders.read', 'dashboard.read',
-            'tasks.read', 'task_states.read',
-        ]
-
-        user_count = 0
-        for perm_name in user_permission_names:
-            perm_row = connection.execute(
-                text("SELECT id FROM permission WHERE name = :name"),
-                {'name': perm_name}
-            ).fetchone()
-
-            if perm_row:
-                connection.execute(
-                    text(
-                        "INSERT INTO role_permission (role_id, permission_id) "
-                        "VALUES (:role_id, :permission_id)"
-                    ),
-                    {
-                        'role_id': role_ids['USER'],
-                        'permission_id': perm_row[0]
-                    }
-                )
-                user_count += 1
-
-        logger.info(f"✓ USER role assigned {user_count} permissions")
+        # VIEWER's grants (every read permission + web.access) are applied by
+        # _ensure_convergent_rbac below, so future read permissions flow too.
 
         # 4. Migrate existing users to new role system (if any exist)
         # Skip legacy admin column migration - this is no longer needed with UUID migration
@@ -365,15 +268,13 @@ def _ensure_convergent_rbac(connection: Connection) -> None:
         )
     )
 
-    # 3. Global system MANAGER holds everything except role/permission/company
-    #    administration and the ADMIN-only MANAGER_EXCLUDED_PERMISSIONS keys.
+    # 3. Global system VIEWER holds every read permission + web.access.
     connection.execute(
         text(
             "INSERT INTO role_permission (role_id, permission_id) "
             "SELECT r.id, p.id FROM role r CROSS JOIN permission p "
-            "WHERE r.name = 'MANAGER' AND r.company_id IS NULL "
-            "AND p.resource NOT IN ('roles', 'permissions', 'company') "
-            f"AND p.name NOT IN ({_MANAGER_EXCLUDED_SQL}) "
+            "WHERE r.name = 'VIEWER' AND r.company_id IS NULL "
+            f"AND ({VIEWER_PERMISSION_FILTER}) "
             "ON CONFLICT DO NOTHING"
         )
     )
@@ -382,16 +283,9 @@ def _ensure_convergent_rbac(connection: Connection) -> None:
     #    c1b's copy rule, but convergent: roles created AFTER c1b — e.g. by
     #    isp_seed — pick these up on the next migrate instead of never).
     #
-    #    Cycle 2 (doc 18 amendment 7 / entity-merge verifier fix): the same
-    #    mechanism protects every prod role holding a legacy products.*/
-    #    recurring_orders.* grant from losing UI/API access once the
-    #    products/recurring-orders pages retire in favor of the merged
-    #    service_plans/client_services pages — every role that could act on
-    #    the legacy resource keeps the equivalent ability on its successor.
-    #    recurring_orders.generate has no legacy permission row today (the
-    #    join below is then simply a no-op) — kept so a future backend-erp
-    #    revision that adds it converges automatically with zero further
-    #    models-utils changes.
+    #    The legacy products.*/recurring_orders.* -> service_plans.*/
+    #    client_services.* copy pairs were applied once by ld1_legacy_drop
+    #    (which then deleted the source permissions) and are gone from here.
     #
     #    client_services.adopt deliberately has NO legacy source (doc 30):
     #    adoption is a new ADMIN-only capability, never inherited from
@@ -400,19 +294,6 @@ def _ensure_convergent_rbac(connection: Connection) -> None:
         ("orders.update", "payments.record"),
         ("orders.read", "payments.read"),
         ("orders.revert_payment", "payments.refund"),
-        ("products.create", "service_plans.create"),
-        ("products.read", "service_plans.read"),
-        ("products.update", "service_plans.update"),
-        ("products.delete", "service_plans.delete"),
-        ("recurring_orders.create", "client_services.create"),
-        ("recurring_orders.read", "client_services.read"),
-        ("recurring_orders.update", "client_services.update"),
-        # Closest legacy equivalents: RecurringOrder had no dedicated
-        # suspend/reactivate permissions, so update is the source for both.
-        ("recurring_orders.update", "client_services.suspend"),
-        ("recurring_orders.update", "client_services.reactivate"),
-        ("recurring_orders.delete", "client_services.delete"),
-        ("recurring_orders.generate", "client_services.generate"),
     ):
         connection.execute(
             text(

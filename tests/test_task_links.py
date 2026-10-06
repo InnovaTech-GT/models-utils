@@ -7,9 +7,6 @@ passes every other test in this suite and lands as CI drift instead.
 
 Three things here are load-bearing beyond "the column exists":
 
-  - `task_state.kind` is a CHECK-constrained STRING, not a PG enum (master
-    plan §2.1 explicitly dropped two competing enum designs). The CHECK set,
-    the model constant and the Pydantic Literal must be the same four values.
   - `job_kind` stays NULLABLE on the model. "Required" is an API-boundary
     rule only; making the column NOT NULL would break every legacy row.
   - The workflow engine's CREATE_TASK fills the new FKs from the polymorphic
@@ -24,16 +21,9 @@ from sqlalchemy import CheckConstraint
 
 from database_utils.models.crm import (
     TASK_ASSIGNEE_ROLES,
-    TASK_STATE_KINDS,
     Task,
     TaskJobKind,
-    TaskState,
     task_assignee,
-)
-from database_utils.schemas.task_state import (
-    TaskStateCreate,
-    TaskStateOut,
-    TaskStateUpdate,
 )
 
 _HERE = os.path.dirname(__file__)
@@ -54,12 +44,16 @@ _NEW_TASK_COLUMNS = (
 # NOT gain client edits or order creation.
 COLLECTOR_GRANTS = {
     "tasks.read",
-    "task_states.read",
     "clients.read",
     "payments.read",
     "payments.record",
     "orders.read",
     "client_services.read",
+    # mi2_mobile_field_ops: what the cobros app needs (still no client edits).
+    "mobile.collector",
+    "tasks.create",
+    "service_plans.read",
+    "inventory_items.read",
 }
 
 
@@ -110,47 +104,29 @@ def test_revision_and_model_agree_on_the_columns():
     by_table = {}
     for table, column in tk2._NEW_COLUMNS:
         by_table.setdefault(table, []).append(column)
-    assert by_table["task_state"] == ["kind"]
     assert by_table["task"] == list(_NEW_TASK_COLUMNS)
     assert by_table["task_assignee"] == ["role"]
     for column in _NEW_TASK_COLUMNS:
         assert column in Task.__table__.columns
-    assert "kind" in TaskState.__table__.columns
     assert "role" in task_assignee.columns
 
 
 def test_revision_and_model_agree_on_the_indexes():
     tk2 = _tk2()
     model_indexes = {i.name for i in Task.__table__.indexes}
+    # ix_task_company_status belongs to ts1_task_status (tests/test_task_status.py).
     assert set(tk2._NEW_INDEXES) == model_indexes - {
-        "ix_task_company_scheduled_date", "ix_task_company_id"
+        "ix_task_company_scheduled_date", "ix_task_company_id", "ix_task_company_status"
     }
 
 
-def test_revision_and_model_agree_on_the_kind_set():
-    assert _tk2().TASK_STATE_KINDS == TASK_STATE_KINDS
 
 
-# --- task_state.kind ---
-
-def test_kind_is_a_checked_string_not_an_enum():
-    column = TaskState.__table__.columns["kind"]
-    # An enum here would make every new state semantic a migration; the plan
-    # picked a CHECK precisely so the set stays a cheap ALTER.
-    assert column.type.python_type is str
-    assert column.nullable is False
-    assert column.server_default.arg == "IN_PROGRESS"
 
 
-def test_kind_check_pins_exactly_the_four_kinds():
-    check = next(
-        c for c in TaskState.__table__.constraints
-        if isinstance(c, CheckConstraint) and c.name == "ck_task_state_kind"
-    )
-    text = str(check.sqltext)
-    for kind in TASK_STATE_KINDS:
-        assert f"'{kind}'" in text
-    assert text.count("'") == 2 * len(TASK_STATE_KINDS)
+
+
+
 
 
 def test_assignee_role_check_allows_null():
@@ -210,18 +186,10 @@ def test_both_inventory_relationships_are_disambiguated():
         assert len(rel._user_defined_foreign_keys) == 1
 
 
-# --- schemas ---
-
-def test_task_state_schemas_carry_kind():
-    assert TaskStateCreate(name="x").kind == "IN_PROGRESS"
-    assert "kind" in TaskStateOut.model_fields
-    # PATCH-shaped: absent means untouched, so it must be optional.
-    assert not TaskStateUpdate.model_fields["kind"].is_required()
 
 
-def test_unknown_kind_is_rejected_at_the_schema_not_the_check():
-    with pytest.raises(Exception):
-        TaskStateCreate(name="x", kind="TODO")
+
+
 
 
 # --- seed invariant ---
@@ -232,15 +200,7 @@ def test_collector_role_is_seeded_with_exactly_its_grants():
     assert set(roles["COLLECTOR"]["permissions"]) == COLLECTOR_GRANTS
 
 
-def test_install_template_stamps_job_kind():
-    # Without it every automation-created installation is an untyped row in
-    # the redesigned table (master plan §9.2).
-    templates = {t["key"]: t for t in _isp_seed().WORKFLOW_TEMPLATES}
-    step = next(
-        s for s in templates["new-installation"]["definition"]["steps"]
-        if s["action_type"] == "CREATE_TASK"
-    )
-    assert step["action_config"]["job_kind"] == TaskJobKind.INSTALL.value
+
 
 
 # --- workflow engine: automation-created tasks must not be blank ---
@@ -248,17 +208,11 @@ def test_install_template_stamps_job_kind():
 def _create_task(db, plant, **config):
     import uuid as _uuid
 
-    from database_utils.models.crm import TaskState
     from database_utils.utils.workflow_engine import _execute_create_task
 
-    state = db.query(TaskState).filter(TaskState.company_id == plant.company_id).first()
-    if state is None:
-        state = TaskState(id=_uuid.uuid4(), company_id=plant.company_id, name="Nuevas")
-        db.add(state)
-        db.flush()
     result = _execute_create_task(
         db,
-        {"name": "auto", "task_state_id": str(state.id), **config},
+        {"name": "auto", **config},
         {},
         plant.company_id,
     )

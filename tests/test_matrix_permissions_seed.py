@@ -25,6 +25,13 @@ MATRIX_PERMISSIONS = ("mobile.technician", "mobile.collector", "audit_logs.read"
 # role -> the matrix permission it must hold via its static ISP_ROLES list.
 EXPECTED_GRANTS = {
     "TECHNICIAN": "mobile.technician",
+    "COLLECTOR": "mobile.collector",
+}
+
+# cfg3's own GRANTS — an immutable revision, so it still names BILLING
+# (removed by rr1_four_builtin_roles, its holders moved to COLLECTOR).
+CFG3_HISTORICAL_GRANTS = {
+    "TECHNICIAN": "mobile.technician",
     "BILLING": "mobile.collector",
 }
 
@@ -88,11 +95,11 @@ def test_isp_role_holds_its_matrix_permission(role_name, permission):
 
 def test_revision_grants_match_the_seed_lists():
     cfg3 = _cfg3()
-    assert dict(cfg3.GRANTS) == EXPECTED_GRANTS
+    assert dict(cfg3.GRANTS) == CFG3_HISTORICAL_GRANTS
 
 
 def test_matrix_permissions_granted_to_no_other_isp_role():
-    # NOC/WAREHOUSE/SUPPORT have no mobile app; a stray grant means someone
+    # Each mobile role holds exactly its own app; a stray grant means someone
     # pasted the line into the wrong list.
     isp = _isp_seed()
     for role_name, spec in isp.ISP_ROLES.items():
@@ -101,26 +108,10 @@ def test_matrix_permissions_granted_to_no_other_isp_role():
         assert stray == expected, f"{role_name} holds unexpected matrix permissions: {stray}"
 
 
-# --- half 3: ADMIN/MANAGER converge, so they must NOT be excluded (Q3) ---
+# --- half 3: ADMIN converges via the wildcard; rows stay well-formed ---
 
 @pytest.mark.parametrize("name", MATRIX_PERMISSIONS)
-def test_manager_is_not_excluded_from_matrix_permissions(name):
-    """Q3 resolved: MANAGER keeps audit_logs.read (and both mobile.* rows).
-
-    Convergence grants MANAGER every permission whose resource is not
-    roles/permissions/company and whose name is not excluded — 'mobile' and
-    'audit_logs' are neither, so the ONLY way to lose this is someone adding
-    the name to one of the two exclusion tuples.
-    """
-    rbac = _rbac_seed()
-    isp = _isp_seed()
-    assert name not in rbac.MANAGER_EXCLUDED_PERMISSIONS
-    assert name not in isp.ADMIN_ONLY_PERMISSIONS
-
-
-@pytest.mark.parametrize("name", MATRIX_PERMISSIONS)
-def test_matrix_permission_resource_is_manager_visible(name):
+def test_matrix_permission_row_is_well_formed(name):
     rbac = _rbac_seed()
     row = next(p for p in rbac.PERMISSIONS_DATA if p["name"] == name)
-    assert row["resource"] not in ("roles", "permissions", "company")
     assert row["name"] == f"{row['resource']}.{row['action']}"

@@ -1,11 +1,13 @@
 # schemas/client.py
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 from typing import Literal, Optional, List
 from datetime import datetime
 from uuid import UUID
 
 from database_utils.models.crm import RecurrenceEnum, ServiceAvailability
 from database_utils.models.isp import ClientServiceStatus, ServicePlanType
+
+from database_utils.utils.client_code import normalize_client_code
 
 from .user import UserOut
 
@@ -93,17 +95,32 @@ class ClientBase(BaseModel):
     longitude: Optional[float] = None
     gps_precision_m: Optional[float] = None
     service_availability: ServiceAvailability = ServiceAvailability.UNKNOWN
+    # pd1: usual payment day of month (1..31), optional.
+    payment_day: Optional[int] = Field(default=None, ge=1, le=31)
+
+
+def _code(value: Optional[str]) -> Optional[str]:
+    # cc1: trimmed + uppercased; None/blank = "generate one" (create) or
+    # "leave unchanged" (update).
+    if value is None or not str(value).strip():
+        return None
+    return normalize_client_code(value)
 
 
 class ClientCreate(ClientBase):
     company_id: Optional[UUID] = None  # Optional - will be set from authenticated user context
+    # cc1: omit to get a random 6-char code; send one to override.
+    code: Optional[str] = None
     advisor_id: Optional[UUID] = None
     assigned_technician_id: Optional[UUID] = None
     custom_field_values: Optional[List["ClientCustomFieldValueInput"]] = None
 
+    _normalize_code = field_validator("code")(_code)
+
 
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
+    code: Optional[str] = None
     tax_id: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
@@ -118,11 +135,18 @@ class ClientUpdate(BaseModel):
     longitude: Optional[float] = None
     gps_precision_m: Optional[float] = None
     service_availability: Optional[ServiceAvailability] = None
+    payment_day: Optional[int] = Field(default=None, ge=1, le=31)
     custom_field_values: Optional[List["ClientCustomFieldValueInput"]] = None
+
+    _normalize_code = field_validator("code")(_code)
 
 
 class ClientOut(ClientBase):
     id: UUID
+    # cc1: short per-company id (legacy or random). Always set on a stored
+    # client (NOT NULL in the DB); Optional only so dict-built rollups and
+    # older payloads still validate.
+    code: Optional[str] = None
     company_id: UUID
     created_at: datetime
     # cl1: NULL = active (Actuales tab); set = Histórico + "Fecha de baja".

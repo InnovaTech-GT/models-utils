@@ -17,7 +17,6 @@ invoked by backend-erp after entity mutations.
 
 | Model | Purpose |
 |-------|---------|
-| `WorkflowTemplate` (workflow_template) | **Globally seeded blueprint** (from `alembic/seeds/isp_seed.py`) that tenants install as concrete workflows |
 | `Workflow` (workflow) | Tenant automation definition |
 | `WorkflowTrigger` (workflow_trigger) | Event trigger — `TriggerEventType` CREATED/UPDATED/DELETED + `field_conditions` JSON |
 | `WorkflowStep` (workflow_step) | Action node — `StepActionType`: `UPDATE_FIELD`, `CREATE_ENTITY`, `HTTP_REQUEST`, `ENQUEUE_PROVISIONING`, `CREATE_ORDER`, `CREATE_TASK` (the last two added by the **irreversible** `c1e_install_actions` ALTER TYPE migration) + `action_config` JSON |
@@ -39,15 +38,11 @@ invoked by backend-erp after entity mutations.
   job per configured device — resolved by `utils/provisioning_resolution.py`
   walking the service's network path. The retired `use_topology` key raises;
   `ng2_topology_drop` rewrites it in installed `workflow_step.action_config` and
-  `workflow_template.definition` rows
-- **Seeds**: `alembic/seeds/isp_seed.py` seeds purpose-based workflow-template
-  blueprints. The `new-installation` blueprint is at **v4** (ships with the
-  no-op `tk1_new_installation_v4` revision): its installation-fee param is type
-  `service_plan` (key `installation_fee_plan_id`) and the `CREATE_ORDER` item
-  uses `service_plan_id` — v3's required `product` param pointed at the retired
-  legacy Product catalog and blocked fresh tenants; installed v3 copies keep
-  running (`product_id` deprecated-but-honored during the rollback window)
-- **Workflow schemas** (`schemas/workflow.py`, `schemas/workflow_template.py`)
+  rows (the `workflow_template` table itself was dropped by `ld1_legacy_drop`)
+- **Seeds**: the workflow-template blueprint catalog was removed by
+  `ld1_legacy_drop`; `isp_seed.py` no longer seeds workflows. Installed copies
+  are independent rows and keep running
+- **Workflow schemas** (`schemas/workflow.py`; `schemas/workflow_template.py` deleted)
 
 ## Key Implementation Details
 

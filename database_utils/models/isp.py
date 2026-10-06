@@ -16,7 +16,8 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
 """
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text,
-    Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary
+    Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
+    SmallInteger, ForeignKeyConstraint,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
 
@@ -212,6 +213,10 @@ class EquipmentEventType(str, enum.Enum):
     REPAIRED = "REPAIRED"
     RETIRED = "RETIRED"
     MAINTENANCE = "MAINTENANCE"
+    # mi1: a lot (non-serialized) was used up on a task's materials.
+    CONSUMED = "CONSUMED"
+    # mi1: a reservation was undone — back to IN_STOCK, custody kept.
+    RELEASED = "RELEASED"
 
 
 class ProvisioningJobStatus(str, enum.Enum):
@@ -251,14 +256,21 @@ CREDENTIAL_KINDS = (
     "HTTP_BASIC", "HTTP_BEARER", "WIREGUARD", "AGENT",
 )
 
-# canon C9: network-access transport shape.
-NETWORK_ACCESS_KINDS = ("acs", "olt")
-NETWORK_ACCESS_MODES = ("direct", "vpn", "tunnel", "nat_zt", "nat_public")
-# spec N2: the two variants of gateway port-mapping. Both resolve the dial
-# target to (network_access.gateway_host, inventory_item.nat_port); they differ
-# only in how the gateway itself is reached — nat_zt through the fleet Pylon
-# SOCKS5 proxy, nat_public over plain egress.
-NAT_MODES = ("nat_zt", "nat_public")
+# tr1_transport_axis: the transport is TWO orthogonal per-tenant choices, not one
+# cross-product enum. `dial_target` answers "whose address do we dial", and
+# `proxy_kind` answers "is there a hop, and of what sort". Both live on
+# ProvisioningSettings (the tenant singleton, canon C6) — the old multi-row
+# `network_access` table and its kind/mode value sets are gone.
+#
+#   device  + none    devices have public IPs          (was mode 'direct')
+#   gateway + none    NAT + port map to a public IP    (was mode 'nat_public')
+#   gateway + socks5  NAT + port map via ZeroTier      (was mode 'nat_zt')
+#   device  + socks5  hub + managed routes: WireGuard, ZeroTier or any other
+#                                                      (was mode 'vpn')
+#
+# canon C10's edge agent becomes proxy_kind='agent', not a new mode.
+DIAL_TARGETS = ("device", "gateway")
+PROXY_KINDS = ("none", "socks5")
 
 # canon C13: derived acs_device_registration ONLINE-vs-STALE threshold (a
 # registration that has not informed within this window reads STALE).
@@ -267,8 +279,6 @@ ACS_STALE_AFTER_SECONDS = 900
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
 _CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
-_NETWORK_ACCESS_KIND_CHECK = "kind IN ('acs','olt')"
-_NETWORK_ACCESS_MODE_CHECK = "mode IN ('direct','vpn','tunnel','nat_zt','nat_public')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
@@ -276,18 +286,33 @@ _MGMT_PORT_CHECK = "mgmt_port IS NULL OR (mgmt_port BETWEEN 1 AND 65535)"
 # Figma redesign PR 8 (08-inventario §2.3): a lot row is at least one unit.
 # Zero is not "out of stock", it is a row that should have been deleted.
 _INVENTORY_QUANTITY_CHECK = "quantity >= 1"
-# whole-branch review I3: "gateway_host required for NAT mode" was previously
-# only enforced by NetworkAccessCreate's Pydantic validator — bypassable by
-# an UPDATE (direct -> nat_public on an existing row) or any future caller
-# that skips the schema. This CHECK is the layer that can't be bypassed.
-# Shared byte-for-byte with the hand-written nat2 migration.
-_NETWORK_ACCESS_NAT_GATEWAY_CHECK = (
-    "mode NOT IN ('nat_zt','nat_public') OR gateway_host IS NOT NULL"
+# tr1_transport_axis: the transport axis on provisioning_settings. Shared
+# byte-for-byte with the hand-written tr1 migration; tests/test_transport_axis.py
+# pins them equal.
+#
+# proxy_kind is LOAD-BEARING and deliberately NOT collapsed into
+# "proxy_address IS NOT NULL": dial_target='device' with no proxy is the
+# legitimate public-IP case, so without an explicit intent value the resolver
+# could not tell "no proxy needed" from "a hub is intended but its address is
+# missing" — and the second would silently dial an RFC1918 address from the
+# Railway container. That is the canon R23 fail-closed guarantee.
+_PROVISIONING_DIAL_TARGET_CHECK = "dial_target IN ('device','gateway')"
+_PROVISIONING_PROXY_KIND_CHECK = "proxy_kind IN ('none','socks5')"
+_PROVISIONING_PROXY_ADDRESS_CHECK = (
+    "proxy_kind <> 'socks5' OR proxy_address IS NOT NULL"
 )
-# spec 2026-08-17 §3.1: mirrors _NETWORK_ACCESS_NAT_GATEWAY_CHECK, narrowed to
-# nat_zt only — nat_public has no proxy hop and must not require one.
-_NETWORK_ACCESS_PYLON_CHECK = "mode != 'nat_zt' OR pylon_socks5 IS NOT NULL"
-
+_PROVISIONING_GATEWAY_HOST_CHECK = (
+    "dial_target <> 'gateway' OR gateway_host IS NOT NULL"
+)
+# The accept-both rotation window is two FKs, so "the pending secret is not the
+# current one" is expressible. "No pending without a current" is NOT: both FKs
+# are ON DELETE SET NULL, so deleting the current credential mid-window would
+# violate such a CHECK through a referential action and turn an ordinary DELETE
+# into a 500. That half is a 409 in backend-erp's router.
+_PROVISIONING_CWMP_PAIR_CHECK = (
+    "cwmp_pending_credential_id IS NULL "
+    "OR cwmp_credential_id <> cwmp_pending_credential_id"
+)
 
 # ---------------------------------------------------------------------------
 # Cycle 7 (core network configuration, doc 25 §2, revision nc2a_core_config).
@@ -328,6 +353,18 @@ _DEVICE_CATEGORY_TIER_CHECK = (
     "tier IN ('CORE','EDGE','CONSUMABLE','TOOL','OTHER')"
 )
 _CLI_PROTOCOL_CHECK = "cli_protocol IN ('ssh','telnet')"
+
+# doc 40 §3.1 (revision pt1_port_topology): port-level topology. Shared
+# byte-for-byte with the hand-written pt1 migration.
+PORT_MEDIA = ("ETH", "PON")
+PORT_DIRECTIONS = ("UP", "DOWN", "ANY")
+PORT_ORIGINS = ("TEMPLATE", "ITEM")          # ITEM = per-item addition
+NETWORK_LINK_SOURCES = ("OFFICE", "FIELD", "IMPORT")
+# Port names reach device CLIs through `out_port_name`, so no quotes, braces
+# or newlines. Same rule for template-expanded and per-item ports.
+PORT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$"
+PATH_ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
+_DEVICE_TYPE_PORTS_SERIALIZED_CHECK = "port_template IS NULL OR is_serialized"
 _INSTALL_STATE_CHECK = "install_state IN ('NOT_INSTALLED','IN_PROGRESS','INSTALLED')"
 
 # ba1 (doc 30): values of the backend-computed ClientServiceOut.activation_evidence
@@ -401,22 +438,11 @@ class ServicePlan(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Billing bridge: the Product SKU this plan bills through (recurring orders).
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("product.id", ondelete="SET NULL"), nullable=True
-    )
 
     company = relationship("Company", back_populates="service_plans")
-    product = relationship("Product")
     client_services = relationship("ClientService", back_populates="service_plan")
 
     __table_args__ = (
-        # Makes the c2a Product->ServicePlan billing bridge deterministic (one
-        # plan per product). Created by revision c2a_catalog_merge.
-        Index(
-            "uq_service_plan_product", "product_id",
-            unique=True, postgresql_where=text("product_id IS NOT NULL"),
-        ),
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
         Index("ix_service_plan_company_group", "company_id", "service_group"),
     )
@@ -523,12 +549,6 @@ class ClientService(Base):
     cpe_item_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True
     )
-    # Billing link into the legacy recurring-order engine. Still dual-written
-    # during the Cycle-2 rollback window (doc 18 amendment 1) but is NEVER
-    # PATCHable — it is migration-critical bridge state, not user data.
-    recurring_order_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("recurring_order.id", ondelete="SET NULL"), nullable=True
-    )
     # SET NULL: deleting the attesting user must not erase the attestation
     # fact (adopted_at/adoption_note survive; only authorship is lost) —
     # mirrors ServiceSuspension.created_by (isp.py:410-415).
@@ -539,7 +559,6 @@ class ClientService(Base):
     company = relationship("Company", back_populates="client_services")
     client = relationship("Client", back_populates="services")
     service_plan = relationship("ServicePlan", back_populates="client_services")
-    recurring_order = relationship("RecurringOrder")
     suspensions = relationship(
         "ServiceSuspension", back_populates="client_service", cascade="all, delete-orphan"
     )
@@ -703,9 +722,25 @@ class DeviceType(Base):
     # Display unit for non-serialized lots ("m", "u", "pz"). NULL for
     # serialized types — the unit there is always "one device".
     unit = Column(String(20), nullable=True)
+    # --- port-level topology (doc 40 §3.1.2, revision pt1_port_topology) ------
+    # List of port groups expanded into inventory_item_port rows for every
+    # item of this type (schemas/inventory.py PortTemplateGroup +
+    # expand_port_template). none_as_null: an explicit None must be SQL NULL,
+    # not JSON 'null', or ck_device_type_ports_serialized rejects lot types.
+    port_template = Column(JSON(none_as_null=True), nullable=True)
+    # Per-company path role ("mufa_principal") emitted as path.<role>.* when
+    # exactly one node on a path holds it. Not unique by design.
+    path_role = Column(String(32), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        # Lot rows have no physical ports (doc 40 §3.1.2); covers writers that
+        # bypass the schema, such as the device-types xlsx sheet.
+        CheckConstraint(_DEVICE_TYPE_PORTS_SERIALIZED_CHECK,
+                        name="ck_device_type_ports_serialized"),
     )
 
     company = relationship("Company", back_populates="device_types")
@@ -731,6 +766,9 @@ class Warehouse(Base):
     address = Column(String, nullable=True)
     is_vehicle = Column(Boolean, nullable=False, default=False)  # truck stock
     notes = Column(String, nullable=True)
+    # mi2: map pin for the tecnicos inventory map.
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -841,6 +879,18 @@ class InventoryItem(Base):
     network_attached = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Link ports (revision lp1_link_ports). Free-text labels describing the
+    # parent_id edge: `parent_port` is the port ON THE PARENT this item plugs
+    # into ("PON 16", "OUT 3"); `uplink_port` is this item's own port facing
+    # the parent ("GE1"). Both describe the current link, so reparent/detach
+    # clear them.
+    parent_port = Column(String(64), nullable=True)
+    uplink_port = Column(String(64), nullable=True)
+    # mi2: where the item physically is (plant: MUFA / NAP geolocated by the
+    # technician in the field). WGS84 degrees; precision in metres.
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    gps_precision_m = Column(Float, nullable=True)
 
     company = relationship("Company", back_populates="inventory_items")
     device_type = relationship("DeviceType", back_populates="items")
@@ -862,8 +912,23 @@ class InventoryItem(Base):
         "EquipmentEvent", back_populates="item",
         cascade="all, delete-orphan", foreign_keys="EquipmentEvent.item_id",
     )
+    # doc 40 §3.1. View-only: rows are written through the backend helpers
+    # (sync_item_ports / set_uplink) and deleted by the DB cascades, never by
+    # ORM collection bookkeeping.
+    ports = relationship(
+        "InventoryItemPort", viewonly=True,
+        order_by="[InventoryItemPort.slot, InventoryItemPort.direction, InventoryItemPort.number]",
+    )
+    uplink = relationship(
+        "NetworkLink", viewonly=True, uselist=False,
+        primaryjoin="InventoryItem.id == foreign(NetworkLink.down_item_id)",
+    )
 
     __table_args__ = (
+        # doc 40 §3.1.1: target of the composite (id, company_id) FKs from
+        # inventory_item_port and network_link, which make cross-tenant links
+        # impossible. Always satisfiable: id is the PK.
+        UniqueConstraint("id", "company_id", name="uq_inventory_item_id_company"),
         # Serial uniqueness per company (only when a serial is recorded).
         Index(
             "uq_inventory_item_company_serial",
@@ -900,6 +965,13 @@ class InventoryItem(Base):
             "ix_inventory_item_company_attached", "company_id",
             postgresql_where=text("network_attached"),
         ),
+        # lp1: a parent port feeds exactly one child.
+        Index(
+            "uq_inventory_item_parent_port",
+            "parent_id", "parent_port",
+            unique=True,
+            postgresql_where=text("parent_port IS NOT NULL"),
+        ),
         # Figma redesign PR 8 (08-inventario §2.3).
         CheckConstraint(
             _INVENTORY_QUANTITY_CHECK, name="ck_inventory_item_quantity_positive",
@@ -908,6 +980,132 @@ class InventoryItem(Base):
         # "Con tecnico" tab and the technician app filter on the custodian.
         Index("ix_inventory_item_company_device_type", "company_id", "device_type_id"),
         Index("ix_inventory_item_company_custodian", "company_id", "custodian_user_id"),
+    )
+
+
+class InventoryItemPort(Base):
+    """A physical port on one inventory item (doc 40 §3.1.1).
+
+    Generated from device_type.port_template (origin TEMPLATE) or added per
+    item (origin ITEM). An OLT slot is only the `slot` number (decision 3).
+    The (id, item_id, company_id) unique is the target of network_link's
+    composite FKs, so a link can never name another item's or tenant's port.
+    """
+    __tablename__ = "inventory_item_port"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    name = Column(String(32), nullable=False)        # "1/4", "ether2", "OUT 6"
+    slot = Column(SmallInteger, nullable=True)        # structural only
+    number = Column(SmallInteger, nullable=False)
+    medium = Column(String(8), nullable=False)
+    direction = Column(String(4), nullable=False)
+    origin = Column(String(8), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+
+    item = relationship("InventoryItem", viewonly=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["item_id", "company_id"], ["inventory_item.id", "inventory_item.company_id"],
+            name="fk_item_port_item", ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "item_id", "company_id", name="uq_item_port_identity"),
+        CheckConstraint("slot BETWEEN 0 AND 255", name="ck_item_port_slot"),
+        CheckConstraint("number BETWEEN 0 AND 4095", name="ck_item_port_number"),
+        CheckConstraint("medium IN ('ETH','PON')", name="ck_item_port_medium"),
+        CheckConstraint("direction IN ('UP','DOWN','ANY')", name="ck_item_port_direction"),
+        CheckConstraint("origin IN ('TEMPLATE','ITEM')", name="ck_item_port_origin"),
+        # Names are unique per item, case-insensitively.
+        Index("uq_item_port_name", "item_id", text("lower(name)"), unique=True),
+        # PON numbers feed the ONU-id arithmetic, so they are unique per
+        # (slot, number, direction) too. Partial on both dialects so SQLite
+        # test schemas match Postgres.
+        Index(
+            "uq_item_port_pon_number",
+            "item_id", text("coalesce(slot, -1)"), "number", "direction",
+            unique=True,
+            postgresql_where=text("medium = 'PON'"),
+            sqlite_where=text("medium = 'PON'"),
+        ),
+        Index("ix_item_port_company", "company_id"),
+    )
+
+
+class NetworkLink(Base):
+    """A device's one upstream link, port to port (doc 40 §3.1.1).
+
+    The invariant inventory_item[down_item_id].parent_id = up_item_id is
+    written by one backend helper and backed by two deferred constraint
+    triggers that live only in revision pt1_port_topology (never in this
+    metadata: SQLite create_all cannot parse plpgsql). A device with a parent
+    but no link is an "unported edge".
+
+    The FKs to the ports are NO ACTION, not CASCADE: deleting only a device's
+    own port must not silently remove its link. up_item_id has no FK of its
+    own; the composite up-port FK pins it to the port's item.
+    """
+    __tablename__ = "network_link"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    up_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    up_port_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    down_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    down_port_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source = Column(String(8), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("task.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+
+    up_port = relationship(
+        "InventoryItemPort", viewonly=True,
+        primaryjoin="foreign(NetworkLink.up_port_id) == InventoryItemPort.id",
+    )
+    down_port = relationship(
+        "InventoryItemPort", viewonly=True,
+        primaryjoin="foreign(NetworkLink.down_port_id) == InventoryItemPort.id",
+    )
+    down_item = relationship(
+        "InventoryItem", viewonly=True,
+        primaryjoin="foreign(NetworkLink.down_item_id) == InventoryItem.id",
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["up_port_id", "up_item_id", "company_id"],
+            ["inventory_item_port.id", "inventory_item_port.item_id",
+             "inventory_item_port.company_id"],
+            name="fk_link_up_port",
+        ),
+        ForeignKeyConstraint(
+            ["down_item_id", "company_id"], ["inventory_item.id", "inventory_item.company_id"],
+            name="fk_link_down_item", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["down_port_id", "down_item_id", "company_id"],
+            ["inventory_item_port.id", "inventory_item_port.item_id",
+             "inventory_item_port.company_id"],
+            name="fk_link_down_port",
+        ),
+        UniqueConstraint("up_port_id", name="uq_link_up_port"),
+        UniqueConstraint("down_port_id", name="uq_link_down_port"),
+        UniqueConstraint("down_item_id", name="uq_link_down_item"),  # still a tree
+        CheckConstraint("up_item_id <> down_item_id", name="ck_link_not_self"),
+        CheckConstraint("source IN ('OFFICE','FIELD','IMPORT')", name="ck_link_source"),
+        Index("ix_network_link_up_item", "up_item_id"),
+        Index("ix_network_link_company", "company_id"),
     )
 
 
@@ -1104,10 +1302,12 @@ class ProvisioningRun(Base):
     # The whole resolved path INCLUDING passive nodes, snapshotted at creation:
     # the run detail view must show what the path was when it ran, not what it
     # is now. [{position, item_id, serial, device_type_name, category_key,
-    #           category_tier, is_passive, playbook_id, playbook_source}]
+    #           category_tier, is_passive, playbook_id, playbook_source,
+    #           label, path_role, out_slot, out_port, out_port_name,
+    #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, category_key}]
+    # [{item_id, playbook_id, playbook_version, category_key}]
     plan = Column(JSON, nullable=False)
     # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than
@@ -1269,86 +1469,14 @@ class ProvisioningJob(Base):
 # ---------------------------------------------------------------------------
 # Network configuration (Cycle 5 Phase 1: TR-069 / GenieACS). Plan:
 # docs/isp-platform/23-network-config-implementation-plan.md §2. Envelope-
-# encrypted device secrets (device_credential, canon C1/C19), per-tenant
-# transport config (network_access, canon C9), serial/OUI -> tenant mapping
-# (acs_device_registration, canon C13), the tenant enable gate
-# (provisioning_settings, canon C6), and the append-only device audit trail
+# encrypted device secrets (device_credential, canon C1/C19), serial/OUI ->
+# tenant mapping (acs_device_registration, canon C13), the tenant enable gate
+# AND per-tenant transport/ACS config (provisioning_settings, canon C6 + C9 —
+# tr1_transport_axis folded the old multi-row network_access table into it),
+# and the append-only device audit trail
 # (device_action_log, canon C14 — append-only enforced by a Postgres trigger
 # created in revision nc1b, not here).
 # ---------------------------------------------------------------------------
-
-class NetworkAccess(Base):
-    """Per-tenant transport configuration (canon C9). Multiple rows per tenant,
-    keyed by `kind` (acs|olt); the transport resolver reads it keyed on
-    company_id + the target management address. `kind`/`mode` are
-    CHECK-constrained strings (not PG enums) per the c3a/c3b precedent —
-    transport modes are config-flavored and grow by phase. WireGuard keys/PSK
-    are NOT columns here (Phase 2+): they live in a device_credential row of
-    kind WIREGUARD bound via network_access_id (canon C19 — bindings on the
-    credential, no credential FK here)."""
-    __tablename__ = "network_access"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
-    name = Column(String, nullable=False)
-    kind = Column(String, nullable=False)   # CHECK: acs | olt
-    mode = Column(String, nullable=False, default="direct", server_default="direct")  # CHECK
-    is_default = Column(Boolean, nullable=False, default=False, server_default="false")
-    # Which mgmt addresses this path serves (JSON list of CIDR strings); the
-    # resolver does longest-prefix match, else the default row. NULL on the
-    # default row. Atomic config value read whole — never queried per-element.
-    mgmt_subnets = Column(JSON, nullable=True)
-    # Phase-4 per-tenant ACS escape hatch — nullable from day one, unused until P4.
-    acs_base_url = Column(String, nullable=True)
-    # spec N1/§8: the tenant gateway's address on the path WE dial — a
-    # ZeroTier address under nat_zt, a public IP or DDNS hostname under
-    # nat_public. Deliberately String, not INET: a nat_zt value is RFC1918 and
-    # a nat_public value may be a hostname, so no "globally routable"
-    # assertion is possible or wanted. NULL on every non-NAT row.
-    gateway_host = Column(String, nullable=True)
-
-    # spec 2026-08-17 N13 (doc 34 OV17): the per-tenant Pylon's SOCKS5
-    # listener as "host:port" — always THIS tenant's own Railway-internal
-    # Pylon service, e.g. "pylon-acme.railway.internal:1080". One `pylon
-    # refract` process joins exactly one ZeroTier network, so a shared fleet
-    # proxy cannot serve two tenants. NULL on every non-nat_zt row, including
-    # nat_public (which dials the gateway over plain egress, no proxy hop).
-    pylon_socks5 = Column(String, nullable=True)
-
-    company_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-
-    company = relationship("Company", back_populates="network_accesses")
-
-    __table_args__ = (
-        UniqueConstraint("company_id", "name", name="uq_network_access_company_name"),
-        CheckConstraint(_NETWORK_ACCESS_KIND_CHECK, name="ck_network_access_kind"),
-        CheckConstraint(_NETWORK_ACCESS_MODE_CHECK, name="ck_network_access_mode"),
-        CheckConstraint(
-            _NETWORK_ACCESS_NAT_GATEWAY_CHECK, name="ck_network_access_nat_gateway_host"
-        ),
-        CheckConstraint(
-            _NETWORK_ACCESS_PYLON_CHECK, name="ck_network_access_pylon_socks5"
-        ),
-        # Exactly one default path per tenant PER KIND (one default ACS, one
-        # default OLT).
-        Index(
-            "uq_network_access_default",
-            "company_id", "kind",
-            unique=True,
-            postgresql_where=text("is_default"),
-            # sqlite_where mirrors postgresql_where so this partial index
-            # behaves the same under the SQLite `create_all()` the test
-            # suite uses — without it, SQLite creates a plain (non-partial)
-            # unique index and rejects any non-default row that shares a
-            # company_id/kind with the default row. No production schema
-            # change: Postgres is migrated by nc1a_network_config_core.
-            sqlite_where=text("is_default"),
-        ),
-    )
-
 
 class DeviceCredential(Base):
     """Envelope-encrypted per-tenant device secret (canon C1/C19). AES-256-GCM
@@ -1359,8 +1487,13 @@ class DeviceCredential(Base):
     has_secret + fingerprint (last 4).
 
     Binding FKs live ON this row (canon C19): resolution order at execution is
-    inventory_item > device_type > network_access default. No other table
-    carries an FK pointing at a credential."""
+    inventory_item > device_type > UNBOUND (both FKs NULL = the company default;
+    tr1_transport_axis removed the third FK, network_access_id, along with the
+    table it pointed at). The tenant's TR-069 Inform credential is the one
+    exception to "no other table carries an FK pointing at a credential":
+    provisioning_settings.cwmp_credential_id / cwmp_pending_credential_id name
+    it explicitly, because there is exactly one per tenant and the accept-both
+    rotation window needs the pair to be stated rather than inferred."""
     __tablename__ = "device_credential"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1388,14 +1521,10 @@ class DeviceCredential(Base):
     device_type_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("device_type.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    network_access_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("network_access.id", ondelete="SET NULL"), nullable=True, index=True
-    )
 
     company = relationship("Company", back_populates="device_credentials")
     inventory_item = relationship("InventoryItem")
     device_type = relationship("DeviceType")
-    network_access = relationship("NetworkAccess")
 
     __table_args__ = (
         UniqueConstraint("company_id", "name", name="uq_device_credential_company_name"),
@@ -1456,6 +1585,23 @@ class AcsDeviceRegistration(Base):
 
     __table_args__ = (
         UniqueConstraint("oui", "serial_number", name="uq_acs_registration_identity"),
+        # The UNIQUE above does NOT constrain rows whose oui is NULL (Postgres
+        # treats NULLs as distinct), and `oui` IS nullable — _normalize_oui
+        # (schemas/acs_registration.py) returns None unchanged for an omitted
+        # OUI, so NULL-oui rows are ordinary API output. Without this index two
+        # tenants can both pre-register the same serial: the router's 409 check
+        # is check-then-insert with no DB backstop, and once Capa 3 ships the
+        # inform-auth lookup's .first() would hand one tenant's CWMP password
+        # to the other's CPE. sqlite_where mirrors postgresql_where, the
+        # tr1's partial-index precedent (sqlite_where mirroring
+        # postgresql_where).
+        Index(
+            "uq_acs_registration_serial_no_oui",
+            "serial_number",
+            unique=True,
+            postgresql_where=text("oui IS NULL"),
+            sqlite_where=text("oui IS NULL"),
+        ),
     )
 
     @property
@@ -1474,10 +1620,17 @@ class AcsDeviceRegistration(Base):
 
 
 class ProvisioningSettings(Base):
-    """Tenant provisioning enable gate — a singleton per tenant (canon C6).
-    Absence of a row means DISABLED (fail-safe); the row is created lazily /
-    by tenant-onboarding automation, never seeded. Not a column on `company`:
-    auth-erp owns that table and this is ISP-module config."""
+    """Per-tenant provisioning, transport and ACS configuration — a singleton per
+    tenant (canon C6 + C9). Absence of a row means DISABLED (fail-safe) and the
+    row is created lazily / by tenant-onboarding automation, never seeded. Not a
+    column on `company`: auth-erp owns that table and this is ISP-module config.
+
+    tr1_transport_axis folded the whole `network_access` table in here. That table
+    was multi-row only to serve a per-CIDR longest-prefix resolver
+    (`mgmt_subnets`) that was never implemented and is now abandoned, and its
+    `kind` discriminator conflated a settings bucket (`acs`) with a transport
+    (`outbound`). Both questions are tenant-wide and mutually exclusive, which is
+    what a singleton is for."""
     __tablename__ = "provisioning_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1493,7 +1646,92 @@ class ProvisioningSettings(Base):
     # the platform default.
     default_inform_interval = Column(Integer, nullable=True)
 
+    # --- the transport axis (tr1_transport_axis) ---------------------------
+    # Whose address the worker dials: the DEVICE's own mgmt_host, or the tenant
+    # gateway that dst-nats to it. Replaces half of the old `mode` enum.
+    dial_target = Column(
+        String, nullable=False, default="device", server_default="device"
+    )
+    # Whether there is a hop in front of that address, and of what sort. The
+    # other half of the old `mode`. 'agent' (canon C10's edge relay) is the
+    # planned third value and needs no new column.
+    proxy_kind = Column(String, nullable=False, default="none", server_default="none")
+    # The SOCKS5 listener as "host:port"; REQUIRED when proxy_kind='socks5'
+    # (ck_provisioning_settings_proxy_address). The hub technology is NOT
+    # recorded and is none of the resolver's business — a Railway-internal
+    # Pylon/ZeroTier proxy and an external WireGuard-hub VPS are the same thing
+    # here.
+    #
+    # SECURITY PREREQUISITE, not code: an external value (a VPS running
+    # microsocks, which ships with no authentication) MUST be firewalled to
+    # Railway's egress, or anyone who learns the address gets a route into the
+    # tenant LAN. See docs/network-models.md.
+    proxy_address = Column(String, nullable=True)
+    # The tenant gateway's address on the path WE dial; REQUIRED when
+    # dial_target='gateway' (ck_provisioning_settings_gateway_host). Deliberately
+    # String, not INET: a ZeroTier value is RFC1918 and a public value may be a
+    # DDNS hostname, so no "globally routable" assertion is possible or wanted.
+    # The per-device external port is inventory_item.nat_port, unchanged.
+    gateway_host = Column(String, nullable=True)
+
+    # --- ACS config, moved off network_access (tr1_transport_axis) ----------
+    # Informational ONLY and read-only in the UI: nothing in code reads it. Its
+    # job is telling an installer what to type into a CPE. It is deliberately
+    # absent from ProvisioningSettingsUpdate so no write path can set it — an
+    # `http://` value here would turn every CWMP POST into a bodyless GET at
+    # Railway's edge, and an orphaned CPE has no remote fix.
+    acs_base_url = Column(String, nullable=True)
+    # ac1 (Capa 3, decision 8): do this tenant's CPEs have to prove a shared
+    # secret at CWMP Inform? OFF by default, and off means ALLOW — a tenant that
+    # never enrols behaves exactly as before, and so does a serial with no
+    # acs_device_registration row. Both are required or auto-discovery and
+    # quarantine break.
+    acs_auth_required = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # --- the tenant TR-069 credential (tr1_transport_axis) ------------------
+    # decision 12's accept-both rotation window, made EXPLICIT. It used to be
+    # inferred as "newest vs second-newest HTTP_BASIC device_credential row bound
+    # to the tenant's acs network_access row", which was fragile in both
+    # directions: a third row was undefined, and the pair depended on a
+    # `created_at DESC, id DESC` tie-break. One credential per tenant is now true
+    # by construction.
+    cwmp_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_credential.id", ondelete="SET NULL"), nullable=True
+    )
+    cwmp_pending_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_credential.id", ondelete="SET NULL"), nullable=True
+    )
+
     company = relationship("Company", back_populates="provisioning_settings")
+    cwmp_credential = relationship(
+        "DeviceCredential", foreign_keys=[cwmp_credential_id]
+    )
+    cwmp_pending_credential = relationship(
+        "DeviceCredential", foreign_keys=[cwmp_pending_credential_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            _PROVISIONING_DIAL_TARGET_CHECK,
+            name="ck_provisioning_settings_dial_target",
+        ),
+        CheckConstraint(
+            _PROVISIONING_PROXY_KIND_CHECK, name="ck_provisioning_settings_proxy_kind"
+        ),
+        CheckConstraint(
+            _PROVISIONING_PROXY_ADDRESS_CHECK,
+            name="ck_provisioning_settings_proxy_address",
+        ),
+        CheckConstraint(
+            _PROVISIONING_GATEWAY_HOST_CHECK,
+            name="ck_provisioning_settings_gateway_host",
+        ),
+        CheckConstraint(
+            _PROVISIONING_CWMP_PAIR_CHECK, name="ck_provisioning_settings_cwmp_pair"
+        ),
+    )
 
 
 class DeviceActionLog(Base):

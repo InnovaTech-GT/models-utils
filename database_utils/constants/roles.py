@@ -2,26 +2,26 @@
 """
 Role constants for role-based access control (RBAC).
 
-These constants define the available user roles in the system
-and are used for authorization checks throughout the application.
+These are the four built-in (global, ``company_id IS NULL``) roles. Tenants
+can add their own custom roles on top, but may not reuse these names.
 """
 
 
 class Roles:
     """
-    User role constants for RBAC.
+    Built-in role constants for RBAC.
 
     Attributes:
-        ADMIN: Administrator role with elevated privileges
-        MANAGER: Manager role with most permissions except system settings
-        SALES: Sales representative role with client and order permissions
-        USER: Standard user role with basic permissions
-        ALL: Set containing all available roles
+        ADMIN: Full access to everything (wildcard)
+        VIEWER: Read access to everything on the web app
+        COLLECTOR: Collectors' mobile app (cobros) only
+        TECHNICIAN: Technicians' mobile app (tecnicos) only
+        ALL: Set containing all built-in roles
     """
 
     ADMIN = "ADMIN"
-    MANAGER = "MANAGER"
-    SALES = "SALES"
-    USER = "USER"
+    VIEWER = "VIEWER"
+    COLLECTOR = "COLLECTOR"
+    TECHNICIAN = "TECHNICIAN"
 
-    ALL = {ADMIN, MANAGER, SALES, USER}
+    ALL = {ADMIN, VIEWER, COLLECTOR, TECHNICIAN}

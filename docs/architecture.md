@@ -24,10 +24,11 @@ services (email)   middleware   dependencies
 - `models/__init__.py` registers all four domain modules (`auth`, `crm`, `isp`,
   `workflow`) — `alembic/env.py` imports it wholesale so autogenerate sees every
   table.
-- `schemas/__init__.py` star-imports all 42 schema modules and runs
-  `model_rebuild()` to resolve circular Order/RecurringOrder references.
+- `schemas/__init__.py` star-imports all 40 schema modules and runs
+  `model_rebuild()` to resolve circular Order/billing_due forward references.
   Cycle 4/5 additions: `insight`, `acs_registration`, `device_credential`,
-  `network_access`, `provisioning_settings`.
+  `provisioning_settings` (`network_access` was deleted by
+  `tr1_transport_axis`).
 - `dependencies/` (FastAPI `get_db`, audit context) and
   `middleware/` (request logging) sit on top for consumers to wire in.
 - `services/email_service.py` is the highest layer (uses utils + templates).

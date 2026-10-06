@@ -35,32 +35,6 @@ class ExecutionStatus(str, enum.Enum):
     SKIPPED = "SKIPPED"
 
 
-class WorkflowTemplate(Base):
-    """Installable workflow blueprint (ADR-007). Global rows (seeded); a company
-    'installs' one to materialize a Workflow + triggers + steps + edges with
-    parameters (task column IDs, playbook IDs, ...) resolved at install time.
-
-    definition JSON shape:
-    {
-      "parameters": [{"key": "install_state_id", "label": "...", "type": "task_state",
-                      "required": true}],
-      "triggers":   [ ...WorkflowTrigger fields with {{param}} placeholders... ],
-      "steps":      [ {"ref": "s1", ...WorkflowStep fields...} ],
-      "edges":      [ {"from": "s1", "to": "s2"} ]
-    }
-    """
-    __tablename__ = "workflow_template"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    key = Column(String, nullable=False, unique=True)  # "new-installation", "onu-replacement"
-    name = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    category = Column(String, nullable=True)  # "installation", "billing", "network"
-    definition = Column(JSON, nullable=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-
 class Workflow(Base):
     __tablename__ = "workflow"
 
@@ -114,7 +88,7 @@ class WorkflowStep(Base):
     # Example for UPDATE_FIELD:
     # {"resource_type": "order", "resource_id_source": "trigger", "updates": {"paid": true}}
     # Example for CREATE_ENTITY:
-    # {"resource_type": "task", "data": {"name": "Follow up", "task_state_id": "uuid"}}
+    # {"resource_type": "task", "data": {"name": "Follow up", "status": "PENDING"}}
 
     position_x = Column(Float, nullable=True, default=0)
     position_y = Column(Float, nullable=True, default=0)

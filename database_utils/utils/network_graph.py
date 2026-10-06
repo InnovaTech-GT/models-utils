@@ -28,9 +28,9 @@ import uuid
 from typing import List
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
-from database_utils.models.isp import InventoryItem
+from database_utils.models.isp import InventoryItem, InventoryItemPort, NetworkLink
 
 # Kept in sync with the same constant inside trg_inventory_item_graph_guard
 # (revision ng1_network_graph). If these ever disagree, the trigger wins and the
@@ -177,3 +177,37 @@ def child_count(db: Session, item_id: uuid.UUID, company_id: uuid.UUID) -> int:
             )
         ).scalar_one()
     )
+
+
+def assert_links_consistent(db: Session) -> None:
+    """Assert every network_link agrees with the tree it describes.
+
+    On Postgres the deferred triggers of revision pt1_port_topology enforce
+    `inventory_item[down].parent_id = up_item_id` at COMMIT, and the composite
+    FKs pin each port to its item and tenant. SQLite `create_all` schemas have
+    neither (triggers never live in metadata; SQLite does not enforce FKs by
+    default), so graph tests in this repo and in backend-erp call this after
+    every write instead. Raises AssertionError naming each bad link.
+    """
+    up = aliased(InventoryItemPort)
+    down = aliased(InventoryItemPort)
+    rows = db.execute(
+        sa.select(NetworkLink, InventoryItem.parent_id, InventoryItem.company_id,
+                  up.item_id, up.company_id, down.item_id, down.company_id)
+        .outerjoin(InventoryItem, InventoryItem.id == NetworkLink.down_item_id)
+        .outerjoin(up, up.id == NetworkLink.up_port_id)
+        .outerjoin(down, down.id == NetworkLink.down_port_id)
+    ).all()
+    problems = []
+    for link, parent_id, item_co, up_item, up_co, down_item, down_co in rows:
+        where = f"link {link.id} ({link.down_item_id} -> {link.up_item_id})"
+        if parent_id != link.up_item_id:
+            problems.append(f"{where}: parent_id is {parent_id} (NETWORK_LINK_PARENT_MISMATCH)")
+        if item_co != link.company_id:
+            problems.append(f"{where}: down item belongs to company {item_co}")
+        if (up_item, up_co) != (link.up_item_id, link.company_id):
+            problems.append(f"{where}: up port belongs to item {up_item} / company {up_co}")
+        if link.down_port_id is not None and (down_item, down_co) != (
+                link.down_item_id, link.company_id):
+            problems.append(f"{where}: down port belongs to item {down_item} / company {down_co}")
+    assert not problems, "inconsistent network links:\n" + "\n".join(problems)

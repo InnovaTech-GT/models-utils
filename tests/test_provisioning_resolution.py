@@ -9,21 +9,21 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from conftest import _DEF_DEVICE_FREE, CO_B
 
 from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
 )
 from database_utils.utils.provisioning_resolution import (
-    DEVICE_ATTRIBUTES,
-    ResolutionError,
     _DEVICE_VARIABLE_PATTERN,
+    DEVICE_ATTRIBUTES,
+    PORT_ATTRIBUTES,
+    ResolutionError,
     build_device_frame,
     iter_client_custom_fields,
     resolve_playbook_for,
     resolve_provisioning,
 )
-from conftest import CO_B, _DEF_DEVICE_FREE
-
 
 # --------------------------------------------------------------- path shape
 
@@ -186,9 +186,15 @@ def test_plan_fields_are_unchanged(db, plant):
 
 
 def test_build_device_frame_emits_every_declared_attribute(db, plant):
-    node = resolve_provisioning(db, plant.service).path[0]
-    frame = build_device_frame(node, "cpe")
-    assert set(frame) == {f"cpe.{a}" for a in DEVICE_ATTRIBUTES}
+    """Pin (doc 40 §3.3.1): every DEVICE_ATTRIBUTE always, and nothing beyond
+    the PORT_ATTRIBUTES — which appear only when the port is recorded."""
+    path = resolve_provisioning(db, plant.service).path
+    for node in path:
+        frame = set(build_device_frame(node, "cpe"))
+        assert {f"cpe.{a}" for a in DEVICE_ATTRIBUTES} <= frame
+        assert frame <= {f"cpe.{a}" for a in DEVICE_ATTRIBUTES + PORT_ATTRIBUTES}
+    # The seeded plant has no links, so no port key at all.
+    assert set(build_device_frame(path[0], "cpe")) == {f"cpe.{a}" for a in DEVICE_ATTRIBUTES}
 
 
 def test_device_variable_pattern_matches_the_new_namespaces():
@@ -254,3 +260,15 @@ def test_an_ungrammatical_custom_key_is_skipped(db):
 def test_a_missing_client_relationship_does_not_crash(db, plant):
     v = resolve_provisioning(db, _detached_service(plant, None)).shared_variables
     assert "client.id" not in v
+
+
+def test_client_code_is_a_builtin_variable_and_wins_a_collision(db, plant):
+    # cc1: client.code is built in; a tenant custom field keyed `code` must not shadow it.
+    client = SimpleNamespace(
+        id=uuid.uuid4(), name="Ana", email="", phone="", address="", code="CO0648",
+        custom_field_values=[SimpleNamespace(
+            value="shadow", field_definition=SimpleNamespace(
+                field_key="code", field_type="TEXT"))],
+    )
+    v = resolve_provisioning(db, _detached_service(plant, client)).shared_variables
+    assert v["client.code"] == "CO0648"

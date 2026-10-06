@@ -15,15 +15,17 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | Model | Purpose |
 |-------|---------|
 | `Tier` (tier) | SaaS subscription plans (features/modules JSON) |
-| `Company` (company) | Multi-tenant ISP company |
+| `Company` (company) | Multi-tenant ISP company. `mobile_settings` JSON (mi2): `{bank_account, collector_daily_goal, technician_daily_goal}`, validated by `schemas.company.MobileSettings` |
 | `User` (user) | Authenticated user (incl. super-admin flag) |
 | `Role` (role) | Permission group |
 | `Permission` (permission) | Single access right (resource + action) |
-| `Notification` (notification) | In-app notification |
+| `Notification` (notification) | Pending user **invitation** (despite the name) |
+| `UserNotification` (user_notification) | Field-app notification feed (mi2): `kind` in `USER_NOTIFICATION_KINDS` (TASK_ASSIGNED/TASK_OVERDUE/PAYMENTS_OVERDUE, CHECK), `dedupe_key` unique per user, `payload` JSON, `read_at`. Produced lazily by backend-erp when the feed is read |
 | `AuditLog` (audit_log) | Immutable audit trail (see `utils/audit_utils.py`) |
 | `UserInvitation` (user_invitation) | Invitation flow |
 | `EmailVerificationToken` (email_verification_token) | Email verification flow — existing users were grandfathered by the `c1f_verify_grandfather` migration |
 | `PasswordResetToken` (password_reset_token) | Password reset flow |
+| `RefreshToken` (auth_refresh_token) | Server-side record of every issued refresh token (rt1), PK = the JWT `jti` claim. `family_id` groups a login's rotation chain; `/refresh` sets `rotated_at` + `replaced_by` on the presented row and inserts the successor; presenting a rotated token again (reuse) sets `revoked_at` on the whole family; logout revokes the family. Also `user_id` (FK CASCADE), `company_id` (FK CASCADE, nullable), `client_type` (`web`/`mobile`, CHECK), `issued_at`, `expires_at` (indexed; expired rows are dead and deletable). Logic lives in auth-erp `routers/auth.py` |
 | `Subscription` (subscription) | Company's SaaS subscription |
 | `PaymentMethod` (payment_method) | SaaS billing payment method |
 | `BillingInvoice` (billing_invoice) | SaaS subscription invoice |
@@ -64,7 +66,13 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   area, `NotificationStatus`, is defined in `schemas/notification.py` (a schema),
   not in the auth model.
 - System role names live in `constants/roles.py` (`Roles`:
-  ADMIN/MANAGER/SALES/USER)
+  ADMIN/VIEWER/COLLECTOR/TECHNICIAN — the only global built-ins since
+  `rr1_four_builtin_roles`; tenants add custom roles with `company_id` set and
+  may not reuse these names). Only the **global** ADMIN role (`company_id IS
+  NULL`) gets the `*` wildcard (`PermissionChecker`) or passes
+  `get_admin_user` / `require_roles` — name matches on tenant roles never count.
+  `web.access` gates the web dashboard (VIEWER + custom roles hold it;
+  COLLECTOR/TECHNICIAN are mobile-only)
 - **Recurrente gateway columns** (`rb1_recurrente_billing`, additive):
   `Tier.recurrente_product_id`/`recurrente_price_id` (monthly)/
   `recurrente_price_yearly_id` — a NULL price id means the tier is not

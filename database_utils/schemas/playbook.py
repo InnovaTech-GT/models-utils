@@ -23,10 +23,13 @@ A playbook definition is uploadable JSON (or YAML converted client-side):
 }
 
 Templates use {{variable}} substitution only — no expressions, no code execution.
+Integer arithmetic is declared, never inline: an optional `computed` block
+(doc 40 §3.3.3, utils/playbook_expr.py) whose results templates read by plain
+lookup as {{computed.<key>}}.
 """
 import re
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
@@ -36,6 +39,8 @@ from database_utils.models.isp import (
     ProvisioningJobStatus,
     ProvisioningTrigger,
 )
+from database_utils.utils import playbook_expr
+from database_utils.utils.playbook_expr import is_secret_name
 
 
 def normalize_purpose(v: str) -> str:
@@ -183,8 +188,48 @@ class PlaybookStep(BaseModel):
 PlaybookStep.model_rebuild()  # resolve the self-referential on_failure forward ref
 
 
+class ComputedVar(BaseModel):
+    """One declared integer value (doc 40 §3.3.3). `expr` is parsed here at
+    save time and evaluated by the resolver and the renderer; the result is
+    templated as {{computed.<key>}}."""
+    key: str
+    expr: str
+    min: Optional[StrictInt] = None
+    max: Optional[StrictInt] = None
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str) -> str:
+        if not playbook_expr.KEY_PATTERN.fullmatch(v):
+            raise ValueError("computed key must match ^[a-z][a-z0-9_]{0,31}$")
+        if is_secret_name(v):
+            raise ValueError(f"COMPUTE_SECRET: computed key '{v}' is secret-named")
+        return v
+
+    @field_validator("expr")
+    @classmethod
+    def validate_expr(cls, v: str) -> str:
+        playbook_expr.parse(v)  # ExprError is a ValueError -> 422
+        return v
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "ComputedVar":
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"computed '{self.key}': min must not exceed max")
+        return self
+
+
+# The head of a {{computed.<key>}} token body, with the renderer's own
+# leading-blank rule ([ \t]*). Matched against each raw step string's
+# TOKEN_SHAPE bodies, never a JSON dump: JSON escapes a tab to `\t`.
+_COMPUTED_HEAD = re.compile(r"[ \t]*computed\.([a-z][a-z0-9_]*)")
+
+
 class PlaybookDefinition(BaseModel):
     variables: List[PlaybookVariable] = []
+    # Declared, not free-form: the library routes store model_dump(), which
+    # would silently drop an undeclared key (doc 40 §3.3.3).
+    computed: List[ComputedVar] = []
     steps: List[PlaybookStep]
     rollback: List[PlaybookStep] = []
 
@@ -195,7 +240,43 @@ class PlaybookDefinition(BaseModel):
         names = [s.name for s in self.steps]
         if len(names) != len(set(names)):
             raise ValueError("step names must be unique")
+        self._validate_computed()
         return self
+
+    def _validate_computed(self) -> None:
+        if len(self.computed) > playbook_expr.MAX_ENTRIES:
+            raise ValueError(
+                f"COMPUTE_LIMIT: at most {playbook_expr.MAX_ENTRIES} computed entries"
+            )
+        earlier: set = set()
+        for entry in self.computed:
+            name = f"computed.{entry.key}"
+            if name in earlier:
+                raise ValueError(f"computed key '{entry.key}' is declared twice")
+            for operand in playbook_expr.names(playbook_expr.parse(entry.expr)):
+                if is_secret_name(operand):
+                    raise ValueError(
+                        f"COMPUTE_SECRET: computed '{entry.key}' reads secret-named '{operand}'"
+                    )
+                if operand.startswith("computed.") and operand not in earlier:
+                    raise ValueError(
+                        f"COMPUTE_NAME: computed '{entry.key}' may only read earlier "
+                        f"computed keys, not '{operand}'"
+                    )
+            earlier.add(name)
+        # templates, requests, preconditions, on_failure and rollback
+        steps = [s.model_dump() for s in self.steps] + [s.model_dump() for s in self.rollback]
+        used = [
+            head.group(1)
+            for text in playbook_expr.strings(steps)
+            for match in playbook_expr.TOKEN_SHAPE.finditer(text)
+            if (head := _COMPUTED_HEAD.match(match.group("body")))
+        ]
+        for key in dict.fromkeys(used):
+            if f"computed.{key}" not in earlier:
+                raise ValueError(
+                    f"COMPUTE_NAME: {{{{computed.{key}}}}} is used but not declared in 'computed'"
+                )
 
 
 class PlaybookBase(BaseModel):

@@ -24,10 +24,9 @@ pre-baked chain.
 
 | Model | Table | Key Fields | Purpose |
 |-------|-------|-----------|---------|
-| `DeviceCredential` | `device_credential` | name, kind (CHECK: CREDENTIAL_KINDS), username, `secret_ciphertext`/`dek_wrapped`/`kek_id`, fingerprint, binding FKs (inventory_item/device_type/network_access) | Envelope-encrypted per-tenant device secret (canon C1/C19). Secret never round-trips — Out schema exposes only `has_secret` + fingerprint |
-| `NetworkAccess` | `network_access` | name, kind (CHECK: acs\|olt), mode (CHECK: direct\|vpn\|tunnel\|nat_zt\|nat_public), is_default, mgmt_subnets (JSON CIDRs), acs_base_url, **`gateway_host`** (String, nullable — NAT transport, 2026-08-13), **`pylon_socks5`** (String, nullable — per-tenant Pylon SOCKS5 endpoint, 2026-08-17) | Per-tenant transport config (canon C9). `mgmt_subnets`-based longest-prefix match was never implemented; `transport.py::resolve_endpoint` reads only the default `kind='olt'` row — see below |
-| `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE |
-| `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval | Tenant provisioning enable gate — a per-tenant singleton (canon C6). Absence of a row = DISABLED (fail-safe) |
+| `DeviceCredential` | `device_credential` | name, kind (CHECK: CREDENTIAL_KINDS), username, `secret_ciphertext`/`dek_wrapped`/`kek_id`, fingerprint, binding FKs (inventory_item/device_type) | Envelope-encrypted per-tenant device secret (canon C1/C19). Secret never round-trips — Out schema exposes only `has_secret` + fingerprint. `tr1` dropped the third binding FK, `network_access_id`, with the table it pointed at: resolution is now inventory_item > device_type > **both NULL = the company default** |
+| `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE — plus the partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` (`ac1`), because the two-column UNIQUE does NOT cover NULL-oui rows |
+| `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval, **`dial_target`** (`device`\|`gateway`, NOT NULL default `device`), **`proxy_kind`** (`none`\|`socks5`, NOT NULL default `none`), **`proxy_address`**, **`gateway_host`**, **`acs_base_url`** (read-only), **`acs_auth_required`** (Boolean NOT NULL default false — the Capa 3 gate), **`cwmp_credential_id`** / **`cwmp_pending_credential_id`** (FK device_credential SET NULL) — all eight from `tr1_transport_axis` | Per-tenant provisioning gate **and** transport/ACS configuration — a per-tenant singleton (canon C6 + C9). Absence of a row = provisioning DISABLED (fail-safe). `tr1_transport_axis` folded the whole multi-row `network_access` table in here — see the transport-axis section below |
 | `DeviceActionLog` | `device_action_log` | actor_kind, actor_user_id, device_kind, device_identity, action, before_data/after_data (secret-redacted JSON), provisioning_job_id | Append-only device audit trail (canon C14). No `updated_at`; immutability enforced by a Postgres `BEFORE UPDATE OR DELETE` trigger (nc1b) |
 
 ## `ProvisioningJob` extensions (nc1a)
@@ -125,7 +124,7 @@ disappears" independently. The chain is
 There is no new node entity — a network element **is** an `InventoryItem` that
 has been attached to the graph. Everything provisioning needs is already keyed by
 `inventory_item.id` (`mgmt_host`/`mgmt_port`/`cli_protocol`, the device type and
-its category, credential bindings, `network_access_id`, the ACS registration,
+its category, credential bindings, `nat_port`, the ACS registration,
 `client_service_id`, `warehouse_id`, `uq_provisioning_job_device_lock`), so a
 parallel node table would either duplicate all of it or force a join at every one
 of those call sites — and would re-create exactly the `network_node_type` /
@@ -146,6 +145,106 @@ Constraints and indexes:
 
 Model-side, `InventoryItem` gains the `parent` (with `remote_side=[id]`) and
 `children` relationships.
+
+### Link ports (`lp1_link_ports`)
+
+Two free-text labels describe the `parent_id` edge itself:
+
+| Column | Definition | Notes |
+|---|---|---|
+| `inventory_item.parent_port` | VARCHAR(64) NULL | Port **on the parent** this item plugs into ("PON 16", "OUT 3", "sfp-sfpplus1") |
+| `inventory_item.uplink_port` | VARCHAR(64) NULL | This item's **own** port facing the parent ("GE1"); usually blank for splitters |
+
+`uq_inventory_item_parent_port` — partial unique index on `(parent_id,
+parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
+Both describe the current link, so backend-erp's reparent and detach clear them;
+attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
+Doc 40 supersedes them with real ports and links (below): once a node is linked
+the API derives both labels from the link's port names, and the columns are
+dropped later (C8b).
+
+### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
+
+Additive and inert: the revision creates no rows. Ports and links only appear
+once a backend that writes them (cycle C2) is deployed.
+
+**Templates.** `device_type.port_template` (JSON, `none_as_null`, NULL = no
+template) is a list of port groups, e.g.
+`[{"name": "{slot}/{n}", "slots": [1], "start": 1, "count": 16, "medium": "PON", "direction": "DOWN"}]`.
+`schemas/inventory.py` validates it (`PortTemplateGroup` + `validate_port_template`)
+and `expand_port_template` turns it into one `PortSpec(slot, number, name,
+medium, direction)` per port: only `{slot}`/`{n}` placeholders (`str.replace`,
+never `str.format`), a group `name` pattern of at most 64 characters and at
+most 256 `slots` entries (both bounded before expansion), slots 0–255, start 0–4095, count 1–256, ≤ 32 groups and
+≤ 1,024 ports, names matching `PORT_NAME_PATTERN`
+(`^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$` — they reach device CLIs), unique
+case-insensitively, PON ports unique on (slot, number, direction).
+`ck_device_type_ports_serialized` (`port_template IS NULL OR is_serialized`)
+backs the schema's `PORT_TEMPLATE_REQUIRES_SERIALIZED`. `device_type.path_role`
+(VARCHAR(32), `PATH_ROLE_PATTERN`, not secret-named, not unique) names the
+node for `path.<role>.*`; `path_role_shadows_category(db, role)` is the DB half
+of the backend's 422 `PATH_ROLE_SHADOWS_CATEGORY`.
+
+**`InventoryItemPort`** (`inventory_item_port`):
+
+| Column | Definition |
+|---|---|
+| `item_id`, `company_id` | composite FK `fk_item_port_item` → `inventory_item (id, company_id)` ON DELETE CASCADE |
+| `name` | VARCHAR(32): "1/4", "9:1", "ether2", "OUT 6", "IN", "PON" |
+| `slot` | SMALLINT NULL, 0–255 — structural only, an OLT slot is not a line card |
+| `number` | SMALLINT, 0–4095 |
+| `medium` / `direction` / `origin` | `PORT_MEDIA` (ETH, PON) / `PORT_DIRECTIONS` (UP, DOWN, ANY) / `PORT_ORIGINS` (TEMPLATE, ITEM = per-item addition) |
+
+Indexes: `uq_item_port_name` on `(item_id, lower(name))`; `uq_item_port_pon_number`
+on `(item_id, coalesce(slot, -1), number, direction) WHERE medium = 'PON'`
+(partial on both Postgres and SQLite); `uq_item_port_identity (id, item_id,
+company_id)` is the target of the link FKs. `inventory_item` gains
+`uq_inventory_item_id_company (id, company_id)` as the item-side target.
+
+**`NetworkLink`** (`network_link`) — one row per device whose upstream port is
+known: `up_item_id`/`up_port_id` (NOT NULL), `down_item_id`/`down_port_id`
+(port nullable), `source` (`NETWORK_LINK_SOURCES`: OFFICE, FIELD, IMPORT),
+`task_id` (SET NULL), `created_by_id` (SET NULL).
+
+| Constraint | Rule |
+|---|---|
+| `fk_link_up_port` | `(up_port_id, up_item_id, company_id)` → port identity, NO ACTION |
+| `fk_link_down_item` | `(down_item_id, company_id)` → item, ON DELETE CASCADE |
+| `fk_link_down_port` | `(down_port_id, down_item_id, company_id)` → port identity, NO ACTION (MATCH SIMPLE) |
+| `uq_link_up_port`, `uq_link_down_port`, `uq_link_down_item` | a port feeds one link; a device has one upstream link — still a tree |
+| `ck_link_not_self` | `up_item_id <> down_item_id` |
+
+The composite FKs make cross-tenant links, and links naming another item's port,
+impossible on Postgres. Deleting only a device's own linked port fails
+(NO ACTION); deleting the whole leaf ONU passes because Postgres checks NO ACTION
+after the statement's cascades. ANY ports cannot be held twice (once up, once
+down) by a constraint — the backend's single writer checks both under a lock.
+
+**`parent_id` stays derived.** Invariant: for every link,
+`inventory_item[down_item_id].parent_id = up_item_id` (the reverse does not hold:
+a parent with no link is an *unported edge*). One backend helper writes both;
+two **deferred** constraint triggers (`trg_network_link_parent_sync` on link
+insert/update, `trg_inventory_item_link_sync` on `UPDATE OF parent_id`) call
+`network_link_assert_parent()` at COMMIT and raise
+`NETWORK_LINK_PARENT_MISMATCH` otherwise. Like the ng1 guards they live only in
+the revision, never in SQLAlchemy metadata. `downgrade()` refuses while any link
+or ITEM port exists. ORM relationships are all view-only:
+`InventoryItem.ports`/`.uplink`, `InventoryItemPort.item`,
+`NetworkLink.up_port`/`.down_port`/`.down_item`. Postgres-only behaviour is
+pinned by `tests/pg/test_port_topology_pg.py` (CI job `pg`). SQLite test schemas
+have neither the triggers nor enforced FKs, so graph tests call
+`network_graph.assert_links_consistent(db)` instead.
+
+**What provisioning reads (doc 40 §3.3).** The resolver loads the links of the
+path in one company-scoped query and gives each node the port the node below
+it hangs off — `out_slot`/`out_port`/`out_port_name`, only if the link's
+`up_item_id` is that node (a reparent between the two reads must not borrow a
+port) and never on the CPE. A device type's `path_role` becomes a
+`path.<role>.*` frame when exactly one node on the path holds it. Templates read
+the CO0648 values as `path.mufa_principal.out_port` (6), `path.mufa_secundaria.out_port`
+(4) and `device.out_slot`/`device.out_port` on the OLT (1, 4). See
+[utilities.md](utilities.md#provisioning_resolutionpy) for the variables and the
+resolution-time refusal codes.
 
 ### Both guard triggers (ng1 only, never in SQLAlchemy metadata)
 
@@ -239,7 +338,7 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, category_key}]` |
+| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, playbook_version, category_key}]` (`playbook_version` since doc 40; the worker refuses a child whose playbook was edited mid-run). `path` entries likewise gain `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` — JSON, so no revision |
 | `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}}`, resolved **once** at run creation. Later children are built from this rather than re-resolved, so a re-parent landing mid-run cannot silently redirect the remaining steps to devices the operator never saw |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |
@@ -289,7 +388,7 @@ Three phases, in this order and no other.
    *instances*; deriving one from the other would mean inventing parent edges —
    fabricating physical facts about someone's plant.
 2. **Idempotent rewrite.** `workflow_step.action_config` and
-   `workflow_template.definition` get the `ENQUEUE_PROVISIONING` config key
+   `workflow_template.definition` (table since dropped) get the `ENQUEUE_PROVISIONING` config key
    `"use_topology"` → `"use_service_path"`. Predicate-guarded
    (`WHERE ... LIKE '%use_topology%'`) on both sides, so a second run matches
    nothing and leaves every row byte-identical. Only the key changes; values are
@@ -324,30 +423,188 @@ precisely that), and reverting that decision on every migrate is the bug the
 gated, so running seeds at a pre-`ng1` migration position logs a warning and
 skips instead of erroring.
 
-## NAT transport (`nat1_gateway_transport`, 2026-08-13)
+## The transport axis (`tr1_transport_axis`, 2026-09-26) — and the `network_access` table it replaced
 
-Second reachability path alongside `direct` (Phase 1) and the reserved
-`vpn`/`tunnel` rows (doc 34 §5.5): the tenant maps external ports on their own
-gateway to their devices' real management ports (`dst-nat`), and Uplink dials
-the gateway instead of the device's private address. Purely additive — no
-existing `network_access` row's `mode` changes, and `downgrade()` refuses if
-any row is in a NAT mode (see the migration's module docstring for why
-silently rewriting to `direct` would strand `gateway_host`/`nat_port` data).
+`network_access` is **gone**: the table, the `NetworkAccess` model,
+`schemas/network_access.py`, `Company.network_accesses` and
+`device_credential.network_access_id`. It had three problems, and the third is
+the one that forced the change:
 
-| Table | New columns | Purpose |
+1. Its `kind` discriminator conflated two unrelated things — `acs` was a settings
+   bucket, `outbound` was a transport.
+2. It was MULTI-ROW only to serve a per-CIDR longest-prefix resolver over
+   `mgmt_subnets`. That resolver was never implemented, and the idea is now
+   **abandoned, not deferred** — do not reintroduce `mgmt_subnets`, per-CIDR
+   paths or any "which path serves this address" lookup. The transport is
+   tenant-wide.
+3. `mode` enumerated the **cross product** of two independent questions, so the
+   fifth real operator scenario (ZeroTier with managed routes, i.e. dial the
+   device through a hop) had no value available at all.
+
+The replacement is two orthogonal columns on the tenant singleton
+`provisioning_settings`:
+
+| Column | Values | Meaning |
 |---|---|---|
-| `network_access` | `gateway_host` (String, nullable) | The tenant gateway's address on the path **we** dial — a ZeroTier address under `nat_zt`, a public IP or DDNS hostname under `nat_public`. Deliberately `String`, not `INET`: a `nat_zt` value is RFC1918, a `nat_public` value may be a hostname, so no "globally routable" assertion is made. NULL on every non-NAT row |
-| `inventory_item` | `nat_port` (Integer, nullable, CHECK 1–65535, unique per `company_id` where set) | The external port on the tenant's gateway that `dst-nat`s to this device. **Never** conflated with `mgmt_port`, which stays the device's real service port |
-| `inventory_item` | `mgmt_host_key` (String, nullable) | Pinned SSH host key (TOFU — recorded on first successful connect). Any later mismatch is a hard, non-retryable failure, never an auto-add — see backend-erp's wiki for the pre-auth enforcement mechanism |
-| `network_access` | `pylon_socks5` (String, nullable, revision `nat3_pylon_socks5`, 2026-08-17) | The tenant's own Pylon SOCKS5 listener (`"host:port"`), CHECK-required when `mode='nat_zt'`. Replaces a worker env var (`PYLON_SOCKS5`, spec N4 — retracted) after doc 34 OV17 established that one Pylon process joins exactly one ZeroTier network, so a shared fleet proxy can't serve more than one tenant |
+| `dial_target` | `device` \| `gateway` | whose address do we dial — the DEVICE's own `mgmt_host`, or the tenant gateway that `dst-nat`s to it |
+| `proxy_kind` | `none` \| `socks5` | is there a hop in front of that address, and of what sort |
+| `proxy_address` | `host:port`, NULL | the SOCKS5 listener; **required** when `proxy_kind='socks5'` (`ck_provisioning_settings_proxy_address`) |
+| `gateway_host` | String, NULL | the gateway's address on the path WE dial; **required** when `dial_target='gateway'` (`ck_provisioning_settings_gateway_host`). Deliberately `String`, not `INET`: a ZeroTier value is RFC1918 and a public one may be a DDNS hostname, so no routability assertion is possible or wanted. The per-device external port stays `inventory_item.nat_port` |
 
-`mgmt_port` also gains the range CHECK it had lacked since `nc2a` (a pre-existing gap the xlsx importer could exploit by writing 0 or 70000).
+Four combinations, five scenarios, no schema change needed for a sixth:
 
-A follow-up revision, `nat2_gateway_host_check`, adds `ck_network_access_nat_gateway_host` (`mode NOT IN ('nat_zt','nat_public') OR gateway_host IS NOT NULL`) — the "gateway_host required for NAT mode" rule was originally enforced only by `NetworkAccessCreate`'s Pydantic validator, which a mode-flipping UPDATE on an existing row could bypass entirely. This is the layer that can't be.
+| `dial_target` | `proxy_kind` | scenario | old `mode` |
+|---|---|---|---|
+| `device` | `none` | the devices have public IPs | `direct` |
+| `gateway` | `none` | NAT + port map to a public IP | `nat_public` |
+| `gateway` | `socks5` | NAT + port map reached via ZeroTier | `nat_zt` |
+| `device` | `socks5` | a hub with managed routes into the LAN — WireGuard, ZeroTier or any other | `vpn`, and the ZeroTier variant had **no** `mode` value |
 
-`NETWORK_ACCESS_MODES` widens to `("direct", "vpn", "tunnel", "nat_zt", "nat_public")`; `NAT_MODES = ("nat_zt", "nat_public")` is the subset the resolver treats specially. Both variants resolve the dial target to `(network_access.gateway_host, inventory_item.nat_port)` — they differ only in how the *gateway itself* is reached: `nat_zt` through the tenant's own ZeroTier SOCKS5 proxy (Pylon), `nat_public` over plain internet egress.
+Canon C10's edge agent becomes `proxy_kind='agent'`, not a new mode. Tailscale or
+Nebula need nothing.
 
-**`nat_zt` is dial-capable as of `nat3_pylon_socks5` (2026-08-17).** Doc 34 OV17 retracted the original shared-fleet-Pylon design: one Pylon `refract` process joins exactly one ZeroTier network, so a single Pylon cannot serve `nat_zt` for more than one tenant — it's one Pylon Railway service per tenant. `network_access.pylon_socks5` carries each tenant's own Pylon SOCKS5 endpoint (replacing the earlier `PYLON_SOCKS5` worker env var, spec N4 — retracted), and `database_utils/utils/transport.py::resolve_endpoint` reads it off the tenant's `NetworkAccess` row, failing closed with `PYLON_NOT_PROVISIONED` if it's blank/NULL. `nat_public` remains fully implemented and dial-capable — see [utilities.md](utilities.md) for `resolve_endpoint`'s full resolution logic.
+**`proxy_kind` is LOAD-BEARING and must not be "optimised away" into
+`proxy_address IS NOT NULL`.** `dial_target='device'` with no proxy is the
+legitimate public-IP case, so without an explicit stored intent the system cannot
+distinguish "no hop needed" from "a hub is intended but its address is missing" —
+and the second would silently dial an RFC1918 address from the Railway container.
+That is exactly the canon R23 fail-closed guarantee the old mode values existed to
+provide. A blank/NULL `proxy_address` under `socks5` is a HARD ERROR
+(`PROXY_NOT_PROVISIONED`), never a fallthrough. See
+[utilities.md](utilities.md) for the resolver.
+
+The hub TECHNOLOGY is deliberately NOT recorded: a Railway-internal
+ZeroTier/Pylon proxy and an external WireGuard-hub VPS are the same thing to the
+resolver, which is why the old `PYLON_NOT_PROVISIONED` / `VPN_NOT_PROVISIONED`
+split collapsed into one code. What *does* still differ is a security
+prerequisite, and it is a prerequisite rather than a code change:
+
+> **The firewall on an EXTERNAL `proxy_address`.** A Railway-internal value
+> (`pylon-acme.railway.internal:1080`) is unreachable from outside. A VPS value is
+> not, and `microsocks` ships with **no authentication** — the listener MUST be
+> restricted to Railway's egress, or anyone who learns the address has a route
+> into the tenant's LAN.
+
+Also moved off `network_access` by the same revision:
+
+| Column | Note |
+|---|---|
+| `acs_base_url` | Informational ONLY and **read-only**: nothing in code reads it, its job is telling an installer what to type into a CPE. Deliberately absent from `ProvisioningSettingsUpdate`, which makes read-only structural rather than guard-dependent (the router applies `Update` with a blanket `setattr` loop). An `http://` value would turn every CWMP POST into a bodyless GET at Railway's edge, and a CPE pointed at a dead URL has no remote fix |
+| `acs_auth_required` | The Capa 3 gate, unchanged in meaning (see the next section). `ck_network_access_acs_auth_required` ("only meaningful on the `acs` row") is not recreated — there is one row |
+| `cwmp_credential_id` / `cwmp_pending_credential_id` | The tenant TR-069 credential and, during a rotation window, its successor. Two explicit FKs to `device_credential` (ON DELETE SET NULL) replacing "newest vs second-newest `HTTP_BASIC` row bound to the tenant's `acs` row" — an inference that was fragile in both directions: a third row was undefined, and the pair rested on a `created_at DESC, id DESC` tie-break. One credential per tenant is now true by construction |
+
+`ck_provisioning_settings_cwmp_pair`
+(`cwmp_pending_credential_id IS NULL OR cwmp_credential_id <> cwmp_pending_credential_id`)
+is created. The companion "no pending without a current" CHECK is **deliberately
+NOT**: both FKs are `ON DELETE SET NULL`, so deleting the current credential
+during a rotation window would violate it through a *referential action* and turn
+an ordinary `DELETE /device-credentials/{id}` into an IntegrityError surfacing as
+a raw 500 — and a company delete has the same shape, since `device_credential` and
+`provisioning_settings` both CASCADE from `company` and Postgres does not order
+the SET NULL against the CASCADE. That invariant is a 409 in backend-erp's router,
+which also closes the pre-existing gap that a plain DELETE of an ACS Inform
+credential was never rollout-gated.
+
+### What the historical revisions still mean
+
+`nat1_gateway_transport` / `nat2_gateway_host_check` / `nat3_pylon_socks5` /
+`vpn1_vpn_socks5` / `na1_kind_outbound` are **immutable and still in the chain** —
+a fresh database migrates through all of them on its way to `tr1`. What they
+created on `network_access` no longer exists afterwards; what they created
+elsewhere does:
+
+- `inventory_item.nat_port` (Integer, nullable, CHECK 1–65535, unique per
+  `company_id` where set): the external port on the tenant's gateway that
+  `dst-nat`s to this device. **Never** conflated with `mgmt_port`, which stays the
+  device's real service port. Still live, still the gateway scenarios' operand.
+- `inventory_item.mgmt_host_key` (String, nullable): pinned SSH host key (TOFU —
+  recorded on first successful connect). Any later mismatch is a hard,
+  non-retryable failure, never an auto-add.
+- `mgmt_port`'s range CHECK, the gap `nc2a` left and the xlsx importer could
+  exploit by writing 0 or 70000.
+
+The data move `tr1` performs, for the record: per company, the default
+`kind='outbound'` row and the default `kind='acs'` row fold into one settings row
+(`direct`→device+none, `vpn`→device+socks5 carrying `vpn_socks5`,
+`nat_public`→gateway+none, `nat_zt`→gateway+socks5 carrying `pylon_socks5`;
+`gateway_host` verbatim), INSERTing with **`enabled = false`** where the tenant had
+no settings row — canon C6 says absence means DISABLED, so inserting `true` would
+silently enable provisioning. `mode='tunnel'` aborts the revision by name (it has
+no mapping on the axis and the API never allowed it), and the non-default rows that
+die with the table are counted and logged. `downgrade()` reverses the values
+exactly but is not a true inverse: `name` is synthesised (`'ACS'`/`'Outbound'`),
+`mgmt_subnets` is gone for good, and only the two cwmp credentials are re-bound.
+
+## Capa 3 — per-tenant CWMP Inform authentication (`ac1_acs_tenant_auth`, 2026-09-25)
+
+A CPE identifies itself to GenieACS by serial number alone, which is printed on
+the device label, so tenant attribution rested on public information. Capa 3
+adds credential proof. Tenant attribution itself stays serial-derived (GenieACS
+is not patched); the password only authenticates it.
+
+> **Storage note (2026-09-26).** `ac1` put `acs_auth_required` and the credential
+> binding on `network_access`. `tr1_transport_axis` moved both onto
+> `provisioning_settings` — the switch keeps its name and semantics exactly, and the
+> credential became two explicit FKs. Everything below about the MECHANISM (the
+> `cwmp.auth` expression, fail-open, the secret-storage rule) is unchanged.
+
+| Table | New column / index | Purpose |
+|---|---|---|
+| `provisioning_settings` (`network_access` until `tr1`) | `acs_auth_required` (Boolean NOT NULL, `server_default false`) | The per-tenant switch. Default-OFF as a DB constraint; OFF means **ALLOW**. `ac1`'s companion CHECK `ck_network_access_acs_auth_required` ("only meaningful on the `acs` row") is not recreated on the singleton — there is one row |
+| `acs_device_registration` | partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` | Multi-tenancy. `uq_acs_registration_identity` is a plain two-column UNIQUE and Postgres treats NULLs as distinct, while `oui` is nullable and `_normalize_oui` returns `None` unchanged for an omitted OUI — so `(NULL, serial)` could repeat and the inform-auth lookup's `.first()` could hand one tenant's CWMP password to another tenant's CPE. `_normalize_oui` coerces a blank OUI to `None` (it used to return `''`, which put a second, index-invisible key on the same physical device) so every no-OUI write lands under this index |
+| `permission` | row `device_credentials.reveal`, no role grant | Reading back a stored plaintext secret. **ADMIN role ONLY** — granted solely by the convergent seed's global-ADMIN cross-join; MANAGER is withheld (the name is in BOTH `isp_seed.ADMIN_ONLY_PERMISSIONS` and `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`) and no `ISP_ROLES` entry — NOC included — lists it |
+
+The credential itself needs **no new columns on `device_credential`**: it is an
+ordinary `DeviceCredential` row of `kind='HTTP_BASIC'`, with `username` NULL
+because the CWMP username is the per-device serial. The accept-both rotation
+window is a **second** such row — rotation is create-new -> roll out ->
+delete-old, and `POST /{id}/rotate` (which overwrites in place) is simply not used
+for this credential. Hence no `pending_*` columns.
+
+Since `tr1_transport_axis` the PAIR is stated rather than inferred:
+`provisioning_settings.cwmp_credential_id` is the current secret and
+`cwmp_pending_credential_id` the one being rolled out. `ac1` identified them as
+"newest and second-newest `HTTP_BASIC` row bound via `network_access_id` to the
+tenant's `acs` row", which left a third row undefined and made the pair depend on
+a `created_at DESC, id DESC` tie-break; the two FKs remove both problems and make
+one credential per tenant true by construction. The `ponytail:` note that used to
+sit here — "more than two bound rows is undefined, add a constraint if a tenant
+trips it" — is resolved rather than deferred: there is no third slot to fill.
+
+### Secret storage: which primitive, and why (the rule to follow)
+
+**Can the system ever need the original value back?**
+
+- **No -> bcrypt.** Human login passwords (`User.password`): Uplink does the
+  comparison itself, so a one-way hash is both sufficient and correct.
+- **Yes -> `encrypt_secret` envelope AES-256-GCM** (`database_utils/utils/crypto.py`).
+  Machine credentials: SSH, SNMP, WireGuard, TR-069 — including this CWMP Inform
+  password. Something outside Uplink performs the comparison, so Uplink must be
+  able to reproduce the plaintext.
+
+That is one rule with two branches, not an inconsistency, and it is why the
+`device_credentials.reveal` endpoint can exist at all — a deliberate,
+permission-gated, audited exception to the write-only-secrets canon in
+backend-erp's `routers/device_credentials.py`.
+
+**Why the bcrypt variant was dropped.** An earlier branch
+(`feat/network-config/acs-tenant-credentials`, revision `nc1d`) stored a bcrypt
+hash of the tenant password, to standardize on the same utilities used for
+`User.password`. It cannot work: the comparison does not happen in Uplink, it
+happens inside GenieACS via `AUTH(username, password)`, which needs the expected
+**plaintext** — Basic does `authentication["password"] === e[3]` and Digest feeds
+the plaintext into the digest computation. There is no hand-GenieACS-a-hash
+hook, and patching GenieACS is explicitly out of scope (attribution stays
+serial-derived). bcrypt is also mutually exclusive with the reveal endpoint by
+construction. `nc1d` was never merged. Luis Sactic's column shape informed the
+final design.
+
+**The gate fails OPEN, by design.** An EXT fault or timeout in the `cwmp.auth`
+expression yields null, and the expression's mandatory `ELSE true` makes that
+ALLOW. So a backend outage silently disables Capa 3 rather than bricking the
+fleet — the opposite tradeoff from failing closed, and the deliberate one: the
+alternative drops every CPE of every tenant during a blip. Deleting the
+`cwmp.auth` Mongo document is the emergency brake (live within 5s, no deploy).
 
 ## Open value sets (CHECK-constrained strings, not PG enums)
 
@@ -357,9 +614,11 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 
 - `CREDENTIAL_KINDS`: SSH, TELNET, SNMP_COMMUNITY, TR069_CONNECTION_REQUEST, HTTP_BASIC,
   HTTP_BEARER, WIREGUARD, AGENT
-- `NETWORK_ACCESS_KINDS`: acs, olt · `NETWORK_ACCESS_MODES`: direct, vpn, tunnel, nat_zt, nat_public
-  (`NAT_MODES` = nat_zt, nat_public — 2026-08-13, `nat1_gateway_transport`, see the NAT transport
-  section above)
+- `DIAL_TARGETS`: device, gateway · `PROXY_KINDS`: none, socks5 — the transport axis
+  (`tr1_transport_axis`, 2026-09-26; matching `ck_provisioning_settings_dial_target` /
+  `_proxy_kind`, pinned by `tests/test_transport_axis.py`). They REPLACE
+  `NETWORK_ACCESS_KINDS` / `NETWORK_ACCESS_MODES` / `NAT_MODES`, which are deleted
+  along with the `network_access` table — see the transport-axis section above
 - **Cycle 7**: `DEVICE_CATEGORY_TIERS`: CORE, EDGE · `CLI_PROTOCOLS`: ssh, telnet ·
   `INSTALL_STATES`: NOT_INSTALLED, IN_PROGRESS, INSTALLED (SQL CHECK fragments kept
   byte-identical between `models/isp.py` and the nc2a migration, guarded by
@@ -369,9 +628,9 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 - **backend-erp** — the `genieacs` driver, worker loops (`acs_sync`, PENDING_INFORM
   poller, lease reaper), blast-radius gates, and the network-config routers consume all
   of these. Credentials are decrypted via `database_utils/utils/crypto.py`.
-- **auth-erp `Company`** — back-populates `device_credentials`, `network_accesses`,
+- **auth-erp `Company`** — back-populates `device_credentials`,
   `acs_device_registrations`, `provisioning_settings`, `device_action_logs` (all
-  `ondelete=CASCADE`).
+  `ondelete=CASCADE`). `network_accesses` is gone with `tr1_transport_axis`.
 - **acs-erp / GenieACS** — `acs_device_registration` maps informing CPEs to tenants.
 - **Cycle 10** — backend-erp's `routers/network_graph.py` (tree, search, attach /
   reparent / detach, impact) and the binding endpoints read these tables through
@@ -384,9 +643,15 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 - `AcsDeviceRegistration.state` is a **derived** property (no enum column):
   QUARANTINED (NULL company) / PRE_REGISTERED / STALE / ONLINE (informed within
   `ACS_STALE_AFTER_SECONDS` = 900).
-- Credential binding FKs live **on** the credential row (canon C19); no other table
-  carries an FK pointing at a credential. Resolution order: inventory_item >
-  device_type > network_access default.
+- Credential binding FKs live **on** the credential row (canon C19). Resolution
+  order: inventory_item > device_type > **both NULL = the company default**
+  (`tr1_transport_axis` dropped the `network_access_id` tier with its table, and
+  replaced it with the unbound-default rung so a tenant-wide SSH/TELNET/WIREGUARD
+  credential still has somewhere to live). The tenant's TR-069 Inform credential is
+  the one exception to "no other table carries an FK pointing at a credential":
+  `provisioning_settings.cwmp_credential_id` / `cwmp_pending_credential_id` name it
+  explicitly, because there is exactly one per tenant and the accept-both rotation
+  window needs the pair stated rather than inferred.
 - **Canonical graph order is leaf → root, everywhere** (doc 35 §3.1): the
   subscriber's own device first, the core last, for every purpose, in the
   executor and in the UI alike. It is the order the traversal produces (no

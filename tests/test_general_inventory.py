@@ -164,11 +164,26 @@ def test_every_seeded_tier_is_check_legal_and_every_row_has_an_icon():
         assert icon, f"{key} has no lucide icon"
 
 
+def _ci1():
+    return _load(
+        os.path.join(_VERSIONS, "ci1_category_icons.py"), "ci1_category_icons"
+    )
+
+
 def test_icon_backfill_never_disagrees_with_the_seed():
-    inv1 = _inv1()
+    """inv1's backfill is history; after ci1's remap it must land on the seed."""
+    inv1, remap = _inv1(), _ci1()._REMAP
     seed_icons = {row[0]: row[5] for row in _seed().DEVICE_CATEGORIES}
     for key, icon in inv1._ICON_BACKFILL.items():
+        if key in remap and remap[key][0] == icon:
+            icon = remap[key][1]
         assert seed_icons[key] == icon, f"{key}: seed and backfill icons differ"
+
+
+def test_ci1_remap_lands_on_the_seed_icons():
+    seed_icons = {row[0]: row[5] for row in _seed().DEVICE_CATEGORIES}
+    for key, (_old, new) in _ci1()._REMAP.items():
+        assert seed_icons[key] == new, f"{key}: ci1 and seed icons differ"
 
 
 def test_seed_skips_the_new_vocabulary_before_inv1():

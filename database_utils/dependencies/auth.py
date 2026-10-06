@@ -125,7 +125,8 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
-    from database_utils.utils.jwt_utils import decode_token
+    from database_utils.utils.jwt_utils import decode_token, is_refresh_payload
+    from database_utils.utils.sessions import check_session
     from database_utils.models.auth import User
 
     logger.info(
@@ -149,6 +150,12 @@ async def get_current_user(
                 "is_super_admin": payload.get("is_super_admin", False)
             }
         )
+
+        if is_refresh_payload(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
 
         user_id_str = payload.get("id")
         if user_id_str is None:
@@ -183,6 +190,10 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
         )
+
+    # Revoked session (logout / reuse / deactivation / password change):
+    # 401 SESSION_REVOKED. Legacy tokens without `sid` pass until they expire.
+    check_session(db, payload)
 
     # Retrieve user from database
     try:
@@ -265,7 +276,11 @@ async def get_admin_user(
     """
     # Get user's role names from many-to-many relationship
     user_role_names = [role.name for role in user.roles]
-    has_admin_role = "ADMIN" in user_role_names
+    # Only the built-in (global) ADMIN role counts, never a tenant custom role
+    # that happens to share the name.
+    has_admin_role = any(
+        role.name == "ADMIN" and role.company_id is None for role in user.roles
+    )
 
     logger.info(
         "Verifying admin privileges",
@@ -422,8 +437,12 @@ def require_roles(allowed_roles: List[str]) -> Callable:
             }
         )
 
-        # Check if user has any of the allowed roles
-        has_allowed_role = any(role_name in allowed_roles for role_name in user_role_names)
+        # Check if user has any of the allowed roles. Only built-in (global)
+        # roles match by name, so a custom role can't impersonate one.
+        has_allowed_role = any(
+            role.name in allowed_roles and role.company_id is None
+            for role in user.roles
+        )
 
         if not has_allowed_role:
             logger.warning(

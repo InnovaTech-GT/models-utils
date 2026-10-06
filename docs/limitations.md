@@ -2,23 +2,68 @@
 
 ## Transitional / rollback-window debt
 
-- **Dual-write rollback window is still open** (Cycle 2 entity merge):
-  - `ClientService` still dual-writes into the legacy `recurring_order` table
-    (see the comment near `isp.py:256`).
-  - `order_item.product_id` is deprecated but still honored
-    (`schemas/order_item.py`).
-  - Bridge-less legacy products are treated as `SERVICE` by the workflow
-    engine (`workflow_engine.py`, catalog-merge handling).
-  - Removal awaits a post-production bake period.
-- **Legacy models retained**: `Product`, `RecurringOrder`/`RecurringOrderItem`
-  are kept for the transition and because `cron-erp` still consumes
-  RecurringOrder for recurring order generation.
+- **Dual-write rollback window: RESOLVED by `ld1_legacy_drop` (4.0.0).** The
+  legacy `product`, `recurring_order`, `recurring_order_item`, `task_state` and
+  `workflow_template` tables, their FK columns and the `products.*` /
+  `recurring_orders.*` / `task_states.*` / `workflow_templates.*` permissions are
+  gone; unbridged ACTIVE recurring orders were migrated into `client_service`.
+  The migration is irreversible (see [migrations.md](migrations.md)).
 - **`tier_change_request` table retained, model dropped**: the manual
   tier-change approval workflow (`TierChangeRequest` model, its routers, and
   its frontend UI) was removed — superseded by Recurrente self-serve
   checkout/cancel. The table itself is still physically present; its drop is
   a separate, later destructive-change release (all consuming code already
   removed from every service — this is purely the drop-after-prod rule).
+
+## Transport and Capa 3 (2026-09-25, axis 2026-09-27) — shipped limitations
+
+- **No hub with managed routes exists yet.** The `dial_target='device'` +
+  `proxy_kind='socks5'` path is complete and unit tested, but nothing has ever
+  dialled through a real one. An EXTERNAL `proxy_address` (a VPS, as opposed to a
+  Railway-internal ZeroTier/Pylon service) carries a security prerequisite that is
+  a prerequisite, not a code change: `microsocks` has no auth by default, so the
+  listener must be firewalled to Railway's egress or anyone who learns the address
+  has a route into the tenant LAN. The transport axis does NOT record which
+  technology the hop is, so nothing in code can tell an internal address from an
+  external one — this stays an operator rule. See
+  [network-models.md](network-models.md).
+- **`provisioning_settings.acs_base_url` has no writer.** It survived the fold
+  because an installer needs a URL to type into a CPE, but it is read-only by
+  construction (absent from `ProvisioningSettingsUpdate`) and nothing in code reads
+  it either. Until something sets it — a seeded platform default, or a deliberate
+  super-admin-only write path — it is a column that will read NULL for every
+  tenant that did not already have one on `network_access`.
+- **Nothing expires a credential rotation window.** The window is
+  `cwmp_credential_id` + `cwmp_pending_credential_id` and closing it is an
+  explicit commit or abort from the router. There is no reaper: a window left
+  open stays open, and both secrets keep authenticating.
+- **The per-CIDR / `mgmt_subnets` transport idea is DEAD, not deferred.**
+  `network_access` was multi-row solely to support longest-prefix resolution over
+  a JSON list of CIDRs, which was never implemented. `tr1_transport_axis` dropped
+  the column, the table and the idea. The transport is tenant-wide; do not
+  reintroduce per-address paths, and read any older document that describes them
+  as history.
+- **The Capa 3 gate fails OPEN.** An EXT fault or timeout, or an absent
+  `cwmp.auth` document, is ALLOW. Deliberate — the alternative drops every CPE
+  of every tenant during a backend blip — but it means a backend outage silently
+  disables the gate rather than announcing itself.
+- **Pre-existing `oui = ''` rows are left alone, but no new one can be written.**
+  `ac1`'s partial UNIQUE covers `oui IS NULL` only, and a NULL row and a `''` row
+  for the same serial are distinct under `uq_acs_registration_identity` too — so
+  `('','SN1')` plus `(NULL,'SN1')` both committed and two tenants could claim one
+  serial, defeating the index. `_normalize_oui` now returns `None` for a blank
+  value, so every write path lands on NULL and the index covers it. No data
+  conversion ships: converting existing `''` rows would collide with the index
+  ac1 has just built. Legacy `''` rows stay readable and are tolerated by
+  backend-erp's `_no_oui_filter()`; run
+  `select serial_number, count(*) from acs_device_registration where oui is null or oui = '' group by 1 having count(*) > 1`
+  before arming a tenant.
+- **A 500 no longer logs handler arguments.** `handle_exceptions` used to write
+  `args`/`kwargs` to loguru, which put `DeviceCredentialCreate.secret` and
+  `RotationStartRequest.secret` — a tenant's whole-fleet CWMP password — in the
+  logs on any unexpected error. It now logs argument *types* and keyword *names*
+  only, so a 500 inside a secret-carrying handler is less diagnosable from the log
+  alone; reproduce it against a scratch DB instead.
 
 ## The network graph (Cycle 10, doc 35 §10) — shipped limitations
 

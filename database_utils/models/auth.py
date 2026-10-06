@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid,
+    CheckConstraint, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -74,20 +75,22 @@ class Company(Base):
     address = Column(String, nullable=True)
     # Recurrente customer id — created lazily on the company's first checkout.
     recurrente_customer_id = Column(String, nullable=True)
+    # mi2: field-app settings, edited from Configuración > Empresa:
+    # {bank_account: {holder, bank, account, type, currency} | null,
+    #  collector_daily_goal: int | null, technician_daily_goal: int | null}.
+    # Validated by schemas.company.MobileSettings; NULL = nothing configured.
+    mobile_settings = Column(JSON, nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")
     users = relationship("User", back_populates="company", cascade="all, delete-orphan")
     clients = relationship("Client", back_populates="company", cascade="all, delete-orphan")
-    products = relationship("Product", back_populates="company", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="company", cascade="all, delete-orphan")
     invoices = relationship("Invoice", back_populates="company", cascade="all, delete-orphan")
     custom_field_definitions = relationship("CustomFieldDefinition", back_populates="company", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="company", cascade="all, delete-orphan")
-    recurring_orders = relationship("RecurringOrder", back_populates="company", cascade="all, delete-orphan")
     subscription = relationship("Subscription", back_populates="company", uselist=False, cascade="all, delete-orphan")
     payment_methods = relationship("PaymentMethod", back_populates="company", cascade="all, delete-orphan")
-    task_states = relationship("TaskState", back_populates="company", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="company", cascade="all, delete-orphan")
     # uplink-mobile integration (uf1/rs1)
     uploaded_files = relationship("UploadedFile", back_populates="company", cascade="all, delete-orphan")
@@ -111,7 +114,6 @@ class Company(Base):
     insight_dashboards = relationship("InsightDashboard", back_populates="company", cascade="all, delete-orphan")
     # Cycle 5 Phase 1: network configuration (TR-069 / GenieACS).
     device_credentials = relationship("DeviceCredential", back_populates="company", cascade="all, delete-orphan")
-    network_accesses = relationship("NetworkAccess", back_populates="company", cascade="all, delete-orphan")
     acs_device_registrations = relationship("AcsDeviceRegistration", back_populates="company", cascade="all, delete-orphan")
     provisioning_settings = relationship("ProvisioningSettings", back_populates="company", uselist=False, cascade="all, delete-orphan")
     device_action_logs = relationship("DeviceActionLog", back_populates="company", cascade="all, delete-orphan")
@@ -204,6 +206,35 @@ class Notification(Base):
     company = relationship("Company", back_populates="notifications")
 
 
+# mi2: the field apps' notification feed. Not `notification` — that table
+# holds user invitations. Produced lazily by backend-erp when the feed is read
+# (dedupe_key makes each event insert at most once per user).
+USER_NOTIFICATION_KINDS = ("TASK_ASSIGNED", "TASK_OVERDUE", "PAYMENTS_OVERDUE")
+_USER_NOTIFICATION_KIND_CHECK = "kind IN ('TASK_ASSIGNED','TASK_OVERDUE','PAYMENTS_OVERDUE')"
+
+
+class UserNotification(Base):
+    __tablename__ = "user_notification"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    kind = Column(String(32), nullable=False)
+    entity_type = Column(String(32), nullable=True)
+    entity_id = Column(Uuid, nullable=True)
+    dedupe_key = Column(String(160), nullable=False)
+    payload = Column(JSON, nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(_USER_NOTIFICATION_KIND_CHECK, name="ck_user_notification_kind"),
+        UniqueConstraint("user_id", "dedupe_key", name="uq_user_notification_dedupe"),
+        Index("ix_user_notification_feed", "user_id", "read_at", created_at.desc()),
+    )
+
+
 class AuditLog(Base):
     """Audit log for tracking super admin actions"""
     __tablename__ = "audit_log"
@@ -284,6 +315,36 @@ class PasswordResetToken(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
 
     user = relationship("User")
+
+
+class RefreshToken(Base):
+    """Server-side record of an issued refresh token (bug-fix/refresh-token-reuse).
+
+    One row per token, keyed by its `jti` claim. A login starts a new
+    `family_id`; each /refresh marks the presented row `rotated_at` +
+    `replaced_by` and inserts the successor in the same family. Presenting a
+    rotated token again is reuse: the whole family gets `revoked_at`.
+    auth-erp owns the logic (routers/auth.py); rows past `expires_at` are dead
+    and may be deleted.
+    """
+    __tablename__ = "auth_refresh_token"
+    __table_args__ = (
+        CheckConstraint("client_type IN ('web','mobile')", name="ck_auth_refresh_token_client_type"),
+        Index("ix_auth_refresh_token_family_id", "family_id"),
+        Index("ix_auth_refresh_token_user_id", "user_id"),
+        Index("ix_auth_refresh_token_expires_at", "expires_at"),
+    )
+
+    jti = Column(String(64), primary_key=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
+    client_type = Column(String(10), nullable=False, default="web")
+    issued_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    rotated_at = Column(DateTime(timezone=True), nullable=True)
+    replaced_by = Column(String(64), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class Subscription(Base):

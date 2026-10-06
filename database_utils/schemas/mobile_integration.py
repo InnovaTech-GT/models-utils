@@ -89,6 +89,11 @@ class CashSessionOut(BaseModel):
     counted_cash_cents: Optional[int] = None
     deposit_slip_photo_id: Optional[UUID] = None
     status: CashSessionStatus
+    # cr1: review trail. reviewed_by_name is computed by backend-erp.
+    submitted_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by_name: Optional[str] = None
+    review_note: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

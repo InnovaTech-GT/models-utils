@@ -1,0 +1,1341 @@
+{
+ "description": "Hash-locked cases for database_utils/utils/playbook_expr.evaluate_all (doc 40 §3.3.3). Copied byte-for-byte to frontend-erp/lib/__fixtures__/playbook_expr.json for lib/playbookExpr.ts. Each case: evaluate_all(computed, variables) must return exactly `values`, `missing` (in order) and `errors` (key + code, in order). Changing this file means changing both implementations and both hash pins.",
+ "cases": [
+  {
+   "name": "csr onu id",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 3,
+    "path.mufa_secundaria.out_port": 5
+   },
+   "values": {
+    "computed.onu_id": 37
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "csr onu id from decimal strings",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": "3",
+    "path.mufa_secundaria.out_port": "5"
+   },
+   "values": {
+    "computed.onu_id": 37
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "csr onu id lower bound",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 1,
+    "path.mufa_secundaria.out_port": 1
+   },
+   "values": {
+    "computed.onu_id": 1
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "csr onu id upper bound",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 8,
+    "path.mufa_secundaria.out_port": 16
+   },
+   "values": {
+    "computed.onu_id": 128
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "csr onu id out of range",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 9,
+    "path.mufa_secundaria.out_port": 1
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "onu_id",
+     "code": "COMPUTE_RANGE"
+    }
+   ]
+  },
+  {
+   "name": "csr svlan",
+   "computed": [
+    {
+     "key": "svlan",
+     "expr": "500 + device.out_port",
+     "min": 500,
+     "max": 599
+    }
+   ],
+   "variables": {
+    "device.out_port": 16
+   },
+   "values": {
+    "computed.svlan": 516
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "below min",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port - 10",
+     "min": 0
+    }
+   ],
+   "variables": {
+    "device.out_port": 3
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_RANGE"
+    }
+   ]
+  },
+  {
+   "name": "precedence: * before +",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "2 + 3 * 4"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 14
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "parentheses",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "(2 + 3) * 4"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 20
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "left associative minus",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "10 - 4 - 3"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 3
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "left associative divide",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "100 / 10 / 5"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 2
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "modulo precedence",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1 + 7 % 4 * 2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 7
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "unary minus",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-3 * -2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 6
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "double unary minus",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "--5"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 5
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "unary minus on group",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-(2 - 7)"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 5
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "binary then unary",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "5--3"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 8
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "negative division truncates toward zero",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-7 / 2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": -3
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "division by negative truncates toward zero",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "7 / -2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": -3
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "negative modulo keeps dividend sign",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-7 % 2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": -1
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "modulo by negative",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "7 % -2"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 1
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "negative operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port / 2"
+    }
+   ],
+   "variables": {
+    "device.out_port": "-9"
+   },
+   "values": {
+    "computed.v": -4
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "division by zero",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "5 / (3 - 3)"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_DIV_ZERO"
+    }
+   ]
+  },
+  {
+   "name": "modulo by zero",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "5 % 0"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_DIV_ZERO"
+    }
+   ]
+  },
+  {
+   "name": "largest value",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "999999999 * 2 + 147483649"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 2147483647
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "overflow",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "999999999 * 3"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_OVERFLOW"
+    }
+   ]
+  },
+  {
+   "name": "overflow negative",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-999999999 * 3"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_OVERFLOW"
+    }
+   ]
+  },
+  {
+   "name": "overflow intermediate",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "999999999 * 999999999 / 999999999"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_OVERFLOW"
+    }
+   ]
+  },
+  {
+   "name": "overflowing operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 0"
+    }
+   ],
+   "variables": {
+    "device.out_port": 2147483648
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_OVERFLOW"
+    }
+   ]
+  },
+  {
+   "name": "ten-digit literal",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1234567890"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "expression at 256 characters",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1                                                                                                                                                                                                 "
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 32
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "expression over 256 characters",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_LIMIT"
+    }
+   ]
+  },
+  {
+   "name": "64 tokens",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "-1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 30
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "65 tokens",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_LIMIT"
+    }
+   ]
+  },
+  {
+   "name": "paren depth 8",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "((((((((1))))))))"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.v": 1
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "paren depth 9",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "(((((((((1)))))))))"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_LIMIT"
+    }
+   ]
+  },
+  {
+   "name": "power operator",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "2 ** 3"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "dunder import",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "__import__('os')"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "subscript",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "x[0]"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "subscript on a variable",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port[0]"
+    }
+   ],
+   "variables": {
+    "device.out_port": 1
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "attribute call",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port.bit_length()"
+    }
+   ],
+   "variables": {
+    "device.out_port": 1
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "double quotes",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "\"1\" + 2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "single quotes",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "'1' + 2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "float literal",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1.5 * 2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "float operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port * 2"
+    }
+   ],
+   "variables": {
+    "device.out_port": 1.5
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "float string operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port * 2"
+    }
+   ],
+   "variables": {
+    "device.out_port": "1.5"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "boolean operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": true
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "boolean literal",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "true + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "python boolean literal",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "True + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "trailing newline in operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": "5\n"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "padded string operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": " 5"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "plus-signed string operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": "+5"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "ten-digit string operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.out_port + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": "1234567890"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_TYPE"
+    }
+   ]
+  },
+  {
+   "name": "newline in expression",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1 +\n2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "empty expression",
+   "computed": [
+    {
+     "key": "v",
+     "expr": ""
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "unbalanced parenthesis",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "(1 + 2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "stray closing parenthesis",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1 + 2)"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "adjacent operands",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1 2"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "dangling operator",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "1 +"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "uppercase name",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "Device.out_port"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SYNTAX"
+    }
+   ]
+  },
+  {
+   "name": "bare namespace",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "input namespace",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "input.vlan + 1"
+    }
+   ],
+   "variables": {
+    "input.vlan": 5
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "unknown namespace",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "os.system"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "secret operand",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "path.olt.password + 1"
+    }
+   ],
+   "variables": {
+    "path.olt.password": "1"
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SECRET"
+    }
+   ]
+  },
+  {
+   "name": "secret operand even when missing",
+   "computed": [
+    {
+     "key": "v",
+     "expr": "device.mgmt_host_key + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "v",
+     "code": "COMPUTE_SECRET"
+    }
+   ]
+  },
+  {
+   "name": "missing operand",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port"
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 3
+   },
+   "values": {},
+   "missing": [
+    "path.mufa_secundaria.out_port"
+   ],
+   "errors": []
+  },
+  {
+   "name": "null operand is missing",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port"
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": null,
+    "path.mufa_secundaria.out_port": null
+   },
+   "values": {},
+   "missing": [
+    "path.mufa_principal.out_port",
+    "path.mufa_secundaria.out_port"
+   ],
+   "errors": []
+  },
+  {
+   "name": "chained computed keys",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "device.out_port * 2"
+    },
+    {
+     "key": "b",
+     "expr": "computed.a + 1"
+    }
+   ],
+   "variables": {
+    "device.out_port": 16
+   },
+   "values": {
+    "computed.a": 32,
+    "computed.b": 33
+   },
+   "missing": [],
+   "errors": []
+  },
+  {
+   "name": "failed entry is reported once",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "1 / 0"
+    },
+    {
+     "key": "b",
+     "expr": "computed.a + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "a",
+     "code": "COMPUTE_DIV_ZERO"
+    }
+   ]
+  },
+  {
+   "name": "forward reference",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "computed.b + 1"
+    },
+    {
+     "key": "b",
+     "expr": "1"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.b": 1
+   },
+   "missing": [],
+   "errors": [
+    {
+     "key": "a",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "self reference",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "computed.a + 1"
+    }
+   ],
+   "variables": {},
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "a",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "computed key with a path",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "1"
+    },
+    {
+     "key": "b",
+     "expr": "computed.a.x"
+    }
+   ],
+   "variables": {},
+   "values": {
+    "computed.a": 1
+   },
+   "missing": [],
+   "errors": [
+    {
+     "key": "b",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "computed values are not read from variables",
+   "computed": [
+    {
+     "key": "a",
+     "expr": "computed.z + 1"
+    }
+   ],
+   "variables": {
+    "computed.z": 5
+   },
+   "values": {},
+   "missing": [],
+   "errors": [
+    {
+     "key": "a",
+     "code": "COMPUTE_NAME"
+    }
+   ]
+  },
+  {
+   "name": "csr playbook block",
+   "computed": [
+    {
+     "key": "onu_id",
+     "expr": "(path.mufa_principal.out_port - 1) * 16 + path.mufa_secundaria.out_port",
+     "min": 1,
+     "max": 128
+    },
+    {
+     "key": "svlan",
+     "expr": "500 + device.out_port",
+     "min": 500,
+     "max": 599
+    }
+   ],
+   "variables": {
+    "path.mufa_principal.out_port": 3,
+    "path.mufa_secundaria.out_port": 5,
+    "device.out_port": 16,
+    "device.out_slot": 1
+   },
+   "values": {
+    "computed.onu_id": 37,
+    "computed.svlan": 516
+   },
+   "missing": [],
+   "errors": []
+  }
+ ]
+}

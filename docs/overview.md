@@ -38,8 +38,8 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
 2. **Pydantic v2 schemas** — 42 modules shared between services
    ([schemas.md](schemas.md)).
-3. **Alembic migrations + idempotent seeds** — 77 revisions (head
-   `iv1_insights_v2`); RBAC, tier, and ISP catalog/template seeds run
+3. **Alembic migrations + idempotent seeds** — 89 revisions (head
+   `ld1_legacy_drop`); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -58,7 +58,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
 |---|---|
 | `backend-erp` (CRM API + provisioning worker) | pip pin by commit SHA |
 | `auth-erp` | pip pin by commit SHA |
-| `cron-erp` | pip dependency (RecurringOrder models) |
+| `cron-erp` | pip dependency (billing enums) |
 | `frontend-erp` | none directly — consumes JSON shaped by these schemas via backend proxies |
 | repo-root `docker-compose.yml` | builds this repo's Dockerfile as the one-shot `migrate` service |
 
@@ -66,7 +66,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 38 files, **375 tests** (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 56 files, **647 tests** (`tests/pg` runs only with `PG_TEST_URL`) (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and
