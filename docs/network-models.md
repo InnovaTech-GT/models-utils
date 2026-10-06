@@ -161,8 +161,8 @@ parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
 supersedes them with real ports and links (below): the model no longer maps the
 two columns or the index, backend-erp stopped reading and writing them
 (`PATCH /network/nodes/{id}/link` is gone) and derives `NetworkNodeOut.parent_port`
-/ `uplink_port` from the link only. The DB keeps them until
-`pt3_drop_port_labels` (C8b) drops them.
+/ `uplink_port` from the link only. **Dropped by `pt3_drop_port_labels`
+(C8b, 5.0.1)**, together with the index; the table above is history.
 
 ### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
 

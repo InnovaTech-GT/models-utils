@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`pt2_unmap_port_labels`**) — plus the idempotent seed
+`alembic/versions/` (head: **`pt3_drop_port_labels`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -993,3 +993,14 @@ mapping `inventory_item.parent_port` / `uplink_port` and
 the old models keeps working during the rollout. The revision exists for the CI
 migration guard. The drop is `pt3_drop_port_labels` (C8b), which ships only
 after every backend deployed against the database runs C8a (doc 40 DI-13).
+
+### `pt3_drop_port_labels` (2026-10-06)
+
+DESTRUCTIVE, on `pt2_unmap_port_labels` (doc 40 §4.2 C8b). Drops
+`uq_inventory_item_parent_port`, then `inventory_item.parent_port` and
+`uplink_port`; prints how many rows still carried a label (that text is lost).
+Idempotent (`IF EXISTS`), `lock_timeout = 5s`. **Ships only after C8a is
+deployed** on every backend that reads the database (models-utils >= 5.0.0) —
+an older backend still maps the columns and would 500 (DI-13). `downgrade()`
+re-adds both columns (NULL, no data) and the partial unique index. Verified
+up/down/up and a re-run with the columns already gone on a throwaway Postgres.

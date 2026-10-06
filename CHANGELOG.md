@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- **5.0.1** - DESTRUCTIVE: Alembic `pt3_drop_port_labels` (on `pt2_unmap_port_labels`, doc 40 §4.2 C8b) drops `uq_inventory_item_parent_port`, `inventory_item.parent_port` and `inventory_item.uplink_port` (idempotent, `lock_timeout`; prints how many rows still carried a label). No model change. **Compose and migrate only after every backend deployed against that database runs C8a (>= 5.0.0)** — an older backend still maps the columns and would 500. `downgrade()` re-adds both columns (NULL, no data) and the index.
 - **BREAKING (5.0.0)** - `InventoryItem.parent_port` / `uplink_port` and the `uq_inventory_item_parent_port` Index are no longer mapped (doc 40 §4.2 C8a; Alembic `pt2_unmap_port_labels`, a no-op on `vw1_viewer_no_credential_read`). The lp1 free-text labels are superseded by `network_link` + `inventory_item_port`; the DB keeps the columns until C8b (`pt3_drop_port_labels`), which must not migrate a database before every backend deployed on it runs C8a. Consumers that read or write the attributes must drop them first (backend-erp: `PATCH /network/nodes/{id}/link` and the legacy-label holder logic).
 
 ### Security
