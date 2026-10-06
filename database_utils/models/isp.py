@@ -1276,11 +1276,15 @@ class ProvisioningRun(Base):
     job. Children are created LAZILY, one at a time, in `plan` order: at most
     one child of a run is QUEUED or RUNNING at once. That needs no new
     ProvisioningJobStatus value (a "BLOCKED" state would touch every status
-    consumer in three services) and no change to the worker's claim query.
+    consumer in three services). The worker's claim query skips a child whose
+    device is held and keeps runs on one service in FIFO order.
 
     Three things this buys that the old single-job chain could not:
       - the per-device lock is finally correct — each child locks exactly the
-        device it configures
+        device it configures. The lock is written ONLY by the worker's claim
+        (provisioning-concurrency fix): children are created with
+        device_lock_key NULL, so creating or advancing a run can never fail on
+        another job's lock (the 2026-10-06 incident)
       - retry and cancel become per-device
       - PENDING_INFORM applies to the CPE child alone instead of stalling the
         whole path
@@ -1393,7 +1397,14 @@ class ProvisioningJob(Base):
     heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     # canon C11: per-device serialization key. The DB partial unique index below
     # is the serialization authority; in-process locks are a local optimization.
+    # Written ONLY by the worker's claim (never for dry runs) and cleared on
+    # every terminal transition; producers (create_run, advance_run, the API,
+    # the workflow engine) always insert it NULL.
     device_lock_key = Column(String, nullable=True)
+    # Revision pc1: fence token, set per claim, NULL when not executing. Every
+    # worker write after the claim is conditional on (id, status, claim_token),
+    # so a reaped or superseded executor writes nothing.
+    claim_token = Column(Uuid, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True

@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`vw1_viewer_no_credential_read`**) — plus the idempotent seed
+`alembic/versions/` (head: **`pc1_provisioning_claim_token`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -983,3 +983,13 @@ Data-only, on `cc1_client_code`. Deletes the global VIEWER role's
 decision D2 of the v1.0.0 release plan. `rbac_seed.VIEWER_PERMISSION_FILTER`
 excludes it in the same commit, otherwise the post-upgrade seed would re-grant
 it. Downgrade re-grants it.
+
+### `pc1_provisioning_claim_token` (2026-10-06)
+
+Additive, metadata-only, on `vw1_viewer_no_credential_read`.
+`ALTER TABLE provisioning_job ADD COLUMN IF NOT EXISTS claim_token UUID NULL`
+(under `lock_timeout = 5s`: the live worker polls the table every second). The
+provisioning worker's per-claim fence token (release-v1.0.0
+provisioning-concurrency fix). No index, no backfill; the three partial unique
+indexes (`uq_provisioning_job_device_lock`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_run_company_idem`) are untouched. Downgrade drops the column.
