@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 RESOURCE_LIMIT_KEYS: dict[str, str] = {
     "clients": "max_clients",
-    "products": "max_products",
     "users": "max_users",
 }
 
@@ -24,7 +23,7 @@ def check_tier_limit(db: Session, company_id: UUID, resource: str) -> None:
     Args:
         db: SQLAlchemy database session
         company_id: UUID of the company to check
-        resource: One of "clients", "products", "users"
+        resource: One of "clients", "users"
 
     Raises:
         HTTPException(402): When the current count >= the tier's configured limit
@@ -70,9 +69,6 @@ def _count_resource(db: Session, company_id: UUID, resource: str) -> int:
     if resource == "clients":
         from database_utils.models.crm import Client
         return db.query(Client).filter(Client.company_id == company_id).count()
-    elif resource == "products":
-        from database_utils.models.crm import Product
-        return db.query(Product).filter(Product.company_id == company_id).count()
     elif resource == "users":
         from database_utils.models.auth import User
         return db.query(User).filter(

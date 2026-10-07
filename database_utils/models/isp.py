@@ -16,7 +16,8 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
 """
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text,
-    Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary
+    Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
+    SmallInteger, ForeignKeyConstraint,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
 
@@ -352,6 +353,18 @@ _DEVICE_CATEGORY_TIER_CHECK = (
     "tier IN ('CORE','EDGE','CONSUMABLE','TOOL','OTHER')"
 )
 _CLI_PROTOCOL_CHECK = "cli_protocol IN ('ssh','telnet')"
+
+# doc 40 §3.1 (revision pt1_port_topology): port-level topology. Shared
+# byte-for-byte with the hand-written pt1 migration.
+PORT_MEDIA = ("ETH", "PON")
+PORT_DIRECTIONS = ("UP", "DOWN", "ANY")
+PORT_ORIGINS = ("TEMPLATE", "ITEM")          # ITEM = per-item addition
+NETWORK_LINK_SOURCES = ("OFFICE", "FIELD", "IMPORT")
+# Port names reach device CLIs through `out_port_name`, so no quotes, braces
+# or newlines. Same rule for template-expanded and per-item ports.
+PORT_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$"
+PATH_ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
+_DEVICE_TYPE_PORTS_SERIALIZED_CHECK = "port_template IS NULL OR is_serialized"
 _INSTALL_STATE_CHECK = "install_state IN ('NOT_INSTALLED','IN_PROGRESS','INSTALLED')"
 
 # ba1 (doc 30): values of the backend-computed ClientServiceOut.activation_evidence
@@ -425,22 +438,11 @@ class ServicePlan(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Billing bridge: the Product SKU this plan bills through (recurring orders).
-    product_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("product.id", ondelete="SET NULL"), nullable=True
-    )
 
     company = relationship("Company", back_populates="service_plans")
-    product = relationship("Product")
     client_services = relationship("ClientService", back_populates="service_plan")
 
     __table_args__ = (
-        # Makes the c2a Product->ServicePlan billing bridge deterministic (one
-        # plan per product). Created by revision c2a_catalog_merge.
-        Index(
-            "uq_service_plan_product", "product_id",
-            unique=True, postgresql_where=text("product_id IS NOT NULL"),
-        ),
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
         Index("ix_service_plan_company_group", "company_id", "service_group"),
     )
@@ -547,12 +549,6 @@ class ClientService(Base):
     cpe_item_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True
     )
-    # Billing link into the legacy recurring-order engine. Still dual-written
-    # during the Cycle-2 rollback window (doc 18 amendment 1) but is NEVER
-    # PATCHable — it is migration-critical bridge state, not user data.
-    recurring_order_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("recurring_order.id", ondelete="SET NULL"), nullable=True
-    )
     # SET NULL: deleting the attesting user must not erase the attestation
     # fact (adopted_at/adoption_note survive; only authorship is lost) —
     # mirrors ServiceSuspension.created_by (isp.py:410-415).
@@ -563,7 +559,6 @@ class ClientService(Base):
     company = relationship("Company", back_populates="client_services")
     client = relationship("Client", back_populates="services")
     service_plan = relationship("ServicePlan", back_populates="client_services")
-    recurring_order = relationship("RecurringOrder")
     suspensions = relationship(
         "ServiceSuspension", back_populates="client_service", cascade="all, delete-orphan"
     )
@@ -727,9 +722,25 @@ class DeviceType(Base):
     # Display unit for non-serialized lots ("m", "u", "pz"). NULL for
     # serialized types — the unit there is always "one device".
     unit = Column(String(20), nullable=True)
+    # --- port-level topology (doc 40 §3.1.2, revision pt1_port_topology) ------
+    # List of port groups expanded into inventory_item_port rows for every
+    # item of this type (schemas/inventory.py PortTemplateGroup +
+    # expand_port_template). none_as_null: an explicit None must be SQL NULL,
+    # not JSON 'null', or ck_device_type_ports_serialized rejects lot types.
+    port_template = Column(JSON(none_as_null=True), nullable=True)
+    # Per-company path role ("mufa_principal") emitted as path.<role>.* when
+    # exactly one node on a path holds it. Not unique by design.
+    path_role = Column(String(32), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        # Lot rows have no physical ports (doc 40 §3.1.2); covers writers that
+        # bypass the schema, such as the device-types xlsx sheet.
+        CheckConstraint(_DEVICE_TYPE_PORTS_SERIALIZED_CHECK,
+                        name="ck_device_type_ports_serialized"),
     )
 
     company = relationship("Company", back_populates="device_types")
@@ -868,13 +879,10 @@ class InventoryItem(Base):
     network_attached = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    # Link ports (revision lp1_link_ports). Free-text labels describing the
-    # parent_id edge: `parent_port` is the port ON THE PARENT this item plugs
-    # into ("PON 16", "OUT 3"); `uplink_port` is this item's own port facing
-    # the parent ("GE1"). Both describe the current link, so reparent/detach
-    # clear them.
-    parent_port = Column(String(64), nullable=True)
-    uplink_port = Column(String(64), nullable=True)
+    # The lp1 free-text labels (`parent_port`, `uplink_port` and the
+    # uq_inventory_item_parent_port index) are unmapped since pt2 (doc 40
+    # §4.2 C8a): the ports of an edge are network_link + inventory_item_port.
+    # The DB keeps them until pt3_drop_port_labels (C8b).
     # mi2: where the item physically is (plant: MUFA / NAP geolocated by the
     # technician in the field). WGS84 degrees; precision in metres.
     latitude = Column(Float, nullable=True)
@@ -901,8 +909,23 @@ class InventoryItem(Base):
         "EquipmentEvent", back_populates="item",
         cascade="all, delete-orphan", foreign_keys="EquipmentEvent.item_id",
     )
+    # doc 40 §3.1. View-only: rows are written through the backend helpers
+    # (sync_item_ports / set_uplink) and deleted by the DB cascades, never by
+    # ORM collection bookkeeping.
+    ports = relationship(
+        "InventoryItemPort", viewonly=True,
+        order_by="[InventoryItemPort.slot, InventoryItemPort.direction, InventoryItemPort.number]",
+    )
+    uplink = relationship(
+        "NetworkLink", viewonly=True, uselist=False,
+        primaryjoin="InventoryItem.id == foreign(NetworkLink.down_item_id)",
+    )
 
     __table_args__ = (
+        # doc 40 §3.1.1: target of the composite (id, company_id) FKs from
+        # inventory_item_port and network_link, which make cross-tenant links
+        # impossible. Always satisfiable: id is the PK.
+        UniqueConstraint("id", "company_id", name="uq_inventory_item_id_company"),
         # Serial uniqueness per company (only when a serial is recorded).
         Index(
             "uq_inventory_item_company_serial",
@@ -939,13 +962,6 @@ class InventoryItem(Base):
             "ix_inventory_item_company_attached", "company_id",
             postgresql_where=text("network_attached"),
         ),
-        # lp1: a parent port feeds exactly one child.
-        Index(
-            "uq_inventory_item_parent_port",
-            "parent_id", "parent_port",
-            unique=True,
-            postgresql_where=text("parent_port IS NOT NULL"),
-        ),
         # Figma redesign PR 8 (08-inventario §2.3).
         CheckConstraint(
             _INVENTORY_QUANTITY_CHECK, name="ck_inventory_item_quantity_positive",
@@ -954,6 +970,132 @@ class InventoryItem(Base):
         # "Con tecnico" tab and the technician app filter on the custodian.
         Index("ix_inventory_item_company_device_type", "company_id", "device_type_id"),
         Index("ix_inventory_item_company_custodian", "company_id", "custodian_user_id"),
+    )
+
+
+class InventoryItemPort(Base):
+    """A physical port on one inventory item (doc 40 §3.1.1).
+
+    Generated from device_type.port_template (origin TEMPLATE) or added per
+    item (origin ITEM). An OLT slot is only the `slot` number (decision 3).
+    The (id, item_id, company_id) unique is the target of network_link's
+    composite FKs, so a link can never name another item's or tenant's port.
+    """
+    __tablename__ = "inventory_item_port"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    name = Column(String(32), nullable=False)        # "1/4", "ether2", "OUT 6"
+    slot = Column(SmallInteger, nullable=True)        # structural only
+    number = Column(SmallInteger, nullable=False)
+    medium = Column(String(8), nullable=False)
+    direction = Column(String(4), nullable=False)
+    origin = Column(String(8), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+
+    item = relationship("InventoryItem", viewonly=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["item_id", "company_id"], ["inventory_item.id", "inventory_item.company_id"],
+            name="fk_item_port_item", ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "item_id", "company_id", name="uq_item_port_identity"),
+        CheckConstraint("slot BETWEEN 0 AND 255", name="ck_item_port_slot"),
+        CheckConstraint("number BETWEEN 0 AND 4095", name="ck_item_port_number"),
+        CheckConstraint("medium IN ('ETH','PON')", name="ck_item_port_medium"),
+        CheckConstraint("direction IN ('UP','DOWN','ANY')", name="ck_item_port_direction"),
+        CheckConstraint("origin IN ('TEMPLATE','ITEM')", name="ck_item_port_origin"),
+        # Names are unique per item, case-insensitively.
+        Index("uq_item_port_name", "item_id", text("lower(name)"), unique=True),
+        # PON numbers feed the ONU-id arithmetic, so they are unique per
+        # (slot, number, direction) too. Partial on both dialects so SQLite
+        # test schemas match Postgres.
+        Index(
+            "uq_item_port_pon_number",
+            "item_id", text("coalesce(slot, -1)"), "number", "direction",
+            unique=True,
+            postgresql_where=text("medium = 'PON'"),
+            sqlite_where=text("medium = 'PON'"),
+        ),
+        Index("ix_item_port_company", "company_id"),
+    )
+
+
+class NetworkLink(Base):
+    """A device's one upstream link, port to port (doc 40 §3.1.1).
+
+    The invariant inventory_item[down_item_id].parent_id = up_item_id is
+    written by one backend helper and backed by two deferred constraint
+    triggers that live only in revision pt1_port_topology (never in this
+    metadata: SQLite create_all cannot parse plpgsql). A device with a parent
+    but no link is an "unported edge".
+
+    The FKs to the ports are NO ACTION, not CASCADE: deleting only a device's
+    own port must not silently remove its link. up_item_id has no FK of its
+    own; the composite up-port FK pins it to the port's item.
+    """
+    __tablename__ = "network_link"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    up_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    up_port_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    down_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    down_port_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source = Column(String(8), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("task.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+
+    up_port = relationship(
+        "InventoryItemPort", viewonly=True,
+        primaryjoin="foreign(NetworkLink.up_port_id) == InventoryItemPort.id",
+    )
+    down_port = relationship(
+        "InventoryItemPort", viewonly=True,
+        primaryjoin="foreign(NetworkLink.down_port_id) == InventoryItemPort.id",
+    )
+    down_item = relationship(
+        "InventoryItem", viewonly=True,
+        primaryjoin="foreign(NetworkLink.down_item_id) == InventoryItem.id",
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["up_port_id", "up_item_id", "company_id"],
+            ["inventory_item_port.id", "inventory_item_port.item_id",
+             "inventory_item_port.company_id"],
+            name="fk_link_up_port",
+        ),
+        ForeignKeyConstraint(
+            ["down_item_id", "company_id"], ["inventory_item.id", "inventory_item.company_id"],
+            name="fk_link_down_item", ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["down_port_id", "down_item_id", "company_id"],
+            ["inventory_item_port.id", "inventory_item_port.item_id",
+             "inventory_item_port.company_id"],
+            name="fk_link_down_port",
+        ),
+        UniqueConstraint("up_port_id", name="uq_link_up_port"),
+        UniqueConstraint("down_port_id", name="uq_link_down_port"),
+        UniqueConstraint("down_item_id", name="uq_link_down_item"),  # still a tree
+        CheckConstraint("up_item_id <> down_item_id", name="ck_link_not_self"),
+        CheckConstraint("source IN ('OFFICE','FIELD','IMPORT')", name="ck_link_source"),
+        Index("ix_network_link_up_item", "up_item_id"),
+        Index("ix_network_link_company", "company_id"),
     )
 
 
@@ -1124,11 +1266,15 @@ class ProvisioningRun(Base):
     job. Children are created LAZILY, one at a time, in `plan` order: at most
     one child of a run is QUEUED or RUNNING at once. That needs no new
     ProvisioningJobStatus value (a "BLOCKED" state would touch every status
-    consumer in three services) and no change to the worker's claim query.
+    consumer in three services). The worker's claim query skips a child whose
+    device is held and keeps runs on one service in FIFO order.
 
     Three things this buys that the old single-job chain could not:
       - the per-device lock is finally correct — each child locks exactly the
-        device it configures
+        device it configures. The lock is written ONLY by the worker's claim
+        (provisioning-concurrency fix): children are created with
+        device_lock_key NULL, so creating or advancing a run can never fail on
+        another job's lock (the 2026-10-06 incident)
       - retry and cancel become per-device
       - PENDING_INFORM applies to the CPE child alone instead of stalling the
         whole path
@@ -1150,10 +1296,12 @@ class ProvisioningRun(Base):
     # The whole resolved path INCLUDING passive nodes, snapshotted at creation:
     # the run detail view must show what the path was when it ran, not what it
     # is now. [{position, item_id, serial, device_type_name, category_key,
-    #           category_tier, is_passive, playbook_id, playbook_source}]
+    #           category_tier, is_passive, playbook_id, playbook_source,
+    #           label, path_role, out_slot, out_port, out_port_name,
+    #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, category_key}]
+    # [{item_id, playbook_id, playbook_version, category_key}]
     plan = Column(JSON, nullable=False)
     # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than
@@ -1239,7 +1387,14 @@ class ProvisioningJob(Base):
     heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     # canon C11: per-device serialization key. The DB partial unique index below
     # is the serialization authority; in-process locks are a local optimization.
+    # Written ONLY by the worker's claim (never for dry runs) and cleared on
+    # every terminal transition; producers (create_run, advance_run, the API,
+    # the workflow engine) always insert it NULL.
     device_lock_key = Column(String, nullable=True)
+    # Revision pc1: fence token, set per claim, NULL when not executing. Every
+    # worker write after the claim is conditional on (id, status, claim_token),
+    # so a reaped or superseded executor writes nothing.
+    claim_token = Column(Uuid, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True

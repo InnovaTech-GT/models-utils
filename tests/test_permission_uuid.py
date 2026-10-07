@@ -49,7 +49,8 @@ def _make_admin_user(db):
         company_id=company.id,
         is_super_admin=True,
     )
-    role = Role(id=uuid.uuid4(), name="ADMIN", company_id=company.id)
+    # The built-in ADMIN role is global; a tenant role named ADMIN gets no wildcard.
+    role = Role(id=uuid.uuid4(), name="ADMIN", company_id=None)
     user.roles.append(role)
     db.add_all([user, role])
     db.commit()
@@ -71,7 +72,7 @@ def test_permission_dependency_coerces_string_id(db):
     user = _make_admin_user(db)
     token = create_access_token(user)  # payload id is a string
 
-    dependency = require_permission("products.read", lambda: db)
+    dependency = require_permission("clients.read", lambda: db)
     resolved = asyncio.run(dependency(_request_with_token(token), db=db))
 
     assert resolved.id == user.id

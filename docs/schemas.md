@@ -15,16 +15,16 @@ definition across services.
 ## Schema Modules (in `database_utils/schemas/`)
 
 One module per entity. `schemas/__init__.py` star-imports all modules and runs
-`model_rebuild()` to resolve circular Order/RecurringOrder references.
+`model_rebuild()` to resolve circular Order/billing_due forward references.
 
 | Domain | Modules |
 |---|---|
 | Auth / tenancy | `user`, `company`, `role`, `permission`, `invitation`, `notification`, `audit_log`, `requests` (Login + flat company-only Signup), `email_verification`, `password_reset` |
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
-| CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `product` (legacy), `recurring_order` (legacy), `task`, `task_state`, `task_template`, `integration` |
+| CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration` |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
 | Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`) |
-| Workflow | `workflow`, `workflow_template` |
+| Workflow | `workflow` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
 
 Two modules have been deleted over the life of this repo, and the distinction
@@ -61,8 +61,8 @@ matters when reading `__init__.py`:
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper
-- `order_item.product_id` is deprecated but still honored (catalog-merge
-  rollback window — see [limitations.md](limitations.md))
+- `order_item.product_id` is gone (`ld1_legacy_drop`); `OrderItemBase.service_plan_id`
+  is required
 - UUID fields serialize as strings in JSON responses
 
 ### Cycle 7 (core config, doc 25) — extensions to existing modules
@@ -191,6 +191,37 @@ matters when reading `__init__.py`:
 >
 > No Pydantic schema exists for `ProvisioningRun` — backend-erp shapes the
 > `/automations/runs` response itself.
+
+### Port-level topology (4.4.0, doc 40, revision `pt1_port_topology`)
+
+`schemas/inventory.py`:
+
+- `PortTemplateGroup` (`name`, `slots?`, `start` = 1, `count`, `medium`,
+  `direction`), `PortSpec`, `expand_port_template(groups)` (accepts models or
+  the raw stored dicts), `validate_port_template` (list rules; `[]` → `None`).
+  See [network-models.md](network-models.md) for every limit.
+- `DeviceTypeCreate`/`DeviceTypeUpdate`/`DeviceTypeOut` gain `port_template` and
+  `path_role`. A template on a lot type is a 422
+  `PORT_TEMPLATE_REQUIRES_SERIALIZED` (on Update only when both fields are sent;
+  the backend checks a lone template against the stored flag). `path_role` goes
+  through `normalize_path_role` (strip, blank → `None`, `PATH_ROLE_PATTERN`, not
+  secret-named); `path_role_shadows_category(db, role)` is the DB check behind
+  the backend's `PATH_ROLE_SHADOWS_CATEGORY`. On Update an explicit `null`
+  clears the template (`model_fields_set`).
+- No port/link response schemas here: backend-erp owns `PortOut`/`UplinkOut`
+  (`schemas/network_graph.py`).
+
+`schemas/playbook.py`:
+
+- `ComputedVar` (`key`, `expr`, `min?`, `max?` as strict ints) and
+  `PlaybookDefinition.computed: List[ComputedVar] = []`. Declared because the
+  library routes store `model_dump()`, which drops unknown keys. The validator
+  parses every `expr` (`utils/playbook_expr.py`), refuses secret-named keys and
+  operands, `input.*`, forward/self references, more than 16 entries, and any
+  `{{computed.x}}` token (templates, requests, preconditions, `on_failure`,
+  rollback) whose key is not declared — matched on each raw step string's
+  token bodies with the renderer's `[ \t]*` head rule, never on a JSON dump
+  (which escapes a tab).
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 

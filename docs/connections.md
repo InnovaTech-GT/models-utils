@@ -25,7 +25,7 @@ tokens, backend-erp validates them via `jwt_utils`).
 |---|---|---|
 | `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint) |
 | `auth-erp` | same SHA-pinned dependency | Auth models/schemas, `jwt_utils`, **email service + templates**, invitation/verification/reset tokens, SaaS billing models |
-| `cron-erp` | pip dependency | RecurringOrder models for recurring order generation |
+| `cron-erp` | pip dependency | `RecurrenceEnum` / client_service billing (legacy `RecurringOrder` dropped by `ld1_legacy_drop`) |
 | `frontend-erp` | none (indirect) | Consumes JSON shaped by these Pydantic schemas via backend proxies |
 | repo-root `docker-compose.yml` | `migrate` service builds this repo's `Dockerfile` | Applies Alembic head + seeds to the local Postgres before backends start |
 

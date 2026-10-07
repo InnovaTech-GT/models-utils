@@ -79,24 +79,20 @@ def test_migration_permission_matches_seed():
     assert seed_entry == ba1.ADOPT_PERMISSION
 
 
-def test_admin_only_exclusions_agree():
-    isp_seed = _load_isp_seed()
+def test_admin_only_permissions_stay_out_of_viewer():
+    # rr1_four_builtin_roles: the only auto-granting cross-joins left are
+    # ADMIN (everything) and VIEWER (read actions + web.access). The ADMIN-only
+    # keys must never match VIEWER's filter, i.e. never have action 'read'.
     rbac_seed = _load_rbac_seed()
-    # isp_seed's ADMIN-only set must be covered by rbac_seed's MANAGER
-    # exclusion, or the convergent step 3 re-grants it on the next migrate.
-    assert set(isp_seed.ADMIN_ONLY_PERMISSIONS) <= set(rbac_seed.MANAGER_EXCLUDED_PERMISSIONS)
-    assert "client_services.adopt" in isp_seed.ADMIN_ONLY_PERMISSIONS
-    assert "client_services.adopt" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
-    # legacy ADMIN-only keys must never fall out of the exclusion list
-    assert "orders.revert_payment" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
-    assert "payments.refund" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
-    # ac1 (Capa 3): revealing a stored plaintext secret is withheld from the
-    # MANAGER auto-inherit. _seed_permissions cross-joins every ISP_PERMISSIONS
-    # name onto global ADMIN *and* MANAGER minus ADMIN_ONLY_PERMISSIONS, so
-    # dropping the name from EITHER tuple silently hands every tenant manager
-    # the tenant's ACS password.
-    assert "device_credentials.reveal" in isp_seed.ADMIN_ONLY_PERMISSIONS
-    assert "device_credentials.reveal" in rbac_seed.MANAGER_EXCLUDED_PERMISSIONS
+    isp_seed = _load_isp_seed()
+    assert rbac_seed.VIEWER_PERMISSION_FILTER == (
+        "(p.action = 'read' AND p.name <> 'device_credentials.read') OR p.name = 'web.access'"
+    )
+    rows = {p["name"]: p for p in [*rbac_seed.PERMISSIONS_DATA, *isp_seed.ISP_PERMISSIONS]}
+    for name in ("client_services.adopt", "device_credentials.reveal",
+                 "orders.revert_payment", "payments.refund"):
+        if name in rows:
+            assert rows[name]["action"] != "read", name
 
 
 def test_adopt_not_granted_to_isp_base_roles():

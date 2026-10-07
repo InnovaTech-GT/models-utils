@@ -50,8 +50,7 @@ _MODEL_MAP = None
 # hand — there is no dynamic way to do this without importing the models.
 # 'network_node' REMOVED (Cycle 2 D6, revision c2d_graph_removal).
 KNOWN_RESOURCE_TYPES = frozenset({
-    "order", "client", "product", "task", "task_state",
-    "recurring_order", "invoice", "order_item",
+    "order", "client", "task", "invoice", "order_item",
     "service_plan", "client_service", "service_suspension",
     "inventory_item", "provisioning_job",
 })
@@ -62,8 +61,7 @@ def _get_model_map():
     global _MODEL_MAP
     if _MODEL_MAP is None:
         from database_utils.models.crm import (
-            Order, Client, Product, Task, TaskState,
-            RecurringOrder, Invoice, OrderItem,
+            Order, Client, Task, Invoice, OrderItem,
         )
         from database_utils.models.isp import (
             ServicePlan, ClientService, ServiceSuspension,
@@ -72,10 +70,7 @@ def _get_model_map():
         _MODEL_MAP = {
             "order": Order,
             "client": Client,
-            "product": Product,
             "task": Task,
-            "task_state": TaskState,
-            "recurring_order": RecurringOrder,
             "invoice": Invoice,
             "order_item": OrderItem,
             # ISP resources
@@ -109,7 +104,7 @@ async def check_workflow_triggers(
     Args:
         db: Current request's database session (used only for querying workflows)
         company_id: The company that owns the resource
-        resource_type: e.g. "order", "client", "product", "task"
+        resource_type: e.g. "order", "client", "task"
         event_type: "CREATED", "UPDATED", "DELETED"
         resource_id: The ID of the affected resource
         before_data: State before the change (for updates/deletes)
@@ -452,11 +447,10 @@ UPDATE_FIELD_DENYLIST: Dict[str, frozenset] = {
     # rewritten suspension/reactivation/service-removal templates (and any
     # future automation) may freely write billing_status/recurrence/
     # recurrence_end/next_generation_date/last_generated_at/quantity, but
-    # migration_source and recurring_order_id are NOT payment-ledger data —
-    # they are the c2b rollback bridge, and UPDATE_FIELD bypasses the
-    # ClientServiceUpdate schema (which already excludes both) via plain
-    # setattr/hasattr, so the engine must deny them independently.
-    "client_service": frozenset({"migration_source", "recurring_order_id"}),
+    # migration_source is NOT payment-ledger data, and UPDATE_FIELD bypasses
+    # the ClientServiceUpdate schema (which already excludes it) via plain
+    # setattr/hasattr, so the engine must deny it independently.
+    "client_service": frozenset({"migration_source"}),
     # Same rationale for the ServicePlan migration marker.
     "service_plan": frozenset({"migration_source"}),
 }
@@ -467,7 +461,7 @@ UPDATE_FIELD_DENYLIST: Dict[str, frozenset] = {
 CREATE_ENTITY_FORBIDDEN_TYPES: frozenset = frozenset({"invoice"})
 CREATE_ENTITY_FIELD_DENYLIST: Dict[str, frozenset] = {
     "order": frozenset({"paid", "payment_status", "payment_date", "total", "total_cents"}),
-    "client_service": frozenset({"migration_source", "recurring_order_id"}),
+    "client_service": frozenset({"migration_source"}),
     "service_plan": frozenset({"migration_source"}),
 }
 
@@ -692,9 +686,7 @@ def _execute_create_order(
       "order_type": "INSTALLATION",        # optional explicit signal, see below
       "client_id": "<uuid>",               # {{trigger.after.client_id}}
       "client_service_id": "<uuid>",       # {{trigger.resource_id}}
-      "items": [{"service_plan_id": "<uuid>", "quantity": 1}],   # preferred
-      # or (deprecated, dual-write rollback window):
-      # "items": [{"product_id": "<uuid>", "quantity": 1}],
+      "items": [{"service_plan_id": "<uuid>", "quantity": 1}],
       "due_date_offset_days": 0,
       "idempotency_key": "install-order-<uuid>"   # informational; dedupe below
     }
@@ -703,13 +695,9 @@ def _execute_create_order(
     start payment_status=PENDING / paid=False. The engine never writes payment
     or money state after creation — that is PaymentService's job.
 
-    Cycle 2 item resolution (D1): each item resolves against EXACTLY ONE of
-    service_plan_id (preferred — price comes from service_plan.price_cents)
-    or product_id (deprecated but still honored during the rollback window —
-    price comes from product.price_cents, and its kind for order_type
-    derivation is resolved via the service_plan.product_id bridge; a
-    bridge-less legacy product counts as SERVICE, doc 18 §1c). order_item
-    rows dual-write both FKs when a bridge exists.
+    Item resolution: each item resolves against a company-scoped
+    service_plan_id (price comes from service_plan.price_cents). The legacy
+    product_id path was removed by ld1_legacy_drop.
 
     order_type is DERIVED (utils/order_typing.derive_order_type, amendment 9)
     from the resolved items' CatalogKind, honoring this step's configured
@@ -727,7 +715,7 @@ def _execute_create_order(
     from datetime import timedelta
     from decimal import Decimal, ROUND_HALF_UP
     from database_utils.models.crm import (
-        Client, Order, OrderItem, OrderStatus, OrderType, PaymentStatus, Product,
+        Client, Order, OrderItem, OrderStatus, OrderType, PaymentStatus,
     )
     from database_utils.models.isp import ClientService, ServicePlan, CatalogKind
     from database_utils.utils.audit_utils import serialize_for_audit
@@ -777,7 +765,7 @@ def _execute_create_order(
     else:
         client_id = None
 
-    # --- Items: company-scoped plans/products, snapshots, totals in cents,
+    # --- Items: company-scoped plans, snapshots, totals in cents,
     # and the resolved kinds that feed order_type derivation ---
     items = config.get("items")
     if not isinstance(items, list) or not items:
@@ -787,14 +775,8 @@ def _execute_create_order(
         _required_uuid(item["service_plan_id"], "items[].service_plan_id", "CREATE_ORDER")
         for item in items if item.get("service_plan_id")
     ]
-    product_ids = [
-        _required_uuid(item["product_id"], "items[].product_id", "CREATE_ORDER")
-        for item in items if not item.get("service_plan_id") and item.get("product_id")
-    ]
-    if len(plan_ids) + len(product_ids) != len(items):
-        raise ValueError(
-            "CREATE_ORDER: every item needs exactly one of service_plan_id or product_id"
-        )
+    if len(plan_ids) != len(items):
+        raise ValueError("CREATE_ORDER: every item needs a service_plan_id")
 
     plan_map = {}
     if plan_ids:
@@ -808,25 +790,6 @@ def _execute_create_order(
                 f"CREATE_ORDER: service_plan(s) not found for company: {', '.join(missing_plans)}"
             )
 
-    product_map = {}
-    bridged_plans_by_product = {}
-    if product_ids:
-        products = db.query(Product).filter(
-            Product.id.in_(product_ids), Product.company_id == company_id
-        ).all()
-        product_map = {p.id: p for p in products}
-        missing_products = [str(pid) for pid in product_ids if pid not in product_map]
-        if missing_products:
-            raise ValueError(
-                f"CREATE_ORDER: product(s) not found for company: {', '.join(missing_products)}"
-            )
-        # Deprecated-path kind resolution via the c2a billing bridge;
-        # bridge-less legacy products count as SERVICE (doc 18 §1c).
-        bridged = db.query(ServicePlan).filter(
-            ServicePlan.product_id.in_(product_ids), ServicePlan.company_id == company_id
-        ).all()
-        bridged_plans_by_product = {p.product_id: p for p in bridged}
-
     total_cents = 0
     order_items = []
     item_kinds: List[str] = []
@@ -838,32 +801,17 @@ def _execute_create_order(
         if quantity <= 0:
             raise ValueError("CREATE_ORDER: item quantity must be > 0")
 
-        if item.get("service_plan_id"):
-            plan = plan_map[_required_uuid(item["service_plan_id"], "items[].service_plan_id", "CREATE_ORDER")]
-            unit_price_cents = plan.price_cents if plan.price_cents is not None else _cents_from_float(plan.price)
-            item_kinds.append(_kind_value(plan.kind))
-            total_cents += unit_price_cents * quantity
-            order_items.append(OrderItem(
-                service_plan_id=plan.id,
-                product_id=plan.product_id,  # dual-write, rollback window
-                quantity=quantity,
-                # §2.2 snapshots: app-level required for all new rows
-                unit_price_cents=unit_price_cents,
-                product_name=plan.name,
-            ))
-        else:
-            product = product_map[_required_uuid(item["product_id"], "items[].product_id", "CREATE_ORDER")]
-            unit_price_cents = product.price_cents if product.price_cents is not None else _cents_from_float(product.price)
-            bridged_plan = bridged_plans_by_product.get(product.id)
-            item_kinds.append(_kind_value(bridged_plan.kind) if bridged_plan else CatalogKind.SERVICE.value)
-            total_cents += unit_price_cents * quantity
-            order_items.append(OrderItem(
-                product_id=product.id,
-                service_plan_id=bridged_plan.id if bridged_plan else None,
-                quantity=quantity,
-                unit_price_cents=unit_price_cents,
-                product_name=product.name,
-            ))
+        plan = plan_map[_required_uuid(item["service_plan_id"], "items[].service_plan_id", "CREATE_ORDER")]
+        unit_price_cents = plan.price_cents if plan.price_cents is not None else _cents_from_float(plan.price)
+        item_kinds.append(_kind_value(plan.kind))
+        total_cents += unit_price_cents * quantity
+        order_items.append(OrderItem(
+            service_plan_id=plan.id,
+            quantity=quantity,
+            # §2.2 snapshots: app-level required for all new rows
+            unit_price_cents=unit_price_cents,
+            product_name=plan.name,
+        ))
 
     order_type = derive_order_type(item_kinds, explicit_order_type=explicit_order_type)
 
@@ -942,8 +890,6 @@ def _execute_create_task(
       "description": "...",                      # may embed {{steps.s1.resource_id}}
       "status": "PENDING",                       # optional; PENDING/ASSIGNED
                                                  #   follow the assignment
-      "task_state_id": "<uuid>",                 # legacy (pre-ts1 installs):
-                                                 #   mapped to status via its kind
       "linked_object_type": "CLIENT_SERVICE",    # Cycle-3 join key — ORDER linkage
       "linked_object_id": "<uuid>",              #   is forbidden for installs (§5.2)
       "assignee_source": "client_technician" | "fixed" | "none",   # default "none"
@@ -976,9 +922,9 @@ def _execute_create_task(
     from sqlalchemy import func
     from database_utils.models.auth import Role, User, user_role
     from database_utils.models.crm import (
-        Client, Task, TaskJobKind, TaskLinkedObjectType, TaskState,
+        Client, Task, TaskJobKind, TaskLinkedObjectType,
     )
-    from database_utils.utils.task_status import STATUS_FROM_STATE_KIND, derive_status
+    from database_utils.utils.task_status import derive_status
     from database_utils.models.isp import ClientService, DeviceType, InventoryItem
     from database_utils.utils.audit_utils import serialize_for_audit
 
@@ -986,20 +932,8 @@ def _execute_create_task(
     if not name or not str(name).strip():
         raise ValueError("CREATE_TASK: 'name' is required")
 
-    # --- Status (ts1). A legacy task_state_id still validates against the
-    # company and seeds the status from its kind. ---
+    # --- Status (ts1) ---
     requested_status = config.get("status") or None
-    task_state_id = None
-    if config.get("task_state_id") and not str(config["task_state_id"]).startswith("{{"):
-        task_state_id = _required_uuid(config.get("task_state_id"), "task_state_id", "CREATE_TASK")
-        state = db.query(TaskState).filter(
-            TaskState.id == task_state_id, TaskState.company_id == company_id
-        ).first()
-        if not state:
-            raise ValueError(
-                f"CREATE_TASK: task_state {task_state_id} not found for company {company_id}"
-            )
-        requested_status = requested_status or STATUS_FROM_STATE_KIND.get(state.kind)
 
     # --- Linked object ---
     linked_object_type = None
@@ -1161,7 +1095,6 @@ def _execute_create_task(
         device_category_id=task_device_category_id,
         company_id=company_id,
         status=status,
-        task_state_id=task_state_id,
         created_by=None,  # system-created (workflow engine), not a user
     )
     if assignees:
@@ -1178,7 +1111,6 @@ def _execute_create_task(
         "created_resource_type": "task",
         "resource_id": str(task.id),
         "status": status,
-        "task_state_id": str(task_state_id) if task_state_id else None,
         "assignee_ids": [str(u.id) for u in assignees],
         **({"skipped_assignee_ids": skipped_ids, "warning": warning} if warning else {}),
     }
@@ -1387,7 +1319,7 @@ def _execute_enqueue_provisioning_path(
     from database_utils.utils.provisioning_resolution import (
         ResolutionError, input_key,
     )
-    from database_utils.utils.provisioning_runs import create_run, find_in_flight_run
+    from database_utils.utils.provisioning_runs import create_or_get_run, find_in_flight_run
 
     rid = _uuid_or_none(config.get("client_service_id"))
     if rid is None:
@@ -1431,8 +1363,12 @@ def _execute_enqueue_provisioning_path(
         for key, value in (config.get("variables") or {}).items()
     }
 
+    # create_or_get_run dedupes on the shared run key (the engine's default key
+    # is the same one /provision and the lifecycle hooks use) and inserts in a
+    # SAVEPOINT, so losing a race to a concurrent producer returns the winner's
+    # run instead of poisoning the session — the WorkflowExecution still commits.
     try:
-        run = create_run(
+        run, created = create_or_get_run(
             db, svc, purpose=purpose,
             triggered_by=ProvisioningTrigger.WORKFLOW,
             idempotency_key=idempotency_key,
@@ -1443,6 +1379,9 @@ def _execute_enqueue_provisioning_path(
             f"Provisioning resolution failed for service {rid} (purpose={purpose}): "
             f"{e.code} — {e.detail}. Errors: {json.dumps(e.errors)}"
         )
+    if not created:
+        return {"enqueued": False, "deduped": True,
+                "run_id": str(run.id), "idempotency_key": run.idempotency_key}
 
     return {
         "enqueued": True,

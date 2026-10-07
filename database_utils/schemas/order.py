@@ -1,20 +1,15 @@
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional
 from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, computed_field, ConfigDict
 from .order_item import OrderItemInput, OrderItemOut
 from .client import ClientAccountOut, ClientOut
-import calendar
 
 # Single source of truth — reuse the model enums (doc 16 §1 contract).
 from database_utils.models.crm import (
     OrderStatus, OrderType, PaymentMethodType, PaymentStatus,
 )
 from database_utils.utils.timezone_utils import make_aware_gt, today_gt
-
-if TYPE_CHECKING:
-    from .recurring_order import RecurringOrderOut
-
 
 class OrderBase(BaseModel):
     client_id: Optional[UUID]
@@ -66,12 +61,10 @@ class OrderOut(OrderBase):
     amount_paid_cents: Optional[int] = None
     balance_cents: Optional[int] = None
     client_service_id: Optional[UUID] = None
-    recurring_order_id: Optional[UUID] = None
     client_id: UUID
     client: Optional[ClientOut]
     company_id: UUID
     order_items: List[OrderItemOut]
-    recurring_order: Optional["RecurringOrderOut"] = None
     # --- Figma redesign PR 5 (05-pagos §3.1). All three are COMPUTED by
     # backend-erp's list/detail endpoints (grouped per page, no N+1) and are
     # None when the endpoint did not annotate them — "not computed", not
@@ -80,8 +73,7 @@ class OrderOut(OrderBase):
     # "Agosto 2026" — the billed period, derived from due_date +
     # client_service.recurrence with the Spanish month names that live in
     # backend-erp (utils/dates). NOT a computed_field: models-utils has no
-    # localized month table and inventing one here would fork it. The legacy
-    # `generation_period` below stays untouched.
+    # localized month table and inventing one here would fork it.
     period_label: Optional[str] = None
     # The owning client's account rollup, reusing PR 3's ClientAccountOut
     # (master plan §2.2: extend the one account shape, never declare a
@@ -104,30 +96,3 @@ class OrderOut(OrderBase):
             self.due_date is not None
             and make_aware_gt(self.due_date).date() < today_gt()
         )
-
-    @computed_field
-    @property
-    def generation_period(self) -> Optional[str]:
-        """
-        Compute a human-readable period label for recurring orders.
-        Returns None if this is not a recurring order.
-        Uses the due_date to determine the period.
-        """
-        if not self.recurring_order or not self.due_date:
-            return None
-
-        recurrence = self.recurring_order.recurrence
-        # For recurring orders, the due_date represents the end of the billing period
-        period_date = self.due_date
-
-        if recurrence == "MONTHLY":
-            return f"{calendar.month_name[period_date.month]} {period_date.year}"
-        elif recurrence == "WEEKLY":
-            week_num = period_date.isocalendar()[1]
-            return f"Week {week_num} {period_date.year}"
-        elif recurrence == "YEARLY":
-            return f"{period_date.year}"
-        elif recurrence == "DAILY":
-            return period_date.strftime("%B %d, %Y")
-        else:
-            return period_date.strftime("%B %d, %Y")

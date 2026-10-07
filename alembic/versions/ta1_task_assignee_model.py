@@ -1,8 +1,8 @@
 """task_assignee mapped as the TaskAssignee model: schema check only
 
 Revision ID: ta1_task_assignee_model
-Revises: rt1_auth_refresh_token
-Create Date: 2026-09-30
+Revises: pc1_provisioning_claim_token
+Create Date: 2026-10-07
 
 refactor/task-assignee. The bare `task_assignee` Table became the
 `TaskAssignee` model with the same columns, primary key and
@@ -21,7 +21,7 @@ from sqlalchemy.sql import text
 
 
 revision: str = "ta1_task_assignee_model"
-down_revision: Union[str, Sequence[str], None] = "rt1_auth_refresh_token"
+down_revision: Union[str, Sequence[str], None] = "pc1_provisioning_claim_token"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

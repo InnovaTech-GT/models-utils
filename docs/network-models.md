@@ -40,7 +40,13 @@ pre-baked chain.
 - `pending_step_index` (int) — the parked step to settle on inform.
 - `pending_task_ids` (JSON) — GenieACS NBI task ids being polled.
 - `heartbeat_at` (datetime) — the lease reaper re-queues stale RUNNING jobs.
-- `device_lock_key` (str) — per-device serialization key.
+- `device_lock_key` (str) — per-device serialization key. Since the
+  provisioning-concurrency fix it is written **only by the worker's claim**
+  (never for dry runs) and cleared on every terminal transition; producers
+  insert it NULL.
+- `claim_token` (UUID, revision `pc1_provisioning_claim_token`) — fence token,
+  set per claim, NULL when not executing; every worker write after the claim is
+  conditional on `(id, status, claim_token)`.
 - **Indexes**: the idempotency partial-unique index now includes PENDING_INFORM in the
   in-flight set; a new `uq_provisioning_job_device_lock` partial-unique index enforces
   at most one live job per `device_lock_key` (canon C11).
@@ -157,8 +163,97 @@ Two free-text labels describe the `parent_id` edge itself:
 
 `uq_inventory_item_parent_port` — partial unique index on `(parent_id,
 parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
-Both describe the current link, so backend-erp's reparent and detach clear them;
-attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
+**Unmapped since `pt2_unmap_port_labels` (doc 40 §4.2 C8a, 5.0.0).** Doc 40
+supersedes them with real ports and links (below): the model no longer maps the
+two columns or the index, backend-erp stopped reading and writing them
+(`PATCH /network/nodes/{id}/link` is gone) and derives `NetworkNodeOut.parent_port`
+/ `uplink_port` from the link only. `pt2` drops the index (a C8a backend no
+longer clears a re-parented item's label, so the index would turn a move next
+to a same-labelled sibling into a unique violation); the DB keeps the two
+columns until `pt3_drop_port_labels` (C8b) drops them.
+
+### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
+
+Additive and inert: the revision creates no rows. Ports and links only appear
+once a backend that writes them (cycle C2) is deployed.
+
+**Templates.** `device_type.port_template` (JSON, `none_as_null`, NULL = no
+template) is a list of port groups, e.g.
+`[{"name": "{slot}/{n}", "slots": [1], "start": 1, "count": 16, "medium": "PON", "direction": "DOWN"}]`.
+`schemas/inventory.py` validates it (`PortTemplateGroup` + `validate_port_template`)
+and `expand_port_template` turns it into one `PortSpec(slot, number, name,
+medium, direction)` per port: only `{slot}`/`{n}` placeholders (`str.replace`,
+never `str.format`), a group `name` pattern of at most 64 characters and at
+most 256 `slots` entries (both bounded before expansion), slots 0–255, start 0–4095, count 1–256, ≤ 32 groups and
+≤ 1,024 ports, names matching `PORT_NAME_PATTERN`
+(`^[A-Za-z0-9][A-Za-z0-9/:._ -]{0,31}$` — they reach device CLIs), unique
+case-insensitively, PON ports unique on (slot, number, direction).
+`ck_device_type_ports_serialized` (`port_template IS NULL OR is_serialized`)
+backs the schema's `PORT_TEMPLATE_REQUIRES_SERIALIZED`. `device_type.path_role`
+(VARCHAR(32), `PATH_ROLE_PATTERN`, not secret-named, not unique) names the
+node for `path.<role>.*`; `path_role_shadows_category(db, role)` is the DB half
+of the backend's 422 `PATH_ROLE_SHADOWS_CATEGORY`.
+
+**`InventoryItemPort`** (`inventory_item_port`):
+
+| Column | Definition |
+|---|---|
+| `item_id`, `company_id` | composite FK `fk_item_port_item` → `inventory_item (id, company_id)` ON DELETE CASCADE |
+| `name` | VARCHAR(32): "1/4", "9:1", "ether2", "OUT 6", "IN", "PON" |
+| `slot` | SMALLINT NULL, 0–255 — structural only, an OLT slot is not a line card |
+| `number` | SMALLINT, 0–4095 |
+| `medium` / `direction` / `origin` | `PORT_MEDIA` (ETH, PON) / `PORT_DIRECTIONS` (UP, DOWN, ANY) / `PORT_ORIGINS` (TEMPLATE, ITEM = per-item addition) |
+
+Indexes: `uq_item_port_name` on `(item_id, lower(name))`; `uq_item_port_pon_number`
+on `(item_id, coalesce(slot, -1), number, direction) WHERE medium = 'PON'`
+(partial on both Postgres and SQLite); `uq_item_port_identity (id, item_id,
+company_id)` is the target of the link FKs. `inventory_item` gains
+`uq_inventory_item_id_company (id, company_id)` as the item-side target.
+
+**`NetworkLink`** (`network_link`) — one row per device whose upstream port is
+known: `up_item_id`/`up_port_id` (NOT NULL), `down_item_id`/`down_port_id`
+(port nullable), `source` (`NETWORK_LINK_SOURCES`: OFFICE, FIELD, IMPORT),
+`task_id` (SET NULL), `created_by_id` (SET NULL).
+
+| Constraint | Rule |
+|---|---|
+| `fk_link_up_port` | `(up_port_id, up_item_id, company_id)` → port identity, NO ACTION |
+| `fk_link_down_item` | `(down_item_id, company_id)` → item, ON DELETE CASCADE |
+| `fk_link_down_port` | `(down_port_id, down_item_id, company_id)` → port identity, NO ACTION (MATCH SIMPLE) |
+| `uq_link_up_port`, `uq_link_down_port`, `uq_link_down_item` | a port feeds one link; a device has one upstream link — still a tree |
+| `ck_link_not_self` | `up_item_id <> down_item_id` |
+
+The composite FKs make cross-tenant links, and links naming another item's port,
+impossible on Postgres. Deleting only a device's own linked port fails
+(NO ACTION); deleting the whole leaf ONU passes because Postgres checks NO ACTION
+after the statement's cascades. ANY ports cannot be held twice (once up, once
+down) by a constraint — the backend's single writer checks both under a lock.
+
+**`parent_id` stays derived.** Invariant: for every link,
+`inventory_item[down_item_id].parent_id = up_item_id` (the reverse does not hold:
+a parent with no link is an *unported edge*). One backend helper writes both;
+two **deferred** constraint triggers (`trg_network_link_parent_sync` on link
+insert/update, `trg_inventory_item_link_sync` on `UPDATE OF parent_id`) call
+`network_link_assert_parent()` at COMMIT and raise
+`NETWORK_LINK_PARENT_MISMATCH` otherwise. Like the ng1 guards they live only in
+the revision, never in SQLAlchemy metadata. `downgrade()` refuses while any link
+or ITEM port exists. ORM relationships are all view-only:
+`InventoryItem.ports`/`.uplink`, `InventoryItemPort.item`,
+`NetworkLink.up_port`/`.down_port`/`.down_item`. Postgres-only behaviour is
+pinned by `tests/pg/test_port_topology_pg.py` (CI job `pg`). SQLite test schemas
+have neither the triggers nor enforced FKs, so graph tests call
+`network_graph.assert_links_consistent(db)` instead.
+
+**What provisioning reads (doc 40 §3.3).** The resolver loads the links of the
+path in one company-scoped query and gives each node the port the node below
+it hangs off — `out_slot`/`out_port`/`out_port_name`, only if the link's
+`up_item_id` is that node (a reparent between the two reads must not borrow a
+port) and never on the CPE. A device type's `path_role` becomes a
+`path.<role>.*` frame when exactly one node on the path holds it. Templates read
+the CO0648 values as `path.mufa_principal.out_port` (6), `path.mufa_secundaria.out_port`
+(4) and `device.out_slot`/`device.out_port` on the OLT (1, 4). See
+[utilities.md](utilities.md#provisioning_resolutionpy) for the variables and the
+resolution-time refusal codes.
 
 ### Both guard triggers (ng1 only, never in SQLAlchemy metadata)
 
@@ -252,7 +347,7 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, category_key}]` |
+| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, playbook_version, category_key}]` (`playbook_version` since doc 40; the worker refuses a child whose playbook was edited mid-run). `path` entries likewise gain `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` — JSON, so no revision |
 | `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}}`, resolved **once** at run creation. Later children are built from this rather than re-resolved, so a re-parent landing mid-run cannot silently redirect the remaining steps to devices the operator never saw |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |
@@ -277,11 +372,15 @@ in flight dedupes instead of opening a second one.
 Children are created **lazily, one at a time**, so at most one child of a run is
 QUEUED or RUNNING at once. That needed no new `ProvisioningJobStatus` value (a
 "BLOCKED" state would have had to be understood by every status consumer across
-three services) and no change to the worker's claim query — it still picks the
-oldest QUEUED job, it simply never sees a child that does not exist yet. What
-this buys: the per-device lock is finally correct (each child locks exactly the
-device it configures), retry and cancel become per-device, and `PENDING_INFORM`
-applies to the CPE child alone instead of stalling the whole path. The mechanics
+three services). Children are inserted with `device_lock_key` NULL; the worker's
+claim takes the device lock, skips a child whose device is held, and keeps runs
+on one service in FIFO order (provisioning-concurrency fix). What this buys: the
+per-device lock is finally correct (each child locks exactly the device it
+configures, at claim time), cancel becomes per-device (backend-erp's cancel
+releases the child's lock and stops its run via `advance_run` in one commit;
+a child is never retried on its own, `RUN_CHILD_NOT_RETRYABLE`, because its
+terminal status already stopped the run), and `PENDING_INFORM` applies to the
+CPE child alone instead of stalling the whole path. The mechanics
 live in `utils/provisioning_runs.py` — see [utilities.md](utilities.md).
 
 ### `ng2_topology_drop` — guard, rewrite, then drop
@@ -302,7 +401,7 @@ Three phases, in this order and no other.
    *instances*; deriving one from the other would mean inventing parent edges —
    fabricating physical facts about someone's plant.
 2. **Idempotent rewrite.** `workflow_step.action_config` and
-   `workflow_template.definition` get the `ENQUEUE_PROVISIONING` config key
+   `workflow_template.definition` (table since dropped) get the `ENQUEUE_PROVISIONING` config key
    `"use_topology"` → `"use_service_path"`. Predicate-guarded
    (`WHERE ... LIKE '%use_topology%'`) on both sides, so a second run matches
    nothing and leaves every row byte-identical. Only the key changes; values are

@@ -25,7 +25,6 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
         {"name": "payment_status", "type": "string", "fk_to": None, "writable": False},
         {"name": "order_type", "type": "string", "fk_to": None, "writable": False},
         {"name": "client_id", "type": "uuid", "fk_to": "client"},
-        {"name": "recurring_order_id", "type": "uuid", "fk_to": "recurring_order"},
     ],
     "client": [
         {"name": "name", "type": "string", "fk_to": None},
@@ -44,30 +43,12 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
         # data pass deletes any installed UPDATE_FIELD step still writing them.
         {"name": "assigned_technician_id", "type": "uuid", "fk_to": None},
     ],
-    "product": [
-        {"name": "name", "type": "string", "fk_to": None},
-        {"name": "price", "type": "number", "fk_to": None},
-        {"name": "description", "type": "string", "fk_to": None},
-        {"name": "stock", "type": "number", "fk_to": None},
-    ],
     "task": [
         {"name": "name", "type": "string", "fk_to": None},
         {"name": "description", "type": "string", "fk_to": None},
         {"name": "position", "type": "number", "fk_to": None},
         {"name": "due_date", "type": "date", "fk_to": None},
         {"name": "status", "type": "string", "fk_to": None},
-        {"name": "task_state_id", "type": "uuid", "fk_to": "task_state"},
-    ],
-    "task_state": [
-        {"name": "name", "type": "string", "fk_to": None},
-        {"name": "color", "type": "string", "fk_to": None},
-        {"name": "position", "type": "number", "fk_to": None},
-    ],
-    "recurring_order": [
-        {"name": "recurrence", "type": "string", "fk_to": None},
-        {"name": "recurrence_end", "type": "date", "fk_to": None},
-        {"name": "status", "type": "string", "fk_to": None},
-        {"name": "client_id", "type": "uuid", "fk_to": "client"},
     ],
     # Invoice money/validity is written only by PaymentService (doc 16 §1);
     # these stay visible for trigger conditions but are engine-denylisted.
@@ -82,7 +63,7 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
     ],
     "order_item": [
         {"name": "order_id", "type": "uuid", "fk_to": "order"},
-        {"name": "product_id", "type": "uuid", "fk_to": "product"},
+        {"name": "service_plan_id", "type": "uuid", "fk_to": "service_plan"},
         {"name": "quantity", "type": "number", "fk_to": None},
     ],
     # --- ISP resources ---
@@ -116,12 +97,6 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
         {"name": "last_generated_at", "type": "date", "fk_to": None},
         {"name": "billing_status", "type": "string", "fk_to": None},
         {"name": "quantity", "type": "number", "fk_to": None},
-        # migration-critical bridge state (doc 18 amendment 1) — visible for
-        # trigger conditions only; the engine's UPDATE_FIELD denylist
-        # (workflow_engine.py) blocks writing it. migration_source is
-        # intentionally NOT listed here at all: it is pure internal audit
-        # bookkeeping with no legitimate automation use, read or write.
-        {"name": "recurring_order_id", "type": "uuid", "fk_to": "recurring_order", "writable": False},
     ],
     "service_suspension": [
         {"name": "reason", "type": "string", "fk_to": None},

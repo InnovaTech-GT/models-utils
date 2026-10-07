@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`rt1_auth_refresh_token`**) — plus the idempotent seed
+`alembic/versions/` (head: **`ta1_task_assignee_model`**) — plus the idempotent seed
 scripts that run after every upgrade.
 
 ## Goal
@@ -55,7 +55,7 @@ After `upgrade`, `env.py` runs `_run_seeds(connection)`:
 |---|---|
 | `alembic/seeds/rbac_seed.py` | Permissions and roles |
 | `alembic/seeds/tier_seed.py` | SaaS tiers |
-| `alembic/seeds/isp_seed.py` | ISP permissions, tier modules, purpose-based workflow-template blueprints (+ a convergent retirement pass that sets `is_active = FALSE` on every key in `RETIRED_TEMPLATE_KEYS` — `fiber-cut`, `maintenance`, `service-removal` — never DELETE, so run history survives; it reaches the TEMPLATE row only, not installed tenant copies), device_category baseline (Cycle 7: entries carry a CORE/EDGE tier, column-existence-gated for pre-nc2a positions; a backfill classifies existing rows only while no row has a tier yet, so admin tier edits — including clear-to-NULL — survive re-seeds) |
+| `alembic/seeds/isp_seed.py` | ISP permissions, tier modules (the workflow-template catalog + retirement pass were removed by `ld1_legacy_drop`), device_category baseline (Cycle 7: entries carry a CORE/EDGE tier, column-existence-gated for pre-nc2a positions; a backfill classifies existing rows only while no row has a tier yet, so admin tier edits — including clear-to-NULL — survive re-seeds) |
 
 The modules are importable as `seeds.*` because `env.py` adds the alembic dir to
 `sys.path`. All seeds are idempotent (ON CONFLICT / upsert), so re-runs converge
@@ -100,8 +100,10 @@ from the start).
   the global system ADMIN **only**. Total downgrade (deletes the permission +
   grants, drops index/FK/columns — attestation data is lost on downgrade).
   The seed changes ride this revision: `isp_seed.ADMIN_ONLY_PERMISSIONS` and
-  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` keep MANAGER excluded at both
-  auto-grant sites (subset-pinned by `tests/test_attested_adoption.py`).
+  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS` kept MANAGER excluded at both
+  auto-grant sites. (Both tuples were removed with MANAGER in
+  `rr1_four_builtin_roles`; ADMIN-only now means "no ISP_ROLES grant and not a
+  `read` action", pinned by `tests/test_attested_adoption.py`.)
 - **Client install-field removal (doc 31)**: `cf1_drop_client_install_fields`
   (parent `ba1_attested_adoption`) — hand-written, nc2a/ba1
   house style. **Destructive one-shot** — safe this release only because prod
@@ -566,11 +568,10 @@ authenticates it.
 - The `device_credentials.reveal` permission row (no role grant — ADMIN-only, and ADMIN comes from the convergent seed), cfg3 recipe
   (idempotent `INSERT ... ON CONFLICT (name) DO NOTHING`, per-role grant,
   post-upgrade count assertion, total `downgrade()`). ADMIN comes from the
-  convergent seed; MANAGER is withheld because the name is in BOTH
-  `isp_seed.ADMIN_ONLY_PERMISSIONS` and
-  `rbac_seed.MANAGER_EXCLUDED_PERMISSIONS`. Dropping it from either tuple hands
-  every tenant manager the tenant's ACS password, which is why
-  `tests/test_attested_adoption.py` pins both.
+  convergent seed. (MANAGER, and the exclusion tuples that withheld this from
+  it, were removed by `rr1_four_builtin_roles`; VIEWER's convergent grant only
+  matches `read` actions, so `reveal` stays ADMIN-only —
+  `tests/test_vpn_transport_constants.py` pins it.)
 
 **No `pending_*` columns, and deliberately no unique index on `(company_id,
 network_access_id)`.** The accept-both rotation window is a SECOND
@@ -587,7 +588,52 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `rt1_auth_refresh_token` (2026-09-30, head)
+### `ld1_legacy_drop` (2026-10-02, head) - DESTRUCTIVE, models-utils 4.0.0
+
+Drops `product`, `recurring_order`, `recurring_order_item`, `task_state`,
+`workflow_template` and the FK columns `order.recurring_order_id`,
+`order_item.product_id`, `service_plan.product_id`,
+`client_service.recurring_order_id`, `task.task_state_id` (with
+`uq_order_active_recurring_due_date`, `idx_order_item_product`,
+`uq_service_plan_product`). Hand-written, `lock_timeout = 5s`, idempotent
+(every step guarded by table/column existence), irreversible
+(`downgrade()` raises `NotImplementedError`, like `ng2_topology_drop`).
+Order: (a) grant-copy `products.*`->`service_plans.*`,
+`recurring_orders.*`->`client_services.*` (incl. suspend/reactivate/generate)
+once; (b) every ACTIVE `recurring_order` that no `client_service` bills
+becomes a `client_service` (same shape as c2b Pass 2, `migration_source='ld1'`)
+and its orders are repointed via `order.client_service_id` - a row without a
+client, with other than one item, or without a bridged plan RAISES (nothing is
+silently dropped); (c) delete workflows triggered on / referencing
+`recurring_order`, `product`, `task_state` (or `task_state_id`, `product_id`,
+`recurring_order_id` in step config / trigger conditions); (d) delete the
+`products.%`, `recurring_orders.%`, `task_states.%`, `workflow_templates.%`
+permissions; (e) drop columns + indexes; (f) drop tables and the
+`taskstatecolor` enum; (g) post-asserts. Tasks/templates linked via the
+`RECURRING_ORDER` enum label are nulled (the PG label stays; the Python member
+is gone). `recurrenceenum` / `recurringorderstatus` stay.
+`alembic/env.py` now gates the ISP seed on `client_service` instead of
+`workflow_template`. **Release order:** consumers must deploy code that no
+longer touches these tables before this revision reaches a database.
+Guardrails: `tests/test_legacy_drop.py`.
+
+### `ci1_category_icons` (2026-10-01)
+
+One lucide icon mapping across seed, DB, backoffice and mobile (feature
+`category-icons`). **Data-only**, with no schema or model change.
+`_REMAP = {'ROUTER': ('radio-tower', 'router'), 'OLT': ('radio', 'server')}`.
+`upgrade()` sets the new name only where the icon is still the old default or
+NULL, so an icon customised through the API is left alone. `downgrade()`
+reverts only rows still on the new name. Re-running it is a no-op.
+`isp_seed.DEVICE_CATEGORIES` carries the new names for fresh databases.
+`inv1._ICON_BACKFILL` is history and keeps the old names;
+`tests/test_general_inventory.py` checks that inv1's backfill, after ci1's
+remap, equals the seed. Default icons of the active categories: ROUTER
+`router`, SWITCH `network`, OLT `server`, ONU `house-wifi`, FIBER_OPTIC and
+PATCH_CORD `cable`. Verified up, re-run, down and up on a scratch Postgres
+(including a NULL icon and a custom icon).
+
+### `rt1_auth_refresh_token` (2026-09-30)
 
 Refresh-token reuse detection (bug-fix `refresh-token-reuse`). **Additive
 only**: creates `auth_refresh_token` (PK `jti` VARCHAR(64), `family_id`,
@@ -598,6 +644,55 @@ only**: creates `auth_refresh_token` (PK `jti` VARCHAR(64), `family_id`,
 oldest have no `jti` either) and auth-erp accepts each once, migrating it into
 a new family. `downgrade()` drops the table. Verified up/down/up on a scratch
 Postgres 16.
+
+### `mp1_technician_plan_read` (2026-10-03)
+
+Data-only, on `ld1_legacy_drop`. Grants `service_plans.read` to the global
+TECHNICIAN role so the tecnicos app's install-order sheet can list plans
+(`POST /tasks` with `service_plan_id` in backend-erp). Mirrored in
+`isp_seed.ISP_ROLES['TECHNICIAN']`; pinned by
+`tests/test_technician_plan_read.py`. `downgrade()` removes only that grant.
+
+### `pd1_client_payment_day` (2026-10-03)
+
+Additive, on `mp1_technician_plan_read`. `client.payment_day` SMALLINT NULL +
+CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
+`ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
+No backfill. `downgrade()` drops the check and the column.
+
+### `pt1_port_topology` (2026-10-04, head) — models-utils 4.4.0
+
+Additive and inert, on `sh1_service_history_repair`; hand-written (lock_timeout,
+`IF NOT EXISTS`, existence-guarded `ADD CONSTRAINT`, post-upgrade assertions).
+Doc 40 §3.1.1: `device_type.port_template`/`path_role` +
+`ck_device_type_ports_serialized`; `inventory_item.uq_inventory_item_id_company`;
+tables `inventory_item_port` and `network_link` with composite
+(port, item, company) FKs (port FKs NO ACTION); the deferred constraint triggers
+`trg_network_link_parent_sync` / `trg_inventory_item_link_sync` and their
+plpgsql functions (`NETWORK_LINK_PARENT_MISMATCH` at COMMIT), Alembic-only.
+No rows are created. `downgrade()` refuses while any `network_link` row or
+`origin = 'ITEM'` port exists (iv1 precedent), otherwise drops everything.
+Details: [network-models.md](network-models.md). Pinned by
+`tests/test_port_topology.py` (static + SQLite) and `tests/pg` (CI job `pg`).
+The resolver half of C1 (port attributes, role frames, resolution-time refusal,
+`playbook_version` in `provisioning_run.plan`) needs **no** schema change: the
+run's `path`/`plan`/`frames` are JSON. Behaviour only changes for a backend
+once it pins this SHA (C2). Before composing, re-check `alembic heads` — pt1
+assumes `sh1_service_history_repair` is head.
+
+### `cr1_cash_review` (2026-10-03)
+
+Additive, on `pd1_client_payment_day`. Admin (not the collector) closes the
+cash box: `cashsessionstatus += SUBMITTED, REJECTED, APPROVED` (CLOSED /
+DEPOSITED stay for legacy rows; labels added in an autocommit block and unused
+in the same revision); `cash_session` gains `submitted_at`, `reviewed_at`,
+`review_note` (TEXT), `reviewed_by` (FK `user` SET NULL, `CashSession.reviewer`)
+and index `ix_cash_session_company_status`; new permission
+`cash_sessions.review` (row in `rbac_seed.PERMISSIONS_DATA`, granted to the
+global ADMIN only — no base role carries it). `CashSessionOut` gains
+`submitted_at`, `reviewed_at`, `reviewed_by_name`, `review_note`.
+Downgrade drops columns/index/grant; enum labels stay (PG cannot drop them).
+Pinned by `tests/test_cash_review_models.py`.
 
 ### `mi2_mobile_field_ops` (2026-09-29)
 
@@ -794,14 +889,57 @@ On `tr1_transport_axis`. Additive: `inventory_item.parent_port` and
 the index and both columns — loses only the port labels. See
 [network-models.md](network-models.md#link-ports-lp1_link_ports).
 
-### ta1_task_assignee_model (2026-09-30)
+## Four built-in roles (rr1_four_builtin_roles)
 
-`task_assignee` is mapped as the `TaskAssignee` model instead of a bare
-`Table`, with the same columns, primary key and `ck_task_assignee_role`, so no
-DDL. The revision only asserts that the live table has `task_id`, `user_id`,
-`role` and the CHECK, and its downgrade does nothing. It exists so the model
-change travels the migrate path (the CI guard and the prod migrate workflow
-filter on `alembic/versions/**`) and a drifted database fails at migrate time.
+On `ci1_category_icons`. Product decision 2026-10-02: the global roles collapse
+to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`),
+**COLLECTOR** and **TECHNICIAN** (mobile-only, grants unchanged). Tenant custom
+roles are untouched. The revision:
+
+- inserts the `web.access` permission (gates the web dashboard in
+  frontend-erp) and grants it to VIEWER and to **every existing tenant custom
+  role** (nobody loses the web app; tenants untick it for mobile-only roles);
+- creates VIEWER;
+- renames tenant custom roles whose name collides case-insensitively with a
+  built-in to `"<name> (custom)"`;
+- remaps holders in `user_role`, `user_invitation_role` and
+  `notification.pending_role_ids`: MANAGER→ADMIN, BILLING→COLLECTOR,
+  SALES/USER/NOC/WAREHOUSE/SUPPORT→VIEWER (deduplicated), then deletes those
+  seven global roles.
+
+`rbac_seed` / `isp_seed` were edited in the same commit to stop re-creating the
+removed roles (they run after every alembic command); `_ensure_convergent_rbac`
+step 3 now grants VIEWER every `read` permission + `web.access`
+(`rbac_seed.VIEWER_PERMISSION_FILTER`), so future read permissions converge.
+**Downgrade is lossy**: it restores the seven role rows (USER with its original
+read grants, the rest empty), moves VIEWER holders to USER and drops
+`web.access`, but cannot restore who held MANAGER/SALES/NOC/... Pinned by
+`tests/test_four_builtin_roles.py`.
+
+## Service history repair (sh1_service_history_repair)
+
+On `cr1_cash_review`. Data-only, one-way (`downgrade()` raises). Reviewed by the
+product owner (2026-10-04) after an investigation of 184 RECURRING orders whose
+single line item named the client's *current* plan while `order.total_cents` and
+the payments held the price actually charged (adoption import attached each
+client to one service; `c1b_backfill` priced lines from the current product).
+
+- Tidy first: services `ACTIVE` + billing `INACTIVE` replaced by a later
+  non-cancelled service of the same client (no order overlap) become
+  `CANCELLED` at the replacement's start; `recurrence_end` = their last billed
+  order, `next_generation_date` NULL (lifecycle cancel side effects).
+- Clean switch (older price run(s) then only the current price): one CANCELLED
+  historical service per run on the company's unique SERVICE-kind plan at that
+  price (installation plans excluded); orders + line items move to it;
+  `recurrence_end` = the run's last order so `detect_missing_periods` expects
+  exactly what it billed; the current service's `activation_date` **and**
+  `created_at` move to its first current-price order (gap detection anchors on
+  `created_at`).
+- Anything else (one-off odd month, first-month discount, unmatched price,
+  multi-line orders): line price := order total / quantity only.
+- Verified on a prod snapshot copy: 39 tidied (1 overlap skipped), 51 historical
+  services, 163 orders moved, 184 lines fixed, 49 start dates shifted, 0 services
+  with new billing gaps; re-running the logic is a no-op.
 
 ## Key rules
 
@@ -825,3 +963,62 @@ filter on `alembic/versions/**`) and a drifted database fails at migrate time.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+### `cc1_client_code` (2026-10-05)
+
+Additive, on `pt1_port_topology`. `client.code` VARCHAR(16) NOT NULL: a short
+per-company client id. Backfill: `[LEGACY_ID:<code>]` in `observations` (uppercased)
+when well-formed and unique within the company; every other client gets a random
+6-char code. DB default `client_code_generate()` (plpgsql, alphabet without
+0/O/1/I/L, hand-synced with `utils/client_code.py`) so writers that predate the
+column still insert a code. `ck_client_code_format` (`^[A-Z0-9-]{1,16}$`,
+Alembic-only — PG regex) + `uq_client_company_code` on `(company_id, upper(code))`.
+`downgrade()` drops the index, CHECK, column and function.
+
+
+### `vw1_viewer_no_credential_read` (2026-10-05)
+
+Data-only, on `cc1_client_code`. Deletes the global VIEWER role's
+`device_credentials.read` grant (rr1 gave VIEWER every `*.read`); founder
+decision D2 of the v1.0.0 release plan. `rbac_seed.VIEWER_PERMISSION_FILTER`
+excludes it in the same commit, otherwise the post-upgrade seed would re-grant
+it. Downgrade re-grants it.
+
+
+### `pt2_unmap_port_labels` (2026-10-06)
+
+On `vw1_viewer_no_credential_read` (doc 40 §4.2 C8a). The model stops mapping
+`inventory_item.parent_port` / `uplink_port` and
+`uq_inventory_item_parent_port`. The DB keeps both columns, so a backend still
+on the old models keeps working during the rollout, but the revision drops the
+index (`DROP INDEX IF EXISTS`, `lock_timeout`, post-upgrade assert): a C8a
+backend no longer clears a re-parented item's label, so moving an item whose
+legacy label ("PON 1") a new sibling already carries would otherwise be a
+unique violation (a 500 on attach, reparent, the tecnicos connect step and the
+xlsx re-parent). No data is lost; an old backend still checks label uniqueness
+in code (`set_link_ports`). `downgrade()` recreates the index (IF NOT EXISTS)
+and fails if two siblings came to share a label meanwhile; rolling an old
+backend back does not need it. `tests/pg/test_port_labels_pg.py` covers the
+re-parent and the round trip. The column drop is `pt3_drop_port_labels` (C8b),
+which ships only after every backend deployed against the database runs C8a
+(doc 40 DI-13).
+
+### `pc1_provisioning_claim_token` (2026-10-06)
+
+Additive, metadata-only, on `pt2_unmap_port_labels`.
+`ALTER TABLE provisioning_job ADD COLUMN IF NOT EXISTS claim_token UUID NULL`
+(under `lock_timeout = 5s`: the live worker polls the table every second). The
+provisioning worker's per-claim fence token (release-v1.0.0
+provisioning-concurrency fix). No index, no backfill; the three partial unique
+indexes (`uq_provisioning_job_device_lock`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_run_company_idem`) are untouched. Downgrade drops the column.
+
+### `ta1_task_assignee_model` (2026-10-07)
+
+On `pc1_provisioning_claim_token`. `task_assignee` is mapped as the
+`TaskAssignee` model instead of a bare `Table`, with the same columns, primary
+key and `ck_task_assignee_role`, so no DDL. The revision only asserts that the
+live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
+does nothing. It exists so the model change travels the migrate path (the CI
+guard and the prod migrate workflow filter on `alembic/versions/**`) and a
+drifted database fails at migrate time.

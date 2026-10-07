@@ -5,8 +5,6 @@ Cycle 2 D1 (entity merge): ClientService absorbs RecurringOrder billing.
 NEVER exposed on any Create/Update/Out schema that accepts client input —
 Out below intentionally omits it (it is an internal/audit-only column,
 readable only via direct DB inspection or a future admin-only export).
-`recurring_order_id` is dropped from ClientServiceUpdate: it is
-migration-critical bridge state, not user-editable data (amendment 1).
 The ba1 adopted_* fields follow the same rule: Out-only, never on any
 Create/Update schema.
 """
@@ -58,9 +56,6 @@ class ClientServiceCreate(ClientServiceBase):
     enable_billing: bool = True
     bill_immediately: bool = True
     quantity: int = 1
-    # Deprecated alias for enable_billing, kept so callers built against the
-    # pre-merge contract don't 422 during the rollback window (doc 18 §2a).
-    create_recurring_order: Optional[bool] = None
 
 
 class ClientServiceUpdate(BaseModel):
@@ -143,10 +138,6 @@ class ClientServiceOut(ClientServiceBase):
     last_generated_at: Optional[datetime] = None
     billing_status: Optional[RecurringOrderStatus] = None
     quantity: int = 1
-    # Read-only audit/bridge visibility (never accepted on Update — amendment
-    # 1 removes it from the PATCHable field set, but it is legitimate
-    # read-only signal for understanding a migrated service's billing bridge).
-    recurring_order_id: Optional[UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 

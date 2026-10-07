@@ -1,11 +1,12 @@
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float,
-    Table, Index, CheckConstraint, UniqueConstraint
+    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger, Text,
+    Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from database_utils.database import Base
 from ..utils.timezone_utils import now_gt
+from ..utils.client_code import generate_client_code
 
 import enum
 import uuid
@@ -74,17 +75,6 @@ class CustomFieldType(str, enum.Enum):
     BOOLEAN = "BOOLEAN"
 
 
-class TaskStateColor(str, enum.Enum):
-    GRAY = "GRAY"
-    RED = "RED"
-    ORANGE = "ORANGE"
-    YELLOW = "YELLOW"
-    GREEN = "GREEN"
-    BLUE = "BLUE"
-    PURPLE = "PURPLE"
-    PINK = "PINK"
-
-
 class TaskJobKind(str, enum.Enum):
     """uplink-mobile tecnicos: what kind of field job a Task represents.
     Nullable — office/back-office tasks (not field jobs) leave it unset."""
@@ -105,7 +95,7 @@ class TaskJobKind(str, enum.Enum):
 class TaskLinkedObjectType(str, enum.Enum):
     CLIENT = "CLIENT"
     ORDER = "ORDER"
-    RECURRING_ORDER = "RECURRING_ORDER"
+    # RECURRING_ORDER removed (ld1_legacy_drop): PG label stays, ld1 nulls rows using it.
     CLIENT_SERVICE = "CLIENT_SERVICE"
     INVENTORY_ITEM = "INVENTORY_ITEM"
     # NETWORK_NODE removed (Cycle 2 D6, revision c2d_graph_removal): the PG enum
@@ -172,6 +162,12 @@ class Client(Base):
         Enum(ServiceAvailability), nullable=False,
         default=ServiceAvailability.UNKNOWN, server_default='UNKNOWN'
     )
+    # pd1: the client's usual payment day of month (1..31); NULL = unknown.
+    payment_day = Column(SmallInteger, nullable=True)
+    # cc1: short per-company unique id (legacy "CO0648" or a random 6-char
+    # code), overrideable by the office. The DB also defaults it
+    # (client_code_generate(), Alembic-only) for writers that predate it.
+    code = Column(String(16), nullable=False, default=generate_client_code)
     # installation_status/installation_date dropped (cf1): install truth is
     # per-service (client_service.install_state); lists derive count rollups.
 
@@ -200,7 +196,6 @@ class Client(Base):
     # and delete_client blocks deletion while orders exist. A delete-orphan cascade
     # here would silently destroy a client's entire order + invoice history.
     orders = relationship("Order", back_populates="client")
-    recurring_orders = relationship("RecurringOrder", back_populates="client")
     custom_field_values = relationship("ClientCustomFieldValue", back_populates="client", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -209,71 +204,10 @@ class Client(Base):
               postgresql_where=text("dpi IS NOT NULL")),
         # Both list tabs filter company_id + deactivated_at IS [NOT] NULL.
         Index("ix_client_company_active", "company_id", "deactivated_at"),
+        CheckConstraint("payment_day IS NULL OR (payment_day BETWEEN 1 AND 31)", name="ck_client_payment_day_range"),
+        # cc1: case-insensitive unique per company (codes are stored upper).
+        Index("uq_client_company_code", "company_id", text("upper(code)"), unique=True),
     )
-
-
-class Product(Base):
-    __tablename__ = "product"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    name = Column(String, nullable=False)
-    price = Column(Float, nullable=False)
-    # Money-in-cents shadow column (Cycle 1 dual-write; Float `price` drops in
-    # Cycle 2). Nullable, no server_default — see doc 16 §1.
-    price_cents = Column(BigInteger, nullable=True)
-    description = Column(String, nullable=False)
-    stock = Column(Integer, nullable=False)
-
-    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    # Relationships
-    company = relationship("Company", back_populates="products")
-    # NO delete-orphan cascade (doc 16 §2.2, MAJOR fix): deleting a Product must
-    # never destroy billed history. order_item.product_id is ondelete=SET NULL;
-    # the item survives with its unit_price_cents/product_name snapshot.
-    order_items = relationship("OrderItem", back_populates="product")
-
-
-class RecurringOrder(Base):
-    __tablename__ = "recurring_order"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), default=now_gt, nullable=False)
-    recurrence = Column(Enum(RecurrenceEnum), nullable=False)
-    recurrence_end = Column(DateTime(timezone=True), nullable=True)
-    last_generated_at = Column(DateTime(timezone=True), nullable=True)
-    next_generation_date = Column(DateTime(timezone=True), nullable=True)
-    status = Column(Enum(RecurringOrderStatus), nullable=False, default=RecurringOrderStatus.ACTIVE, server_default='ACTIVE')
-
-    client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client.id", ondelete="SET NULL"), nullable=True)
-    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    # Relationships
-    client = relationship("Client", back_populates="recurring_orders")
-    company = relationship("Company", back_populates="recurring_orders")
-    template_items = relationship("RecurringOrderItem", back_populates="recurring_order", cascade="all, delete-orphan")
-    generated_orders = relationship("Order", back_populates="recurring_order")
-
-    # PERF-1: the cron "due recurring orders" scan filters by status (+ company_id).
-    __table_args__ = (
-        Index("ix_recurring_order_status_company", "status", "company_id"),
-    )
-
-
-class RecurringOrderItem(Base):
-    __tablename__ = "recurring_order_item"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), default=now_gt, nullable=False)
-
-    recurring_order_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("recurring_order.id", ondelete="CASCADE"))
-    product_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("product.id", ondelete="CASCADE"))
-    quantity = Column(Integer, nullable=False)
-
-    # Relationships
-    recurring_order = relationship("RecurringOrder", back_populates="template_items")
-    product = relationship("Product")
 
 
 class Order(Base):
@@ -300,7 +234,6 @@ class Order(Base):
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     client_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client.id", ondelete="SET NULL"), nullable=True)
-    recurring_order_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("recurring_order.id", ondelete="SET NULL"), nullable=True)
     client_service_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("client_service.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -310,22 +243,12 @@ class Order(Base):
     client = relationship("Client", back_populates="orders")
     invoices = relationship("Invoice", back_populates="order", cascade="all, delete-orphan")
     order_items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
-    recurring_order = relationship("RecurringOrder", back_populates="generated_orders")
     # Append-only ledger — NO delete-orphan cascade, ever (doc 16 §2.2). The
     # payment.order_id FK is ondelete=RESTRICT: the DB refuses to delete an
     # order that has money history.
     payments = relationship("Payment", back_populates="order")
 
-    # Partial unique index: at most one non-cancelled order per (recurring_order_id, due_date).
-    # Prevents the duplicate-generation race in RecurringOrderService.generate_order_from_template.
     __table_args__ = (
-        Index(
-            "uq_order_active_recurring_due_date",
-            "recurring_order_id",
-            "due_date",
-            unique=True,
-            postgresql_where=text("status != 'CANCELLED' AND recurring_order_id IS NOT NULL"),
-        ),
         # PERF-1: serves the hot "overdue / delayed-unpaid" dashboard query
         # (company_id + paid=false + status=ACTIVE + due_date).
         Index(
@@ -347,10 +270,8 @@ class Order(Base):
         ),
         # At most one non-cancelled RECURRING order per (client_service_id,
         # due_date) — the client_service-native dedupe backstop that
-        # replaces uq_order_active_recurring_due_date for the new billing
-        # engine. Created by revision c2b_service_billing; the OLD index
-        # STAYS (recurring_order_id keeps being dual-written through the
-        # rollback window) — both backstops are active simultaneously.
+        # is the sole recurring-billing dedupe backstop (the legacy
+        # uq_order_active_recurring_due_date was dropped by ld1_legacy_drop).
         # Declared here so the model matches the DB post-compose and
         # autogenerate never proposes dropping it.
         Index(
@@ -382,12 +303,8 @@ class OrderItem(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
     order_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("order.id", ondelete="CASCADE"), nullable=False)
-    # SET NULL (doc 16 §2.2): deleting a Product must never destroy billed
-    # history — the snapshot columns below keep the line meaningful.
-    product_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("product.id", ondelete="SET NULL"), nullable=True)
     # Cycle 2 D1 (entity merge): the ServicePlan this line bills. SET NULL —
-    # deleting a plan must never destroy billed history (mirrors product_id).
-    # Dual-written alongside product_id through the rollback window.
+    # deleting a plan must never destroy billed history.
     service_plan_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("service_plan.id", ondelete="SET NULL"), nullable=True
     )
@@ -400,7 +317,6 @@ class OrderItem(Base):
 
     # Relationships
     order = relationship("Order", back_populates="order_items")
-    product = relationship("Product", back_populates="order_items")
     service_plan = relationship("ServicePlan")
 
     __table_args__ = (
@@ -562,10 +478,6 @@ class ClientCustomFieldValue(Base):
     field_definition = relationship("CustomFieldDefinition", back_populates="client_values")
 
 
-# tk2_task_links: the four task-state semantics. Mirrored byte-for-byte by
-# ck_task_state_kind below and by the CHECK in the revision.
-TASK_STATE_KINDS = ("ASSIGNED", "IN_PROGRESS", "DONE", "CANCELLED")
-
 # ts1_task_status: the fixed task status that replaces the per-tenant columns.
 # PENDING = no technician yet, ASSIGNED = has a technician (both derived from
 # the assignment, see utils/task_status.py), IN_PROGRESS and DONE are set
@@ -573,36 +485,6 @@ TASK_STATE_KINDS = ("ASSIGNED", "IN_PROGRESS", "DONE", "CANCELLED")
 # tests/test_task_status.py.
 TASK_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS", "DONE")
 _TASK_STATUS_CHECK = "status IN ('PENDING','ASSIGNED','IN_PROGRESS','DONE')"
-
-
-class TaskState(Base):
-    __tablename__ = "task_state"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
-    name = Column(String, nullable=False)
-    color = Column(Enum(TaskStateColor), nullable=False, default=TaskStateColor.GRAY, server_default='GRAY')
-    position = Column(Integer, nullable=False, default=0)
-    # tk2_task_links (master plan §2.1): the semantic behind free-form column
-    # names. Actuales = kind NOT IN ('DONE','CANCELLED'); Historico = the
-    # complement; the KPI cards and the status chips bucket on it.
-    # CHECK-constrained string, not a PG enum (client_service.install_state
-    # precedent): an open set stays a cheap ALTER.
-    kind = Column(String(20), nullable=False, server_default="IN_PROGRESS")
-
-    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    # Relationships
-    company = relationship("Company", back_populates="task_states")
-    tasks = relationship("Task", back_populates="task_state", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        CheckConstraint(
-            "kind IN ('ASSIGNED','IN_PROGRESS','DONE','CANCELLED')",
-            name="ck_task_state_kind",
-        ),
-    )
 
 
 class Task(Base):
@@ -656,14 +538,10 @@ class Task(Base):
     address = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
-    # ts1_task_status: nullable, superseded by `status`. Kept until every
-    # consumer reads `status`; the table and this FK drop in a later revision.
-    task_state_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("task_state.id", ondelete="RESTRICT"), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     company = relationship("Company", back_populates="tasks")
-    task_state = relationship("TaskState", back_populates="tasks")
     creator = relationship("User", foreign_keys=[created_by])
     assignees = relationship("User", secondary="task_assignee")
     closeout = relationship("TaskCloseout", back_populates="task", uselist=False, cascade="all, delete-orphan")
@@ -875,6 +753,12 @@ class CashSessionStatus(str, enum.Enum):
     # mi1: the closed box's cash was handed in at the bank (slip photo in
     # deposit_slip_photo_id). Terminal — nothing is left on hand.
     DEPOSITED = "DEPOSITED"
+    # cr1 (admin reviews the box): the collector SUBMITs counted cash + deposit
+    # slip; an admin APPROVEs (terminal, "Cerrada") or REJECTs (back to the
+    # collector, who re-submits). CLOSED/DEPOSITED stay readable for legacy rows.
+    SUBMITTED = "SUBMITTED"
+    REJECTED = "REJECTED"
+    APPROVED = "APPROVED"
 
 
 class CollectionRoute(Base):
@@ -960,13 +844,19 @@ class CashSession(Base):
     # later refund cannot rewrite the cut.
     closed_expected_cash_cents = Column(BigInteger, nullable=True)
     reopen_count = Column(Integer, nullable=False, default=0, server_default="0")
+    # --- cr1 (admin review) ---
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_note = Column(Text, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     collector_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="RESTRICT"), nullable=False, index=True)
     route_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("collection_route.id", ondelete="SET NULL"), nullable=True)
     deposit_slip_photo_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("uploaded_file.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
     company = relationship("Company", back_populates="cash_sessions")
     collector = relationship("User", foreign_keys=[collector_id])
     route = relationship("CollectionRoute")
@@ -975,6 +865,7 @@ class CashSession(Base):
 
     __table_args__ = (
         Index("ix_cash_session_company_collector", "company_id", "collector_id"),
+        Index("ix_cash_session_company_status", "company_id", "status"),
         CheckConstraint("opening_cents >= 0", name="ck_cash_session_opening_nonneg"),
     )
 

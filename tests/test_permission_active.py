@@ -15,7 +15,7 @@ def test_inactive_user_gets_403(db):
     token = create_access_token(user)
     user.active = False
     db.commit()
-    dep = require_permission("products.read", lambda: db)
+    dep = require_permission("clients.read", lambda: db)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(dep(_request_with_token(token), db=db))
     assert exc.value.status_code == 403
@@ -24,5 +24,5 @@ def test_inactive_user_gets_403(db):
 
 def test_active_user_passes(db):
     user = _make_admin_user(db)
-    dep = require_permission("products.read", lambda: db)
+    dep = require_permission("clients.read", lambda: db)
     assert asyncio.run(dep(_request_with_token(create_access_token(user)), db=db)).id == user.id

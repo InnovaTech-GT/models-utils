@@ -45,7 +45,7 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    - `CREATE_ORDER` — creates an order with **service-plan resolution** and a
      **billing denylist** (Cycle 2/3 additions preventing automation from
      touching billing-critical fields)
-   - `CREATE_TASK` — creates a task. `status` is optional: PENDING or ASSIGNED follow the resolved technicians, IN_PROGRESS and DONE are kept. A legacy `task_state_id` is mapped to a status through its kind. Assignees (`assignee_source` fixed / client_technician) are limited to company users holding the **TECHNICIAN** role — the same rule backend-erp enforces with 422 `ASSIGNEE_NOT_TECHNICIAN`. A non-technician (or unknown/other-tenant) id is not an error for an automation: it is skipped, logged (`logger.warning`) and reported in the step result as `skipped_assignee_ids` + `warning`; `client_technician` falls back to the fixed list when the client's technician is rejected; with nobody left the task is created unassigned (PENDING) for the dispatcher.
+   - `CREATE_TASK` — creates a task. `status` is optional: PENDING or ASSIGNED follow the resolved technicians, IN_PROGRESS and DONE are kept. Assignees (`assignee_source` fixed / client_technician) are limited to company users holding the **TECHNICIAN** role — the same rule backend-erp enforces with 422 `ASSIGNEE_NOT_TECHNICIAN`. A non-technician (or unknown/other-tenant) id is not an error for an automation: it is skipped, logged (`logger.warning`) and reported in the step result as `skipped_assignee_ids` + `warning`; `client_technician` falls back to the fixed list when the client's technician is rejected; with nobody left the task is created unassigned (PENDING) for the dispatcher.
    (`CREATE_ORDER` and `CREATE_TASK` were added by the irreversible
    `c1e_install_actions` `ALTER TYPE` migration.)
 4. **Trigger-context variables** — `utils/workflow_fields.py` handles
@@ -70,7 +70,7 @@ A workflow still carrying the old key raises immediately:
 > by walking the service's network path.`
 
 That is deliberate. `ng2_topology_drop` rewrites the key in every installed
-`workflow_step.action_config` and `workflow_template.definition`, so a surviving
+`workflow_step.action_config` (and, at the time, `workflow_template.definition`), so a surviving
 `use_topology` means a workflow the migration never saw. Silently treating it as
 mode B would enqueue nothing and look like a healthy no-op forever.
 
@@ -90,8 +90,15 @@ mode B would enqueue nothing and look like a healthy no-op forever.
 `_execute_enqueue_provisioning_path` opens a **`ProvisioningRun`, not a single
 job** — a path spans several devices and therefore several playbooks. It queues
 the run's first child; the worker advances the rest via
-`provisioning_runs.advance_run`. The step result is
-`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`.
+`provisioning_runs.advance_run`. The run is opened with
+`provisioning_runs.create_or_get_run`: the default key (no `idempotency_key` in
+the config) is the shared `run_idempotency_key`, the same one `/provision` and
+backend-erp's lifecycle hooks use, and the INSERT runs in a SAVEPOINT, so a race
+lost to a concurrent producer returns the winner and the WorkflowExecution still
+commits. The step result is
+`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`, or
+`{"enqueued": false, "deduped": true, "run_id": ..., "idempotency_key": ...}` when
+a run with that key was already in flight.
 
 Order of operations is **skip rule → idempotency dedupe → resolve → open run**.
 The idempotency key never depends on resolution output, so a re-fire while a run
@@ -140,9 +147,11 @@ Callers: the workflow engine (`ENQUEUE_PROVISIONING` mode A) and backend-erp
 
 ## Templates
 
-`WorkflowTemplate` rows are globally seeded blueprints
-(`alembic/seeds/isp_seed.py`, purpose-based blueprint versions) that tenants install as
-concrete workflows — this powers the founder "install automation" flow.
+The installable workflow-template catalog (`workflow_template` table,
+`WORKFLOW_TEMPLATES` seed, install endpoint) was removed by `ld1_legacy_drop`.
+Installed workflows are independent copies and keep working. `KNOWN_RESOURCE_TYPES`
+no longer lists `product`, `task_state` or `recurring_order`, and `CREATE_ORDER`
+only resolves `service_plan_id` items.
 
 ## Tests
 
