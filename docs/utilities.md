@@ -2,7 +2,7 @@
 
 ## Description
 
-Shared utility modules in `database_utils/utils/` (24 modules) plus the
+Shared utility modules in `database_utils/utils/` (28 modules) plus the
 supporting `dependencies/` and `middleware/` packages. The two largest —
 the workflow engine and provisioning resolution — have their own page:
 [workflow-engine.md](workflow-engine.md).
@@ -191,7 +191,9 @@ but no link) simply has no keys. `out_port_name` is the template (factory) name
 
 Namespaces checked are the resolver's own: `device`, `cpe`, `path`,
 `service_plan`, `client`, `service`, `computed`. A token whose body has a
-`| default:` filter (regex `\|\s*default\s*:`, not a substring test) is skipped;
+`| default:` filter (regex `\|\s*default\s*:`, not a substring test, run after
+quoted filter arguments are stripped so `replace:"|default:","x"` does not count
+— 4.5.2, review F2) is skipped;
 `input.*` keeps the renderer's required/default rule; bare legacy tokens are
 skipped. A **malformed** construct — a token-shaped body whose head does not
 parse (`{{path.ROUTER.serial}}`, `{{ not a token }}`) or a residual `{{`
@@ -260,7 +262,7 @@ access by the back door (ADR-006).
 | `find_in_flight_run(db, company_id, key)` | Dedupe lookup over `IN_FLIGHT = (QUEUED, RUNNING, PENDING_INFORM)`. That tuple **must** mirror the predicate on `uq_provisioning_run_company_idem`; if they disagree, the dedupe check and the unique index disagree and one of them starts raising `IntegrityError` |
 | `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None)` | Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), snapshots `path`/`plan`/`frames`, opens the run, and queues **only its first child**. Resolution happens exactly once per run. Plan entries are `{item_id, playbook_id, playbook_version, category_key}` — `playbook_version` lets backend-erp's worker fail a child with `PLAYBOOK_CHANGED_DURING_RUN` before any device I/O when the playbook was edited mid-run |
 | `create_or_get_run(db, client_service, purpose, dry_run, idempotency_key=None, **create_run_kwargs) -> (run, created)` | `create_run` deduped on the run key (`idempotency_key` or `run_idempotency_key(...)`): an in-flight run with that key comes back with `created=False`. The INSERT runs in a **SAVEPOINT**, so losing a race to a concurrent producer (`uq_provisioning_run_company_idem`) rolls back only the savepoint and returns the winner — the caller's session stays usable. Any other `IntegrityError` (no winner found) and every other error propagate |
-| `repair_stranded_runs(db, limit=100) -> int` | Backstop, called by the worker's reaper: an in-flight run quiet for > 30 s (`STRANDED_RUN_GRACE`) with **no in-flight child**, taken `FOR UPDATE SKIP LOCKED` (a run a settle is advancing right now is skipped). Per run, in its own savepoint, it re-reads the last child: still in flight → skip; quiet longer than `STRANDED_RUN_MAX_AGE` (1 h, measured from the last child's `finished_at`, else the run's `updated_at`) → run closed FAILED and `STRANDED_RUN_EXPIRED` logged, never advanced from a stale plan; none → queue child 0; terminal → `advance_run`. Locks run rows only (no deadlock cycle with a settle). A failing run is logged and skipped. Returns the number repaired; the caller commits |
+| `repair_stranded_runs(db, limit=100) -> int` | Backstop, called by the worker's reaper: an in-flight run quiet for > 30 s (`STRANDED_RUN_GRACE`) with **no in-flight child**, taken `FOR UPDATE SKIP LOCKED` (a run a settle is advancing right now is skipped). Per run, in its own savepoint, it re-reads the last child: still in flight → skip; quiet longer than `STRANDED_RUN_MAX_AGE` (1 h, measured from the last child's `finished_at`, else the run's `updated_at`) → run closed FAILED and `STRANDED_RUN_EXPIRED` logged, never advanced from a stale plan; none → queue child 0 (an empty plan goes straight to SUCCEEDED); terminal → `advance_run`. Locks run rows only (no deadlock cycle with a settle). A failing run is logged and skipped. Returns the number repaired; the caller commits |
 | `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. Locks the run row (`SELECT … FOR UPDATE`, `populate_existing`; lock order everywhere is job row, then run row) and is a **no-op** when the run is already terminal (a late settle never resurrects it), when `job` is still in flight, or when a later child already exists (a duplicate or stale advance queues nothing). A standalone job (`run_id` NULL) is a **no-op** — ACS reboots and connectivity probes must keep behaving exactly as they did. Any non-SUCCEEDED status stops the run and the run takes that status (continuing to the OLT after the CPE step failed would leave the network configured for a subscriber whose own device is not). On success it queues the next child; when the plan is exhausted the run goes SUCCEEDED, stamps `finished_at`, and — for a non-dry-run ACTIVATION only — clears `client_service.path_changed_at` |
 
 Callers (backend-erp, provisioning-concurrency fix): `POST /client-services/{id}/provision`
@@ -393,6 +395,9 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
   error. Codes: `COMPUTE_SYNTAX`, `COMPUTE_LIMIT`, `COMPUTE_NAME`,
   `COMPUTE_SECRET`, `COMPUTE_TYPE`, `COMPUTE_OVERFLOW`, `COMPUTE_DIV_ZERO`,
   `COMPUTE_RANGE`.
+  `evaluate_all` never raises on a malformed **stored** block (4.5.2, review F3):
+  a non-list block, or an entry without string `key`/`expr`, is `COMPUTE_SYNTAX`;
+  a non-int `min`/`max` is `COMPUTE_TYPE`.
 - **Pinned by** the hash-locked `tests/fixtures/playbook_expr.json` (copied to
   `frontend-erp/lib/__fixtures__/`): changing it means changing both
   implementations and both hash pins.

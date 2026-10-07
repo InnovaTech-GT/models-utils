@@ -112,6 +112,33 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   fixing it here would change automation behaviour mid-cycle, silently. Filed
   (doc 33 "Known gap", doc 35 §10), not smuggled in.
 
+## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
+
+- **Stranded runs are repaired by polling, not by the settle.** If `advance_run`
+  fails inside the worker's settle (it runs in a savepoint so the job's outcome
+  still commits), the run sits with no in-flight child until the reaper calls
+  `repair_stranded_runs` (> 30 s quiet). A run quiet for more than
+  `STRANDED_RUN_MAX_AGE` (1 h) is closed FAILED (`STRANDED_RUN_EXPIRED`)
+  rather than advanced from a plan resolved long ago — an operator re-provisions.
+- **No run-level cancel.** Cancelling a RUNNING child is per job; a run cannot be
+  cancelled as a unit. A failed or cancelled child is never retried on its own
+  (backend-erp `RUN_CHILD_NOT_RETRYABLE`): re-provision opens a new run.
+- **The device lock is taken at claim, from the child's `inventory_item_id`.**
+  A playbook step that targets a different device is not locked (backend-erp
+  logs `TARGET_NOT_LOCKED`, warn-only); deriving the lock from step targets is
+  tracked separately (R15).
+- **`IN_FLIGHT` is hand-synced** with the predicates of
+  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem`; if they
+  drift, `create_or_get_run` and the index disagree.
+
+## Port labels (doc 40 C8) — transitional
+
+- `inventory_item.parent_port` / `uplink_port` are **unmapped but still in the
+  DB** (`pt2_unmap_port_labels`, 5.0.0, develop only). The column drop
+  `pt3_drop_port_labels` (C8b) must not run against a database until every
+  backend deployed on it runs C8a — on prod that means after the v1.0.1
+  promotion.
+
 ## Migrations
 
 - **`c1e_install_actions` is irreversible** — it uses
@@ -122,6 +149,9 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   named device-type chains: the chains carried per-topology playbook bindings and
   pinned positions the graph does not encode. Restore from a backup taken before
   the release.
+- **`ld1_legacy_drop` and `sh1_service_history_repair` are one-way** — both
+  `downgrade()`s raise `NotImplementedError`. Prod's pre-v1.0.0 dump
+  (`backups/prod-pre-v1.0.0-20261006T033428Z.dump`) is the rollback path.
 - **Two vestigial topology surfaces survive.**
   `ServicePlanBase`/`ServicePlanUpdate.default_topology_id` and
   `workflow_fields.py`'s `client_service.topology_id` (`fk_to: "topology"`)
@@ -135,8 +165,8 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
 - **ruff is advisory only** in CI (`continue-on-error: true`) — lint failures
   do not block merges.
 - `setup.cfg` still carries the placeholder `author_email = you@example.com`.
-- `CHANGELOG.md` has a documented gap: 0.7.0 → 1.10.0 releases were not
-  recorded per-version (see the note at the top of that file).
+- `CHANGELOG.md` has gaps: 0.7.0 → 1.11.1 and most 1.x releases between 1.11.1
+  and 1.33.0 were not recorded per-version.
 - **Naming mismatch** (repo `models-utils`, package `database-utils`, module
   `database_utils`) is historical and now documented, but still a recurring
   source of confusion.

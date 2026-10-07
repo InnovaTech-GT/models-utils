@@ -3,7 +3,7 @@
 ## What models-utils is
 
 models-utils (pip package **`database-utils`**, Python module **`database_utils`**,
-v1.14.0) is the **shared data layer** of the Uplink ISP platform. It is a
+v5.1.0 on `develop`, 4.5.1 on `main`) is the **shared data layer** of the Uplink ISP platform. It is a
 pip-installable Python library — **not a running service**. There is no server,
 no port, and no entry point; it executes only inside its consumers and as an
 Alembic migration runner.
@@ -34,12 +34,13 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    **core-config** columns (CORE/EDGE tiers, mgmt surface, install state) and the
    Cycle 10 **company network graph** — the `inventory_item` tree, the playbook
    binding tables and `ProvisioningRun`, replacing the deleted `Topology`
-   entities (see [network-models.md](network-models.md)). All models use
+   entities, plus doc 40's port-level topology (`InventoryItemPort`,
+   `NetworkLink`) (see [network-models.md](network-models.md)). All models use
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
-2. **Pydantic v2 schemas** — 42 modules shared between services
+2. **Pydantic v2 schemas** — 37 modules shared between services
    ([schemas.md](schemas.md)).
 3. **Alembic migrations + idempotent seeds** — 100 revisions (head
-   `ta1_task_assignee_model`); RBAC, tier, and ISP catalog/template seeds run
+   `ta1_task_assignee_model`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -48,7 +49,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    engine** and **provisioning resolution** logic
    ([workflow-engine.md](workflow-engine.md)).
 5. **Transactional email service** — abstract interface + SMTP implementation
-   with 8 Jinja2 HTML templates ([email-service.md](email-service.md)).
+   with 13 Jinja2 HTML templates (two base layouts + es/en pairs + legacy single-locale ones) ([email-service.md](email-service.md)).
 6. **FastAPI plumbing** — `get_db` session dependency, audit context
    dependencies, request-logging ASGI middleware.
 
@@ -66,13 +67,15 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 56 files, **647 tests** (`tests/pg` runs only with `PG_TEST_URL`) (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 63 files, **743 tests** — 725 SQLite + 18 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and
 two binding lookups. Coverage: workflow engine, the network graph (columns,
 traversal ordering, cycle/depth guards, cross-tenant isolation), playbook
-binding precedence, provisioning resolution, provisioning runs, ng1/ng2 revision
+binding precedence, provisioning resolution, provisioning runs (incl. the
+Postgres-only dedupe / run-lock / SKIP LOCKED repair races), port topology and
+playbook `computed` expressions, ng1/ng2 revision
 guardrails, passive seed convergence, the service lifecycle machine,
 ENQUEUE_PROVISIONING dedupe, core-config model↔migration constant parity, SSRF,
 JWT expiry, token utils, email schemas/service/templates/SMTP, permission UUIDs,

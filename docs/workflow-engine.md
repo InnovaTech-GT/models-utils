@@ -155,8 +155,9 @@ only resolves `service_plan_id` items.
 
 ## Tests
 
-`tests/` is 38 files / **375 tests**, all on in-memory SQLite
-(`pytest.ini`: `asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`).
+`tests/` is 63 files / **743 tests**: 725 on in-memory SQLite (`pytest.ini`:
+`asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`) and 18 in `tests/pg`
+(`-m pg`, skipped unless `PG_TEST_URL` points at a DB at `alembic upgrade head`).
 
 `tests/conftest.py` holds the shared `db` and `plant` fixtures. `plant` builds a
 **real** in-memory SQLite network graph — `CORE-1 (router) → OLT-1 (olt) →

@@ -34,7 +34,8 @@ still migrated by the `migrate` service above.
 
 ```bash
 pip install -e . -r requirements-dev.txt   # editable install + test deps (pytest, pytest-asyncio, ruff)
-pytest -v                                  # 463 tests on in-memory SQLite (placeholder POSTGRES_* env)
+pytest -v                                  # 725 tests on in-memory SQLite (placeholder POSTGRES_* env); 18 tests/pg skip
+PG_TEST_URL=postgresql://... pytest -m pg tests/pg   # Postgres-only lane (DB at alembic head)
 ```
 
 Tests need only **placeholder** `POSTGRES_*` env vars (`database.py` raises at
@@ -61,5 +62,7 @@ GitHub Actions `ci.yml` runs on PRs to develop/main and pushes to main:
    without a corresponding `alembic/versions/**` file
 2. ruff (advisory only, `continue-on-error: true`)
 3. pytest on Python 3.12
+4. job `pg`: `postgres:16` service → `alembic upgrade head` → `pytest -m pg tests/pg`
 
-Run `pytest -v` locally before pushing to match.
+Run `pytest -v` locally before pushing to match (and the `pg` lane against a
+scratch Postgres when touching triggers, migrations or `provisioning_runs.py`).

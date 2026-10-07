@@ -22,10 +22,10 @@ ISP platform. Start with the [repo README](../README.md) for a quickstart.
 | [auth-models.md](auth-models.md) | Auth, tenancy, RBAC, email/password tokens, and SaaS-billing models |
 | [crm-models.md](crm-models.md) | CRM models: clients, orders, payments ledger, tasks, custom fields, integrations |
 | [isp-models.md](isp-models.md) | ISP vertical models: service plans, client services, inventory, playbooks, provisioning runs and jobs |
-| [network-models.md](network-models.md) | Network config models (Cycles 5+7): GenieACS/TR-069 tables, ProvisioningJob extensions, PENDING_INFORM status, core-config columns (tiers, mgmt surface, install state) — **plus the Cycle-10 company network graph**: the `inventory_item` tree + its two guard triggers, `is_passive`, the playbook binding tables, `ProvisioningRun` |
-| [workflow-models.md](workflow-models.md) | Workflow automation models: templates, triggers, step DAG, executions |
+| [network-models.md](network-models.md) | Network config models (Cycles 5+7): GenieACS/TR-069 tables, ProvisioningJob extensions, PENDING_INFORM status, core-config columns (tiers, mgmt surface, install state) — **plus the Cycle-10 company network graph**: the `inventory_item` tree + its two guard triggers, `is_passive`, the playbook binding tables, `ProvisioningRun` (lazy one-child runs; producers never lock, `claim_token` fence) — and the doc-40 port topology (`InventoryItemPort`, `NetworkLink`) |
+| [workflow-models.md](workflow-models.md) | Workflow automation models: workflows, triggers, step DAG, executions |
 | [workflow-engine.md](workflow-engine.md) | Engine semantics: trigger matching, DAG execution, the two `ENQUEUE_PROVISIONING` modes, provisioning resolution |
-| [schemas.md](schemas.md) | The 42 Pydantic v2 schema modules |
-| [utilities.md](utilities.md) | The 24 shared utility modules (network graph, provisioning resolution + runs, JWT, permissions, audit, SSRF, OTEL, ...) |
+| [schemas.md](schemas.md) | The 37 Pydantic v2 schema modules |
+| [utilities.md](utilities.md) | The 28 shared utility modules (network graph, provisioning resolution + runs, JWT, permissions, audit, SSRF, OTEL, ...) |
 | [email-service.md](email-service.md) | Transactional email service, SMTP implementation, Jinja2 templates |
 | [migrations.md](migrations.md) | Alembic workflow, revision chains, seed scripts |

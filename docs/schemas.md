@@ -2,7 +2,7 @@
 
 ## Description
 
-Pydantic v2 request/response schemas for all models — 42 modules in
+Pydantic v2 request/response schemas for all models — 37 modules in
 `database_utils/schemas/`, shared between auth-erp and backend-erp to keep API
 contracts consistent (frontend-erp consumes the resulting JSON shapes via the
 backend proxies).
@@ -107,6 +107,16 @@ matters when reading `__init__.py`:
   `'NOT_FOUND'`|`'ALREADY_ADOPTED'`) and `ClientServiceAdoptBulkOut`
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
+
+### Client codes and payment day (4.5.0 `cc1`, 4.2.0 `pd1`) — `client` schema changes
+
+- `ClientCreate.code` / `ClientUpdate.code` (`Optional[str]`): trimmed and
+  uppercased by `utils/client_code.normalize_client_code` (`^[A-Z0-9-]{1,16}$`,
+  else `ValueError`); `None`/blank means "generate one" on create and "leave
+  unchanged" on update. `ClientOut.code` is typed optional but the column is NOT
+  NULL, so a read always carries it. Per-company uniqueness
+  (case-insensitive) is the DB's `uq_client_company_code`; callers retry on it.
+- `ClientBase`/`ClientUpdate.payment_day`: optional, 1..31.
 
 ### Client install-field removal (doc 31) — `client` schema changes
 
@@ -222,6 +232,10 @@ matters when reading `__init__.py`:
   rollback) whose key is not declared — matched on each raw step string's
   token bodies with the renderer's `[ \t]*` head rule, never on a JSON dump
   (which escapes a tab).
+  Since 4.5.2 (review F1) a `computed` token must be exactly
+  `{{computed.<key>}}` (plus filters): `{{computed.onu.y}}` or
+  `{{computed[0].x}}` is refused with `COMPUTE_NAME`, because `evaluate_all`
+  never produces such a name and only a caller-supplied value could fill it.
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 

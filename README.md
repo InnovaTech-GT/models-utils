@@ -1,7 +1,8 @@
 # models-utils (`database-utils`)
 
 Shared data layer of the **Uplink** ISP platform — a pip-installable Python library
-(package name `database-utils`, module `database_utils`, currently v1.33.0). It is
+(package name `database-utils`, module `database_utils`; v5.1.0 on `develop`, v4.5.1
+on `main` = production since the Uplink v1.0.0 release). It is
 **not a running service**: it has no server, no port, and no entry point of its own.
 
 models-utils owns everything that must be identical across the platform's backends:
@@ -49,7 +50,8 @@ The `migrate` compose service builds this repo's `Dockerfile` and runs
 
 ```bash
 pip install -e . -r requirements-dev.txt          # editable install + test deps (pytest-asyncio is required)
-pytest -v                                         # tests (in-memory SQLite; needs placeholder POSTGRES_* env)
+pytest -v                                         # 725 tests (in-memory SQLite; needs placeholder POSTGRES_* env)
+PG_TEST_URL=postgresql://... pytest -m pg tests/pg  # 18 Postgres-only tests (DB at alembic head)
 alembic revision --autogenerate -m "description"  # generate a migration (needs a reachable DB)
 ```
 
@@ -81,6 +83,6 @@ index lives in [CODEBASE_INDEX.md](CODEBASE_INDEX.md).
 
 ## Critical Rules
 
-- **Never push directly to `main`** — feature branches + composed release PRs only (see [docs/deployment-production.md](docs/deployment-production.md)).
+- **Never push directly to `main` or `develop`** — feature branches are merged into the long-lived `develop` (never reset, never force-pushed), and `develop` → `main` release PRs are the only thing that advances `main` (see [docs/deployment-production.md](docs/deployment-production.md)).
 - Every model change **must** ship with an Alembic revision — CI blocks PRs that change `database_utils/models/**` without one.
 - Additive schema changes are safe once consuming code is ready; **destructive changes** (drop/rename) require all consuming service code in production first.

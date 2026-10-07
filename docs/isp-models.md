@@ -127,7 +127,7 @@ nodes *are* `InventoryItem`s so there is **one catalog** and one identity.
 | `DeviceTypePlaybook` (device_type_playbook) | Cycle 10 — the type-level default playbook for a purpose. UNIQUE (device_type_id, purpose) |
 | `InventoryItemPlaybook` (inventory_item_playbook) | Cycle 10 — one node's override of its device type's default. UNIQUE (inventory_item_id, purpose). Precedence: **node override → device-type default → none** |
 | `ProvisioningRun` (provisioning_run) | Cycle 10 — one service-path run: several devices, several playbooks. Snapshots the resolved `path`, the ordered `plan` and the variable `frames` at creation; children are created lazily, one at a time, leaf → root |
-| `ProvisioningJob` (provisioning_job) | Durable job queue row — `ProvisioningJobStatus`, `ProvisioningTrigger`; consumed by backend-erp's `provision-worker` process (SKIP LOCKED claiming). Cycle 10 adds `run_id`/`run_position`; **`run_id` NULL means a standalone job** (explicit-playbook, ACS reboot, connectivity probe) and nothing about those changed |
+| `ProvisioningJob` (provisioning_job) | Durable job queue row — `ProvisioningJobStatus`, `ProvisioningTrigger`; consumed by backend-erp's `provision-worker` process (SKIP LOCKED claiming). Cycle 10 adds `run_id`/`run_position`; **`run_id` NULL means a standalone job** (explicit-playbook, ACS reboot, connectivity probe) and nothing about those changed. Since 5.1.0 `device_lock_key` is written only by the worker's claim (producers insert it NULL) and `claim_token` (`pc1`) fences the executor — see [network-models.md](network-models.md) |
 
 ### Insights (Cycle 4; v2 since `iv1_insights_v2`)
 

@@ -3,8 +3,13 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`ta1_task_assignee_model`**) — plus the idempotent seed
-scripts that run after every upgrade.
+`alembic/versions/` (100 revisions, head: **`ta1_task_assignee_model`**) — plus
+the idempotent seed scripts that run after every upgrade.
+
+Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
+v1.0.0) at `vw1_viewer_no_credential_read`; **Railway development** = `develop`
+`cad3ab4` at `pc1_provisioning_claim_token` (`pt2_unmap_port_labels` and `pc1`
+are not yet on prod).
 
 ## Goal
 
@@ -32,12 +37,15 @@ PostgreSQL database across local development and production.
 
 ## Workflow
 
-1. Modify the model in `database_utils/models/` (on a feature branch from `main`)
+1. Modify the model in `database_utils/models/` (on a feature branch from `main`,
+   or from `develop` when it builds on unreleased cycles)
 2. `alembic revision --autogenerate -m "description"` (needs a reachable DB env)
 3. Review the generated revision for correctness
-4. Commit; compose into `develop` (erp-release), pin backends to the SHA
+4. Commit; merge into `develop` (erp-release) and push — GitHub Actions applies
+   it to the Railway `development` DB; wait for that run before pushing the
+   backends pinned to the SHA
 5. Local `migrate` service applies it on `docker compose up`; GitHub Actions
-   applies it to prod on merge to `main`
+   applies it to prod on the `develop` → `main` merge
 
 Full release mechanics: [deployment-production.md](deployment-production.md).
 
@@ -320,7 +328,7 @@ in [network-models.md](network-models.md).
   `create_all`, which parses neither plpgsql nor the PG regex operator `~`
   (precedent: `ck_topology_playbook_purpose_format`, `nc1b`).
 
-- **`ng2_topology_drop`** (**head**) — the destructive half, three phases in this
+- **`ng2_topology_drop`** — the destructive half, three phases in this
   order and no other, and **irreversible**: `downgrade()` raises
   `NotImplementedError` because a graph cannot be turned back into a set of named
   chains (they carried per-topology playbook bindings and pinned positions the
@@ -588,7 +596,7 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `ld1_legacy_drop` (2026-10-02, head) - DESTRUCTIVE, models-utils 4.0.0
+### `ld1_legacy_drop` (2026-10-02) - DESTRUCTIVE, models-utils 4.0.0
 
 Drops `product`, `recurring_order`, `recurring_order_item`, `task_state`,
 `workflow_template` and the FK columns `order.recurring_order_id`,
@@ -660,7 +668,7 @@ CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
 `ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
 No backfill. `downgrade()` drops the check and the column.
 
-### `pt1_port_topology` (2026-10-04, head) — models-utils 4.4.0
+### `pt1_port_topology` (2026-10-04) — models-utils 4.4.0
 
 Additive and inert, on `sh1_service_history_repair`; hand-written (lock_timeout,
 `IF NOT EXISTS`, existence-guarded `ADD CONSTRAINT`, post-upgrade assertions).
@@ -892,7 +900,8 @@ the index and both columns — loses only the port labels. See
 ## Four built-in roles (rr1_four_builtin_roles)
 
 On `ci1_category_icons`. Product decision 2026-10-02: the global roles collapse
-to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`),
+to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`;
+`device_credentials.read` was taken away again by `vw1`),
 **COLLECTOR** and **TECHNICIAN** (mobile-only, grants unchanged). Tenant custom
 roles are untouched. The revision:
 
@@ -940,29 +949,6 @@ client to one service; `c1b_backfill` priced lines from the current product).
 - Verified on a prod snapshot copy: 39 tidied (1 overlap skipped), 51 historical
   services, 163 orders moved, 184 lines fixed, 49 start dates shifted, 0 services
   with new billing gaps; re-running the logic is a no-op.
-
-## Key rules
-
-- **Not all migrations are reversible**: `c1e_install_actions` uses
-  `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
-  `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
-  raises from `downgrade()` by design. `tr1_transport_axis`'s `downgrade()` runs
-  and restores every value, but is not a true inverse (synthesised
-  `network_access.name`, `mgmt_subnets` unrecoverable — see its section above).
-  `nat1_gateway_transport`'s `downgrade()` was conditionally reversible on a
-  `network_access` row still being in a NAT mode; that table no longer exists
-  past `tr1`, so the condition is vacuous. Check each revision's `downgrade()`
-  before assuming rollback is possible
-- Additive changes (new columns/tables): safe to apply before consuming
-  service code ships
-- Destructive changes (removing/renaming): apply AFTER all consuming service
-  code is in production
-- Parallel schema features use separate branches/revisions — never combine
-  unrelated schema changes
-
-## Environment Variables
-
-- `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
 
 ### `cc1_client_code` (2026-10-05)
 
@@ -1022,3 +1008,27 @@ live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
 does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
+
+## Key rules
+
+- **Not all migrations are reversible**: `c1e_install_actions` uses
+  `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
+  `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
+  raises from `downgrade()` by design, as do `ld1_legacy_drop` and the one-way
+  data repair `sh1_service_history_repair`. `tr1_transport_axis`'s `downgrade()` runs
+  and restores every value, but is not a true inverse (synthesised
+  `network_access.name`, `mgmt_subnets` unrecoverable — see its section above).
+  `nat1_gateway_transport`'s `downgrade()` was conditionally reversible on a
+  `network_access` row still being in a NAT mode; that table no longer exists
+  past `tr1`, so the condition is vacuous. Check each revision's `downgrade()`
+  before assuming rollback is possible
+- Additive changes (new columns/tables): safe to apply before consuming
+  service code ships
+- Destructive changes (removing/renaming): apply AFTER all consuming service
+  code is in production
+- Parallel schema features use separate branches/revisions — never combine
+  unrelated schema changes
+
+## Environment Variables
+
+- `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
