@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development, head `pc1_provisioning_claim_token`), not yet
 on `main`: the v1.0.1 cycle.
 
+### Added
+- **6.1.0** - inventory intake, schema half (doc 47 SP6; Alembic `ri1_inventory_received_at`, additive, **new head**, on `ta1_task_assignee_model`). `inventory_item.received_at` TIMESTAMPTZ NOT NULL, server default `now()`: when the unit entered stock (the FIFO key). Existing rows are backfilled from `created_at` before the NOT NULL alter; `downgrade()` drops the column. `InventoryItemOut.received_at` (output only; create/update schemas do not take it). New `InventoryReceiveIn` (one `POST /inventory/receive` request: device type, warehouse, 1–100 serials, condition, optional backdated `received_at` (a naive value is America/Guatemala), purchase date, per-unit cost, supplier, reference, notes, `receipt_id` idempotency key), `InventoryReceiveRow` (per serial: `CREATED` / `DUPLICATE` / `INVALID` + `code`, `warning`, `item`) and `InventoryReceiveOut` (counts + rows). New `tests/pg/test_inventory_received_at_pg.py` (backfill on real rows, NOT NULL + default, downgrade/upgrade round trip).
+
 ### Changed
 - **BREAKING (6.0.0)** - `task_assignee` is now the mapped model `TaskAssignee` (`__tablename__ = "task_assignee"`), like the rest of the tables, instead of a bare `Table`. Same columns, primary key and `ck_task_assignee_role`, so no DDL; Alembic `ta1_task_assignee_model` (**new head**, on `pc1_provisioning_claim_token`) only asserts the table shape. `Task.assignees` keeps working through `secondary="task_assignee"`. Breaking for importers: `database_utils.models.task_assignee` is gone; use `TaskAssignee` (`TaskAssignee.role`, `insert(TaskAssignee)`, `TaskAssignee.__table__` where a `Table` is needed).
 
