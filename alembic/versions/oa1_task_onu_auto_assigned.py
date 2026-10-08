@@ -33,15 +33,24 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 # Open INSTALL tasks pointing at an IN_STOCK ONU, one row per unit (oldest task).
+# The candidate units are row-locked first (FOR NO KEY UPDATE re-checks
+# status = 'IN_STOCK' after any lock wait), so a concurrent status change from
+# the still-serving old backend can't be overwritten or get an orphan event.
 _HELD = """
-    SELECT DISTINCT ON (i.id) i.id AS item_id, i.company_id, t.id AS task_id
-    FROM inventory_item i
-    JOIN task t ON t.inventory_item_id = i.id
-    JOIN device_type dt ON dt.id = i.device_type_id
-    JOIN device_category dc ON dc.id = dt.category_id
-    WHERE i.status = 'IN_STOCK' AND dc.key = 'ONU'
-      AND t.status <> 'DONE' AND t.job_kind = 'INSTALL'
-    ORDER BY i.id, t.created_at, t.id
+    SELECT DISTINCT ON (c.item_id) c.item_id, c.company_id, t.id AS task_id
+    FROM (
+        SELECT i.id AS item_id, i.company_id
+        FROM inventory_item i
+        JOIN device_type dt ON dt.id = i.device_type_id
+        JOIN device_category dc ON dc.id = dt.category_id
+        WHERE i.status = 'IN_STOCK' AND dc.key = 'ONU'
+          AND EXISTS (SELECT 1 FROM task t0 WHERE t0.inventory_item_id = i.id
+                      AND t0.status <> 'DONE' AND t0.job_kind = 'INSTALL')
+        FOR NO KEY UPDATE OF i
+    ) c
+    JOIN task t ON t.inventory_item_id = c.item_id
+    WHERE t.status <> 'DONE' AND t.job_kind = 'INSTALL'
+    ORDER BY c.item_id, t.created_at, t.id
 """
 
 

@@ -1043,7 +1043,7 @@ that runs automatically on dev and prod migrate: every `IN_STOCK` ONU
 (`device_category.key = 'ONU'`) referenced by an open (`status <> 'DONE'`)
 `INSTALL` task becomes `RESERVED`, with one `RESERVED` `equipment_event`
 (`technician_id` = that task's lowest-`user_id` TECHNICIAN-or-NULL assignee, or
-NULL; `event_metadata = {"task_id", "auto": false, "backfill": true}`). A unit
+NULL; `event_metadata = {"task_id", "auto": false, "backfill": true}`). Candidate units are locked `FOR NO KEY UPDATE` before the insert/update, so a concurrent status change by the still-serving old backend is never overwritten. A unit
 held by two open tasks is reserved once, for the oldest task (rollout lists
 the duplicates for the office). Links stay manual (`onu_auto_assigned =
 false`). Idempotent (a reserved unit is no longer `IN_STOCK`); post-upgrade
