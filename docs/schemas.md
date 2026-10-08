@@ -264,12 +264,14 @@ comparing).
 the prefix of the message): `PHASE_FIELD_NOT_ALLOWED` (`undoes` outside
 rollback, `capture` in rollback, `wait_until` outside preconditions/verification
 except on a tr069 configuration step, `config_mode` outside ssh/telnet
-configuration/rollback), `CONFIG_COMMAND_REQUIRED`, `UNDOES_UNKNOWN_STEP`,
+configuration/rollback, the step guard `precondition` and `idempotent` outside
+configuration), `CONFIG_COMMAND_REQUIRED`, `UNDOES_UNKNOWN_STEP`,
 `CAPTURE_UNDECLARED` (a step reads only captures of EARLIER steps, in
 preconditions → configuration → verification order; rollback and outputs may
 read any), `CAPTURE_SECRET_NAME`, `REGEX_UNSUPPORTED` (`check_regex`: ≤ 256
 chars, no lookaround, backreference or named group, compiled with tokens as a
-literal; a leading `(?i)`/`(?m)`/`(?s)` is fine — backend-erp's `re2.compile`
+literal; escaped text such as `\(?=` or `\\1` is not mistaken for a
+construct; a leading `(?i)`/`(?m)`/`(?s)` is fine — backend-erp's `re2.compile`
 is the authority), `SECRET_UNDECLARED`, `OUTPUT_SECRET_MIXED` (a secret output
 is exactly `{{secret.<key>}}`; it is always `sensitive`, refused as false),
 `OUTPUT_SHARE_AUDIENCE` (`shareable` needs `technician`), and the `computed`

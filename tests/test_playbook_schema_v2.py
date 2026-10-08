@@ -216,6 +216,18 @@ def test_session_defaults():
 
 # ----------------------------------------------------------------- validation + capture
 
+@pytest.mark.parametrize("phase", ["preconditions", "verification", "rollback"])
+def test_guard_and_idempotent_are_configuration_only(phase):
+    guard = {"template": "show x", "when_met": "skip", "validation": {"expect_contains": "x"}}
+    _err(_v2(**{phase: [_step("s", precondition=guard)]}), "PHASE_FIELD_NOT_ALLOWED")
+    _err(_v2(**{phase: [_step("s", idempotent=True)]}), "PHASE_FIELD_NOT_ALLOWED")
+
+
+@pytest.mark.parametrize("good", ["\\(?=x", "\\\\1", "a\\(?<n"])
+def test_escaped_text_is_not_refused_as_a_construct(good):
+    PlaybookDefinition.model_validate(_v2(preconditions=[_step("p", validation={"expect_regex": good})]))
+
+
 def test_rendered_validation_and_new_regex_checks():
     v = {"expect_regex": "ONU\\s*:\\s*{{device.out_slot}}", "expect_not_regex": "(?i)authed"}
     PlaybookDefinition.model_validate(_v2(preconditions=[_step("p", validation=v)]))

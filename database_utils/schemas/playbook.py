@@ -155,10 +155,11 @@ SECRET_ALPHABET = "".join(
     if c not in "0O1lI"
 )
 
-# A leading global inline-flag group is allowed ((?i), (?m), (?s), combined).
-_LEADING_FLAGS = re.compile(r"\A\(\?[ims]+\)")
 # Constructs RE2 (the execution engine, backend-erp) does not support, plus
-# named groups (the capture value is "the one group").
+# named groups (the capture value is "the one group"). Scanned with every
+# escape except a backreference neutralised, so escaped text (`\(?=`, `\\1`)
+# is not mistaken for a construct.
+_ESCAPE = re.compile(r"\\(.)", re.DOTALL)
 _REGEX_REFUSED = (
     (re.compile(r"\(\?<?[=!]"), "lookaround"),
     (re.compile(r"\\[1-9]|\\g<|\(\?P="), "backreference"),
@@ -178,8 +179,9 @@ def check_regex(pattern: str, where: str) -> "re.Pattern":
     if len(pattern) > MAX_REGEX_LENGTH:
         raise ValueError(f"REGEX_UNSUPPORTED: {where}: longer than {MAX_REGEX_LENGTH} characters")
     body = playbook_expr.TOKEN_SHAPE.sub("x", pattern)
+    scan = _ESCAPE.sub(lambda m: m.group(0) if m.group(1) in "123456789g" else "x", body)
     for rx, what in _REGEX_REFUSED:
-        if rx.search(body):
+        if rx.search(scan):
             raise ValueError(f"REGEX_UNSUPPORTED: {where}: {what} is not supported")
     try:
         return re.compile(body)
@@ -743,6 +745,11 @@ class PlaybookDefinition(BaseModel):
                 where = f"PHASE_FIELD_NOT_ALLOWED: {key} step '{s.name}'"
                 if s.undoes is not None and key != "rollback":
                     raise ValueError(f"{where}: 'undoes' is rollback-only")
+                if s.precondition is not None and key != "configuration":
+                    raise ValueError(f"{where}: the step guard 'precondition' is "
+                                     "configuration-only")
+                if s.idempotent and key != "configuration":
+                    raise ValueError(f"{where}: 'idempotent' is configuration-only")
                 if s.capture and key == "rollback":
                     raise ValueError(f"{where}: rollback steps do not capture")
                 if s.wait_until is not None and not (
