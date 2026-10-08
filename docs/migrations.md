@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (101 revisions, head: **`pe1_playbook_phases`**) — plus
+`alembic/versions/` (103 revisions, head: **`pe1_playbook_phases`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1009,11 +1009,36 @@ does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
 
+### `ri1_inventory_received_at` (2026-10-08, doc 47 SP6)
+
+Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4). Under
+`lock_timeout = 5s`: adds `inventory_item.received_at TIMESTAMPTZ` nullable,
+**backfills `received_at = created_at`** (the best guess for existing stock;
+the office corrects it via xlsx), then sets `NOT NULL` + `server_default now()`
+and asserts no NULL is left. The server default is kept (unlike `created_at`)
+because raw-SQL inserts exist (`tests/pg` fixtures, scripts). No index: SP4's
+FIFO pick filters `(company_id, status)`. Downgrade drops the column.
+
+### `tl1_task_location` (2026-10-08)
+
+Additive, on `ri1_inventory_received_at` (ZTP program chain, doc 42a §4;
+this branch carries SP6's `ri1` so the chain stays single-headed). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
+`task.latitude` / `task.longitude` (DOUBLE PRECISION, nullable,
+`ADD COLUMN IF NOT EXISTS`) and `ck_task_location` (guarded by a
+`pg_constraint` lookup): both NULL, or both set and in range (lat -90..90,
+lng -180..180). The CHECK spells out `IS NOT NULL` on both sides because a half
+pair makes `BETWEEN` NULL and a NULL CHECK passes. The task's own reference
+point; NULL = derived in backend-erp (`utils/tasks.reference_point`: client,
+then device for non-INSTALL, then the planned parent). No index, no backfill.
+Post-upgrade assert on both columns + the CHECK. Downgrade drops the CHECK and
+both columns. `tests/pg/test_task_location_pg.py` covers the CHECK and
+down/up.
+
 ### `pe1_playbook_phases` (2026-10-08, ZTP SP1, doc 42 §12)
 
-On `ta1_task_assignee_model` on this branch; the program chain (doc 42a §4) is
-`… → oa1 → pe1 → zt1`, so `down_revision` is re-pointed (one line) when it is
-composed after SP4–SP6. Additive and metadata-only, under `lock_timeout = 5s`,
+On `tl1_task_location` (the `develop` head, merged into this branch); the
+program chain (doc 42a §4) is `… → tl1 → oa1 → pe1 → zt1`, so `down_revision`
+is re-pointed to `oa1` (one line) when SP4 composes first. Additive and metadata-only, under `lock_timeout = 5s`,
 `IF [NOT] EXISTS`: `provisioning_run` gains `phase` VARCHAR(16), `error_code`
 VARCHAR(40), `error` TEXT, `outputs` JSON, `secrets_ciphertext` /
 `secrets_dek_wrapped` BYTEA, `secrets_kek_id` VARCHAR; `provisioning_job` gains

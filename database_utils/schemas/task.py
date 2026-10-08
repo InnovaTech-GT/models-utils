@@ -64,6 +64,11 @@ class TaskOut(TaskBase):
     time_spent_minutes: Optional[int] = None
     # Written only by the dispatch ETL; read-only for every other client.
     route_sequence: Optional[int] = None
+    # tl1_task_location: the task's own point only (doc 46 §4.2.2); the
+    # derived reference point is computed by backend-erp. Inputs live on the
+    # backend's TaskCreateIn/TaskUpdateIn.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 

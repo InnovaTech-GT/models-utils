@@ -136,7 +136,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   **without** their predicate, so a test that re-opens a run on the same key
   must recreate them partial (`tests/test_provisioning_run_v2.py` does).
 
-## Engine v2 (6.1.0, doc 42) — shipped limitations
+## Engine v2 (6.3.0, doc 42) — shipped limitations
 
 - **Run events are an in-process listener list** (`RUN_CLOSED_LISTENERS`), not
   an outbox table. A process that closes runs without importing backend-erp's

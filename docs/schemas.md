@@ -237,7 +237,7 @@ matters when reading `__init__.py`:
   `{{computed[0].x}}` is refused with `COMPUTE_NAME`, because `evaluate_all`
   never produces such a name and only a caller-supplied value could fill it.
 
-### Engine v2 (6.1.0, doc 42, revision `pe1_playbook_phases`) — `playbook` format
+### Engine v2 (6.3.0, doc 42, revision `pe1_playbook_phases`) — `playbook` format
 
 `schemas/playbook.py` — one playbook is still one purpose on one device type;
 the definition now holds the phases at the top level (the founder's layout):
@@ -325,6 +325,27 @@ log keeps the value.
   the value. Pinned by `tests/test_insight_schemas_v2.py`.
 - The read wrappers that add `accessible` (`InsightChartView`,
   `InsightDashboardView`) live in backend-erp, not here.
+
+### Inventory intake (6.1.0, doc 47, revision `ri1_inventory_received_at`)
+
+`schemas/inventory.py`:
+
+- `InventoryItemOut.received_at: datetime` (read-only). Deliberately **not** on
+  `InventoryItemBase`/`Create` (backend-erp's `create_item` does
+  `InventoryItem(**item_in.dict())`, so an explicit `None` would be written as
+  NULL) nor on `InventoryItemUpdate` (xlsx is the only edit path).
+- `InventoryReceiveIn` — `device_type_id`, `warehouse_id`, `serials` (1..100),
+  `condition` (default NEW), `received_at?` (naive → America/Guatemala via
+  `make_aware_gt`), `purchase_date?`, `cost_cents?` (≥0, per unit),
+  `supplier?`/`reference?` (≤120), `notes?`, `receipt_id?` (client-generated
+  idempotency key).
+- `InventoryReceiveRow` — `serial_number`, `result`
+  `CREATED|DUPLICATE|INVALID`, `code?` (`SERIAL_EMPTY|SERIAL_TOO_LONG`),
+  `warning?` (`SERIAL_PATTERN_MISMATCH`), `item?: InventoryItemOut`.
+- `InventoryReceiveOut` — `receipt_id`, `created`, `warnings`, `duplicates`,
+  `invalid`, `rows`.
+
+Pinned by `tests/test_inventory_received_at.py`.
 
 ### Mobile integration (mi1/mi2, 2026-09-29)
 

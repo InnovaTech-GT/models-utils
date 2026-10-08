@@ -510,6 +510,13 @@ class Task(Base):
     # NULL = not routed. Not the board order: that is `position`, which
     # move/reorder renumber. ix_task_company_scheduled_date covers the reads.
     route_sequence = Column(Integer, nullable=True)
+    # tl1_task_location (doc 46): the task's own reference point (where the
+    # technician drives to). NULL = derived (client, then device for
+    # non-INSTALL, then the planned parent) — see backend-erp
+    # utils/tasks.reference_point. Both or neither: ck_task_location lives in
+    # the revision only (SQLite create_all in consumers).
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     # mi2_mobile_field_ops: field-job timestamps (set when the status becomes
     # IN_PROGRESS / DONE) and the technician's per-step progress, keyed by the
     # app's step id: {"pickupOnu": {"done": true, "at": "...", ...}, ...}.
