@@ -369,6 +369,11 @@ def create_run(
     reverse configuration order, and never branches. Secrets declared by the
     plan are generated and encrypted here (non-dry only), before anything is
     inserted.
+
+    Raises ResolutionError even when `resolution` is passed: the plan-wide
+    checks need the snapshotted definitions, so SECRET_SPEC_CONFLICT,
+    OUTPUT_KEY_CONFLICT and SECRETS_KEY_UNAVAILABLE come from here, not from
+    resolve_provisioning. Callers map it to 422 like a resolution failure.
     """
     resolved = resolution or resolve_provisioning(db, client_service, purpose)
 
@@ -837,6 +842,26 @@ def _in_flight_for_service(db: Session, run: ProvisioningRun) -> bool:
     ).first() is not None
 
 
+def _later_run_for_service(db: Session, run: ProvisioningRun) -> bool:
+    """A non-dry run opened on the same service after `run`: undoing `run`'s
+    devices now would undo that newer state (doc 42 §7.6)."""
+    return db.execute(
+        sa.select(ProvisioningRun.id).where(
+            ProvisioningRun.client_service_id == run.client_service_id,
+            ProvisioningRun.id != run.id,
+            ProvisioningRun.dry_run.is_(False),
+            ProvisioningRun.created_at > run.created_at,
+        ).limit(1)
+    ).first() is not None
+
+
+def _guard_service(db: Session, run: ProvisioningRun) -> None:
+    if _in_flight_for_service(db, run):
+        raise RunNotRevertible("another run for this service is in flight")
+    if _later_run_for_service(db, run):
+        raise RunNotRevertible("a later run exists for this service")
+
+
 def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
     """"Revertir" a SUCCEEDED run (doc 42 §7.6): roll back every device it
     configured, through each playbook's own rollback. Returns the first
@@ -851,18 +876,7 @@ def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
         raise RunNotRevertible("only a SUCCEEDED run can be reverted")
     if run.phase is None:
         raise RunNotRevertible("a legacy run has no rollback snapshot")
-    if _in_flight_for_service(db, run):
-        raise RunNotRevertible("another run for this service is in flight")
-    later = db.execute(
-        sa.select(ProvisioningRun.id).where(
-            ProvisioningRun.client_service_id == run.client_service_id,
-            ProvisioningRun.id != run.id,
-            ProvisioningRun.dry_run.is_(False),
-            ProvisioningRun.created_at > run.created_at,
-        ).limit(1)
-    ).first()
-    if later is not None:
-        raise RunNotRevertible("a later run exists for this service")
+    _guard_service(db, run)
 
     _set_cause(run, REVERTED, None)
     run.status = ProvisioningJobStatus.RUNNING
@@ -878,13 +892,15 @@ def retry_rollback(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJo
     the rollback of the devices whose latest ROLLBACK child did not succeed
     (or never ran). error_code goes back to the original cause, so a
     successful retry ends ROLLED_BACK with it. NO_ROLLBACK_DEFINED devices are
-    not retried (nothing to run): such a run ends ROLLBACK_INCOMPLETE again."""
+    not retried (nothing to run): such a run ends ROLLBACK_INCOMPLETE again.
+    Refused, like revert_run, while another run for the service is in flight
+    or once a later non-dry run exists (a §7.7 corrective run that succeeded
+    must not be undone by retrying the old rollback)."""
     run = _lock_run(db, run.id)
     if (run.dry_run or run.status != ProvisioningJobStatus.FAILED
             or run.error_code != ROLLBACK_INCOMPLETE or run.phase is None):
         raise RunNotRevertible("only a ROLLBACK_INCOMPLETE run can retry its rollback")
-    if find_in_flight_run(db, run.company_id, run.idempotency_key) is not None:
-        raise RunNotRevertible("another run for this service is in flight")
+    _guard_service(db, run)
 
     plan = run.plan or []
     latest: Dict[str, Optional[ProvisioningJob]] = {
@@ -921,7 +937,9 @@ def create_or_get_run(
     The INSERT runs in a SAVEPOINT, so losing the race to a concurrent producer
     (uq_provisioning_run_company_idem) rolls back only the savepoint: the
     caller's session stays usable (a workflow execution still commits) and the
-    winner's run is returned instead of a 500. Any other error propagates.
+    winner's run is returned instead of a 500. Any other error propagates —
+    including create_run's ResolutionError (SECRET_SPEC_CONFLICT,
+    OUTPUT_KEY_CONFLICT, SECRETS_KEY_UNAVAILABLE), which callers map to 422.
 
     Re-running (doc 42 §7.7, founder Q10): both idempotency indexes are partial
     over QUEUED/RUNNING/PENDING_INFORM, so once a run is terminal the same key
@@ -958,7 +976,9 @@ def repair_stranded_runs(db: Session, limit: int = 100) -> int:
     A run whose last child finished more than STRANDED_RUN_MAX_AGE ago is not
     simply advanced (doc 42 §8.4): in PRECONDITIONS, or a legacy / dry run, it
     is closed FAILED/STRANDED_RUN_EXPIRED; in CONFIGURATION / VERIFICATION it
-    ENTERS ROLLBACK (the safe direction); in ROLLBACK it keeps advancing, and
+    ENTERS ROLLBACK (the safe direction) — unless its last forward entry
+    already succeeded and only the final advance was lost, then it is finished
+    SUCCEEDED; in ROLLBACK it keeps advancing, and
     one with nothing left to advance is closed ROLLBACK_INCOMPLETE. Returns the
     number of runs repaired; the caller commits.
     """
@@ -998,6 +1018,12 @@ def repair_stranded_runs(db: Session, limit: int = 100) -> int:
                         close_run(db, run, ProvisioningJobStatus.FAILED, ROLLBACK_INCOMPLETE)
                     else:
                         advance_run(db, last)
+                elif (expired and not run.dry_run and last is not None
+                      and last.status in TERMINAL_OK
+                      and last.run_position == len(run.plan or []) - 1):
+                    # Only the final advance was lost: nothing would be
+                    # configured forward, so finishing carries no stale-plan risk.
+                    advance_run(db, last)
                 elif (expired and not run.dry_run
                       and run.phase in (PHASE_CONFIGURATION, PHASE_VERIFICATION)):
                     _enter_rollback(db, run, STRANDED_RUN_EXPIRED,

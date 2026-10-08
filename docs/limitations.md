@@ -118,8 +118,11 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   fails inside the worker's settle (it runs in a savepoint so the job's outcome
   still commits), the run sits with no in-flight child until the reaper calls
   `repair_stranded_runs` (> 30 s quiet). A run quiet for more than
-  `STRANDED_RUN_MAX_AGE` (1 h) is closed FAILED (`STRANDED_RUN_EXPIRED`)
-  rather than advanced from a plan resolved long ago — an operator re-provisions.
+  `STRANDED_RUN_MAX_AGE` (1 h) is not advanced forward from a plan resolved
+  long ago: in PRECONDITIONS it is closed FAILED (`STRANDED_RUN_EXPIRED`), in
+  CONFIGURATION/VERIFICATION it enters ROLLBACK (engine v2, doc 42 §8.4). The
+  one exception is a run whose final forward entry already succeeded: nothing
+  is left to configure, so it is finished SUCCEEDED instead of rolled back.
 - **No run-level cancel.** Cancelling a RUNNING child is per job; a run cannot be
   cancelled as a unit. A failed or cancelled child is never retried on its own
   (backend-erp `RUN_CHILD_NOT_RETRYABLE`): re-provision opens a new run.

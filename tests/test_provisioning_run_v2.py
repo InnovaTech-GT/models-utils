@@ -521,6 +521,35 @@ def test_rollback_retry_guard(db, csr):
         retry_rollback(db, run)
 
 
+def _rollback_incomplete(db, csr):
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    rb = _drive(db, run, fail_at=5)
+    olt_rb = _settle(db, rb)
+    _settle(db, olt_rb, S.FAILED, steps=[_entry("unauthorize", "FAILED", code="CONNECT_TIMEOUT")])
+    assert run.error_code == "ROLLBACK_INCOMPLETE"
+    return run
+
+
+def test_rollback_retry_refuses_while_another_run_for_the_service_is_in_flight(db, csr):
+    run = _rollback_incomplete(db, csr)
+    create_run(db, csr.service, PURPOSE_SUSPENSION)       # different key, same service
+    with pytest.raises(RunNotRevertible) as exc:
+        retry_rollback(db, run)
+    assert "in flight" in exc.value.reason
+
+
+def test_rollback_retry_refuses_after_a_later_corrective_run(db, csr):
+    run = _rollback_incomplete(db, csr)
+    fix = create_run(db, csr.service, PURPOSE_ACTIVATION)  # §7.7 corrective run
+    _drive(db, fix)
+    assert fix.status == S.SUCCEEDED
+    fix.created_at = run.created_at + timedelta(seconds=1)
+    db.flush()
+    with pytest.raises(RunNotRevertible) as exc:
+        retry_rollback(db, run)
+    assert "later run" in exc.value.reason
+
+
 # ------------------------------------------------------------------- secrets
 
 def _wifi_onu():
@@ -631,6 +660,19 @@ def test_stranded_in_configuration_enters_rollback(db, csr):
     assert repair_stranded_runs(db) == 1
     assert run.phase == "ROLLBACK" and run.error_code == "STRANDED_RUN_EXPIRED"
     assert _children(db, run)[-1].phase == "ROLLBACK"
+
+
+def test_stranded_after_the_last_forward_entry_succeeds_instead_of_rolling_back(db, csr):
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    job = _children(db, run)[0]
+    while job.run_position < len(run.plan) - 1:
+        job = _settle(db, job)
+    job.status, job.finished_at = S.SUCCEEDED, now_gt()   # the final advance never committed
+    job.log = {"steps": [_entry(s["name"]) for s in job_definition_steps(db, job)]}
+    _stale(db, run)
+    assert repair_stranded_runs(db) == 1
+    assert run.status == S.SUCCEEDED and run.error_code is None
+    assert all(c.phase != "ROLLBACK" for c in _children(db, run))
 
 
 def test_stranded_in_rollback_keeps_advancing(db, csr):
