@@ -155,7 +155,7 @@ only resolves `service_plan_id` items.
 
 ## Tests
 
-`tests/` is 63 files / **743 tests**: 725 on in-memory SQLite (`pytest.ini`:
+`tests/` is 64 files / **755 tests**: 737 on in-memory SQLite (`pytest.ini`:
 `asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`) and 18 in `tests/pg`
 (`-m pg`, skipped unless `PG_TEST_URL` points at a DB at `alembic upgrade head`).
 
