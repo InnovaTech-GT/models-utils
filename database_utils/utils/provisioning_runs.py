@@ -80,6 +80,7 @@ from database_utils.schemas.playbook import (
     normalize_definition,
 )
 from database_utils.utils import crypto
+from database_utils.utils.acs_bootstrap import acs_values, reads_acs
 from database_utils.utils.provisioning_resolution import (
     ResolutionError,
     ResolvedNode,
@@ -342,6 +343,40 @@ def _queue_child(db: Session, run: ProvisioningRun, position: int) -> Optional[P
     return job
 
 
+def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedProvisioning,
+                 purpose: str, *, ensure: bool):
+    """(ordered, definitions, secret_specs) plus every plan-wide refusal that
+    needs the snapshotted definitions: SECRET_SPEC_CONFLICT,
+    OUTPUT_KEY_CONFLICT (§9.4) and, when a definition reads {{acs.*}}, the
+    ACS checks of §9.7 (ensure=True also ensures the CPE's registration)."""
+    ordered = order_for_purpose(list(resolved.steps), purpose)
+    definitions: Dict[str, Dict[str, Any]] = {}
+    for node in ordered:
+        pid = str(node.playbook_id)
+        if pid not in definitions:
+            pb = db.get(Playbook, node.playbook_id)
+            definitions[pid] = normalize_definition(dict((pb.definition if pb else None) or {}))
+    secret_specs = _collect_specs(ordered, definitions)
+    if reads_acs(definitions.values()):
+        cpe = next((n for n in resolved.path if n.position == 0), None)
+        # The values are checked and discarded: the worker reloads them.
+        acs_values(db, client_service.company_id, cpe.serial_number if cpe else None,
+                   item_id=cpe.item_id if cpe else None, ensure=ensure)
+    return ordered, definitions, secret_specs
+
+
+def preflight_run(db: Session, client_service: ClientService, resolved: ResolvedProvisioning,
+                  purpose: str, dry_run: bool = False) -> None:
+    """create_run's plan-wide refusals with NO write (doc 42 §9.4, §9.7), for
+    a caller that must refuse before it mutates anything (the lifecycle
+    endpoints write the service status before they open the run). Raises the
+    same ResolutionError codes create_run would, SECRETS_KEY_UNAVAILABLE
+    included."""
+    _o, _d, secret_specs = _plan_checks(db, client_service, resolved, purpose, ensure=False)
+    if secret_specs and not dry_run:
+        _encrypt_secrets(uuid.uuid4(), client_service.company_id, {})
+
+
 def create_run(
     db: Session,
     client_service: ClientService,
@@ -374,6 +409,11 @@ def create_run(
     checks need the snapshotted definitions, so SECRET_SPEC_CONFLICT,
     OUTPUT_KEY_CONFLICT and SECRETS_KEY_UNAVAILABLE come from here, not from
     resolve_provisioning. Callers map it to 422 like a resolution failure.
+
+    A definition that reads {{acs.*}} (doc 42 §9.7) also raises
+    ACS_NOT_CONFIGURED / ACS_SERIAL_CLAIMED / ACS_VALUE_UNSAFE, and a non-dry
+    run ensures the CPE's acs_device_registration (CR credentials minted when
+    absent) before any child exists; a dry run writes no registration.
     """
     resolved = resolution or resolve_provisioning(db, client_service, purpose)
 
@@ -381,14 +421,8 @@ def create_run(
     if extra_variables:
         shared.update(extra_variables)
 
-    ordered = order_for_purpose(list(resolved.steps), purpose)
-    definitions: Dict[str, Dict[str, Any]] = {}
-    for node in ordered:
-        pid = str(node.playbook_id)
-        if pid not in definitions:
-            pb = db.get(Playbook, node.playbook_id)
-            definitions[pid] = normalize_definition(dict((pb.definition if pb else None) or {}))
-    secret_specs = _collect_specs(ordered, definitions)
+    ordered, definitions, secret_specs = _plan_checks(
+        db, client_service, resolved, purpose, ensure=not dry_run)
 
     build = purpose not in TEARDOWN_PURPOSES
     plan: List[Dict[str, Any]] = []
