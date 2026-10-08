@@ -296,8 +296,15 @@ configuration + verification flattened), `shared_device_wait_errors(definition)`
 non-CPE binding), `playbook_warnings(definition, category_tier=, purpose=)`
 (`ROLLBACK_EMPTY`, `ROLLBACK_WITHOUT_UNDOES`, `ENABLE_WITHOUT_SESSION`,
 `NOT_RESEND_SAFE`, `CPE_NETWORK_PRECONDITION` — warnings, never errors),
-`is_resend_safe(step)`, `output_secret_ref(value)`; constants `PHASE_KEYS`,
+`is_resend_safe(step)`, `output_secret_ref(value)`,
+`mask_sensitive_outputs(outputs)` / `mask_log_outputs(log)` (`value: null` on
+every `sensitive` or `secret` output entry, doc 42 §10.1); constants `PHASE_KEYS`,
 `SESSION_PROBE_STEP`, `SECRET_ALPHABET`, `SHARED_DEVICE_WAIT_MAX_SECONDS`.
+
+`ProvisioningJobOut.log` is serialized through `mask_log_outputs`, so a
+sensitive output a child job wrote into `log.outputs` (before `advance_run`
+merged it into `run.outputs`) is never returned by any job endpoint; the stored
+log keeps the value.
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 

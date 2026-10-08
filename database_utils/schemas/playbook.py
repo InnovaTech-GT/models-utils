@@ -496,6 +496,24 @@ def output_secret_ref(value: str) -> Optional[str]:
     return f"secret.{m.group(1)}" if m else None
 
 
+def mask_sensitive_outputs(outputs: Any) -> Any:
+    """`value: null` on every `sensitive` / `secret` output entry (doc 42
+    §10.1): such a value is never returned by the API, wherever the entry
+    sits (`run.outputs` or a child's `log.outputs`). The flags are kept so the
+    UI can show "••••"; the technician reads it through doc 43's audited path."""
+    if not isinstance(outputs, list):
+        return outputs
+    return [dict(o, value=None) if isinstance(o, dict) and (o.get("sensitive") or o.get("secret"))
+            else o for o in outputs]
+
+
+def mask_log_outputs(log: Any) -> Any:
+    """A job log with its `outputs` masked (mask_sensitive_outputs)."""
+    if isinstance(log, dict) and log.get("outputs"):
+        return dict(log, outputs=mask_sensitive_outputs(log["outputs"]))
+    return log
+
+
 class ComputedVar(BaseModel):
     """One declared integer value (doc 40 §3.3.3). `expr` is parsed here at
     save time and evaluated by the resolver and the renderer; the result is
@@ -949,3 +967,8 @@ class ProvisioningJobOut(BaseModel):
     device_lock_key: Optional[str] = None       # canon C11: per-device serialization key
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("log")
+    @classmethod
+    def _mask_outputs(cls, log):
+        return mask_log_outputs(log)

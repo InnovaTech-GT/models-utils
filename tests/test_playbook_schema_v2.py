@@ -426,3 +426,25 @@ def test_warnings():
         playbook_warnings(cpe, category_tier="EDGE", purpose="DEPROVISION"))
     assert "CPE_NETWORK_PRECONDITION" not in _codes(
         playbook_warnings(cpe, category_tier="CORE", purpose="ACTIVATION"))
+
+
+def test_job_out_masks_sensitive_log_outputs():
+    """doc 42 §10.1: a sensitive value never leaves the API, even from a
+    child's job.log.outputs."""
+    import uuid
+    from datetime import datetime
+
+    from database_utils.schemas.playbook import ProvisioningJobOut
+
+    log = {"steps": [], "outputs": [
+        {"key": "ip", "value": "10.1.4.84", "sensitive": True},
+        {"key": "wifi_key", "value": None, "secret": True, "ref": "secret.wifi_key"},
+        {"key": "power", "value": "-21", "sensitive": False},
+    ]}
+    out = ProvisioningJobOut(
+        id=uuid.uuid4(), company_id=uuid.uuid4(), playbook_id=uuid.uuid4(),
+        status="SUCCEEDED", attempts=1, max_attempts=3, triggered_by="USER",
+        created_at=datetime.now(), log=log)
+    assert [o["value"] for o in out.log["outputs"]] == [None, None, "-21"]
+    assert "10.1.4.84" not in out.model_dump_json()
+    assert log["outputs"][0]["value"] == "10.1.4.84"  # the stored log is untouched
