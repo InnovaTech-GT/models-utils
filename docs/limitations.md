@@ -110,6 +110,14 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   FAILED step) and mode B checks `gate_failure` before its insert. A legacy
   automation that reaches a playbook not dry-run at its current version now
   fails visibly instead of running.
+- **The system-playbook dry-run exemption is matched by name.** `playbook`
+  has no `is_system` flag, so `gate_failure` exempts any playbook whose name is
+  in `SYSTEM_PLAYBOOK_NAMES` — including a tenant's own playbook created or
+  renamed to one (e.g. `huawei_onu_activate` on a tenant never seeded with it).
+  Carried over verbatim from backend-erp; it matters more now that this is the
+  only gate for every run producer. Fix: base the exemption on something a
+  tenant cannot set (an `is_system` column, or the seed's creator), and have
+  backend-erp's playbook create/rename reject names in `SYSTEM_PLAYBOOK_NAMES`.
 
 ## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
 

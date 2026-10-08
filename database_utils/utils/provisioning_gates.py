@@ -36,7 +36,8 @@ CORE_CONNECTIVITY_PLAYBOOK_NAMES = frozenset({
 })
 
 # canon C7: seeded system playbooks are SaaS-verified and exempt from the
-# per-tenant dry-run gate. Matched by name: `playbook` has no is_system flag.
+# per-tenant dry-run gate. Matched by name: `playbook` has no is_system flag,
+# so a tenant playbook named like one is exempt too (docs/limitations.md).
 SYSTEM_PLAYBOOK_NAMES = frozenset({
     "cpe_reboot",
     "cpe_factory_reset",
@@ -96,9 +97,13 @@ def run_gate_failures(db: Session, resolved, dry_run: bool) -> List[Dict[str, An
         return []
     failures = []
     for node in resolved.steps:
+        # db.get hits the identity map for playbooks resolution already loaded.
         playbook = db.get(Playbook, node.playbook_id)
-        device_type = db.get(DeviceType, node.device_type_id) if node.device_type_id else None
-        failure = gate_failure(db, playbook.company_id, playbook, device_type, dry_run)
+        if playbook is None:  # deleted since resolution, or a stale `resolution=`
+            failure = {"code": "PLAYBOOK_NOT_FOUND"}
+        else:
+            device_type = db.get(DeviceType, node.device_type_id) if node.device_type_id else None
+            failure = gate_failure(db, playbook.company_id, playbook, device_type, dry_run)
         if failure:
             failures.append(failure | {"item_id": str(node.item_id),
                                        "playbook_id": str(node.playbook_id)})

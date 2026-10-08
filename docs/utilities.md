@@ -271,7 +271,7 @@ so the workflow engine can apply them too (backend-erp keeps its public names an
 | `kill_switch_enabled()` | env `PROVISIONING_KILL_SWITCH` in `1`/`true`/`yes` |
 | `enable_gate_reason(db, company_id, device_type)` | `"kill_switch"`, `"device_type_disabled"` (`device_type.provisioning_enabled` false) or None. backend-erp's worker claim re-check uses it |
 | `gate_failure(db, company_id, playbook, device_type, dry_run)` | None, or exactly today's 409 body: `{"code": "PROVISIONING_DISABLED", "reason"}` or `{"code": "DRY_RUN_REQUIRED", "playbook_version", "last_dry_run_version"}` (no `playbook_id`) |
-| `run_gate_failures(db, resolved, dry_run)` | One `gate_failure` per configured node of the resolved path, each + `item_id` / `playbook_id` (readiness context for backend-erp's closeout) |
+| `run_gate_failures(db, resolved, dry_run)` | One `gate_failure` per configured node of the resolved path, each + `item_id` / `playbook_id` (readiness context for backend-erp's closeout); a node whose playbook no longer exists yields `{"code": "PLAYBOOK_NOT_FOUND"}` instead of crashing |
 | `ProvisioningGateError(errors)` | Raised by a live `create_run` (so by `create_or_get_run` too). Every producer goes through it: `/provision`, lifecycle, the cancel cascade, ZTP and the workflow engine's mode A. Callers map it to 409 / `ENQUEUE_FAILED` / a FAILED workflow step. Rollback, revert and rollback-retry children are not created by `create_run` and stay exempt |
 
 ### `provisioning_runs.py`

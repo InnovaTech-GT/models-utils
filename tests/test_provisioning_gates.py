@@ -1,6 +1,8 @@
 """Provisioning gates enforced at run creation (doc 43 §5.6): the gate logic
 moved from backend-erp's utils/provisioning_guards.py, keeping today's 409
 bodies, plus the gate in create_run that covers every producer."""
+import uuid
+
 import pytest
 import sqlalchemy as sa
 
@@ -79,6 +81,17 @@ def test_run_gate_failures_lists_every_blocked_node(db, plant):
         "item_id": str(plant.olt.id), "playbook_id": str(olt.id)}
     assert by_item[str(plant.cpe.id)]["reason"] == "device_type_disabled"
     assert g.run_gate_failures(db, resolved, dry_run=True) == []
+
+
+def test_run_gate_failures_refuses_a_vanished_playbook(db, plant):
+    """A playbook deleted after resolution (or a stale `resolution=`) is a
+    structured refusal, not an AttributeError."""
+    resolved = resolve_provisioning(db, plant.service, PURPOSE_ACTIVATION)
+    node = resolved.steps[0]
+    node.playbook_id = uuid.uuid4()
+    failures = g.run_gate_failures(db, resolved, dry_run=False)
+    assert failures == [{"code": "PLAYBOOK_NOT_FOUND", "item_id": str(node.item_id),
+                         "playbook_id": str(node.playbook_id)}]
 
 
 def _counts(db):

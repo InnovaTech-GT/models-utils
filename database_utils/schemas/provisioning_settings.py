@@ -1,7 +1,9 @@
 # schemas/provisioning_settings.py
 """
-Provisioning settings (canon C6 + C9): the tenant's provisioning enable gate,
-transport axis and ACS configuration — one singleton row per tenant. Plan:
+Provisioning settings (canon C6 + C9): the tenant's transport axis, ACS
+configuration and ZTP switch — one singleton row per tenant. `enabled` is a
+legacy column and NOT a gate (the gates live in utils/provisioning_gates.py);
+`ztp_enabled` (zt1) turns on the INSTALL-closeout ZTP trigger. Plan:
 docs/isp-platform/23-network-config-implementation-plan.md §2.6, extended by
 revision `tr1_transport_axis`, which folded the whole multi-row `network_access`
 table (and its `schemas/network_access.py`, deleted) in here.
