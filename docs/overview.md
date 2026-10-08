@@ -39,8 +39,8 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
 2. **Pydantic v2 schemas** — 37 modules shared between services
    ([schemas.md](schemas.md)).
-3. **Alembic migrations + idempotent seeds** — 100 revisions (head
-   `ta1_task_assignee_model`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
+3. **Alembic migrations + idempotent seeds** — 101 revisions (head
+   `tl1_task_location`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -67,7 +67,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 63 files, **743 tests** — 725 SQLite + 18 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 65 files, **753 tests** — 728 SQLite + 25 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and

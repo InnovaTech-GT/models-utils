@@ -155,8 +155,8 @@ only resolves `service_plan_id` items.
 
 ## Tests
 
-`tests/` is 63 files / **743 tests**: 725 on in-memory SQLite (`pytest.ini`:
-`asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`) and 18 in `tests/pg`
+`tests/` is 65 files / **753 tests**: 728 on in-memory SQLite (`pytest.ini`:
+`asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`) and 25 in `tests/pg`
 (`-m pg`, skipped unless `PG_TEST_URL` points at a DB at `alembic upgrade head`).
 
 `tests/conftest.py` holds the shared `db` and `plant` fixtures. `plant` builds a

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development, head `pc1_provisioning_claim_token`), not yet
 on `main`: the v1.0.1 cycle.
 
+### Added
+- **6.1.0** - `Task.latitude` / `Task.longitude` (Float, nullable): the task's own reference point (doc 46, pre-dispatch). NULL = derived in backend-erp (`utils/tasks.reference_point`). Output-only on `TaskOut`; inputs belong to backend-erp's `TaskCreateIn`/`TaskUpdateIn`. Alembic `tl1_task_location` (**new head**, on `ta1_task_assignee_model`): two nullable DOUBLE PRECISION columns + `ck_task_location` (both or neither, in range). `isp_seed` COLLECTOR comment notes the `POST /tasks/` `new_client` exception (no grant change).
+
 ### Changed
 - **BREAKING (6.0.0)** - `task_assignee` is now the mapped model `TaskAssignee` (`__tablename__ = "task_assignee"`), like the rest of the tables, instead of a bare `Table`. Same columns, primary key and `ck_task_assignee_role`, so no DDL; Alembic `ta1_task_assignee_model` (**new head**, on `pc1_provisioning_claim_token`) only asserts the table shape. `Task.assignees` keeps working through `secondary="task_assignee"`. Breaking for importers: `database_utils.models.task_assignee` is gone; use `TaskAssignee` (`TaskAssignee.role`, `insert(TaskAssignee)`, `TaskAssignee.__table__` where a `Table` is needed).
 

@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (100 revisions, head: **`ta1_task_assignee_model`**) — plus
+`alembic/versions/` (101 revisions, head: **`tl1_task_location`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1008,6 +1008,22 @@ live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
 does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
+
+### `tl1_task_location` (2026-10-08)
+
+Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4: after
+`ri1_inventory_received_at`; `down_revision` is re-pointed at compose time if
+SP6 lands first). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
+`task.latitude` / `task.longitude` (DOUBLE PRECISION, nullable,
+`ADD COLUMN IF NOT EXISTS`) and `ck_task_location` (guarded by a
+`pg_constraint` lookup): both NULL, or both set and in range (lat -90..90,
+lng -180..180). The CHECK spells out `IS NOT NULL` on both sides because a half
+pair makes `BETWEEN` NULL and a NULL CHECK passes. The task's own reference
+point; NULL = derived in backend-erp (`utils/tasks.reference_point`: client,
+then device for non-INSTALL, then the planned parent). No index, no backfill.
+Post-upgrade assert on both columns + the CHECK. Downgrade drops the CHECK and
+both columns. `tests/pg/test_task_location_pg.py` covers the CHECK and
+down/up.
 
 ## Key rules
 
