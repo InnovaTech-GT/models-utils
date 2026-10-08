@@ -5,11 +5,11 @@ from database_utils.models.crm import Task
 from database_utils.schemas.task import TaskCreate, TaskOut, TaskUpdate
 
 
-def test_tl1_sits_on_a_single_parent():
+def test_tl1_follows_ri1_in_the_program_chain():
     tl1 = load("versions/tl1_task_location.py", "tl1_task_location")
     assert tl1.revision == "tl1_task_location"
-    # Program chain position is ri1 (doc 42a §4); re-pointed at compose time.
-    assert isinstance(tl1.down_revision, str)
+    # doc 42a §4: pc1 -> ta1 -> ri1 -> tl1 -> oa1
+    assert tl1.down_revision == "ri1_inventory_received_at"
     assert len(tl1.revision) <= 32
 
 

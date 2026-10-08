@@ -1,7 +1,7 @@
 """task.latitude/longitude: the task's own reference point (doc 46 §4.2.1)
 
 Revision ID: tl1_task_location
-Revises: ta1_task_assignee_model
+Revises: ri1_inventory_received_at
 Create Date: 2026-10-08
 
 Additive: two nullable DOUBLE PRECISION columns + a pair/range CHECK. The
@@ -10,9 +10,8 @@ utils/tasks.reference_point (client, then device for non-INSTALL, then the
 planned parent). No index: reads go through ix_task_company_scheduled_date
 or by id. No backfill.
 
-ZTP program chain (doc 42a §4) puts this after ri1_inventory_received_at;
-down_revision is the develop head at branch time and is re-pointed at
-compose time if SP6 lands first.
+ZTP program chain (doc 42a §4): pc1 -> ta1 -> ri1 -> tl1 -> oa1. This branch
+carries SP6's ri1 (merged in) so the chain has a single head.
 
 Hand-written, house style: lock_timeout, idempotent, post-upgrade assert.
 """
@@ -22,7 +21,7 @@ from alembic import op
 from sqlalchemy.sql import text
 
 revision: str = "tl1_task_location"
-down_revision: Union[str, Sequence[str], None] = "ta1_task_assignee_model"
+down_revision: Union[str, Sequence[str], None] = "ri1_inventory_received_at"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

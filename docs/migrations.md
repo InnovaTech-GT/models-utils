@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (101 revisions, head: **`tl1_task_location`**) — plus
+`alembic/versions/` (102 revisions, head: **`tl1_task_location`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1009,11 +1009,20 @@ does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
 
+### `ri1_inventory_received_at` (2026-10-08, doc 47 SP6)
+
+Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4). Under
+`lock_timeout = 5s`: adds `inventory_item.received_at TIMESTAMPTZ` nullable,
+**backfills `received_at = created_at`** (the best guess for existing stock;
+the office corrects it via xlsx), then sets `NOT NULL` + `server_default now()`
+and asserts no NULL is left. The server default is kept (unlike `created_at`)
+because raw-SQL inserts exist (`tests/pg` fixtures, scripts). No index: SP4's
+FIFO pick filters `(company_id, status)`. Downgrade drops the column.
+
 ### `tl1_task_location` (2026-10-08)
 
-Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4: after
-`ri1_inventory_received_at`; `down_revision` is re-pointed at compose time if
-SP6 lands first). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
+Additive, on `ri1_inventory_received_at` (ZTP program chain, doc 42a §4;
+this branch carries SP6's `ri1` so the chain stays single-headed). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
 `task.latitude` / `task.longitude` (DOUBLE PRECISION, nullable,
 `ADD COLUMN IF NOT EXISTS`) and `ck_task_location` (guarded by a
 `pg_constraint` lookup): both NULL, or both set and in range (lat -90..90,
