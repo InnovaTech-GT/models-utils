@@ -78,9 +78,9 @@ def seed(engine):
               "device_type_id, network_attached) VALUES (:id, now(), now(), :co, :t, true)",
               id=item, co=co, t=dtype)
         x("INSERT INTO playbook (id, created_at, updated_at, company_id, name, definition, "
-          "is_active, version) VALUES (:id, now(), now(), :co, 'pc pb', "
+          "is_active, version, last_dry_run_version) VALUES (:id, now(), now(), :co, 'pc pb', "
           "'{\"configuration\": [{\"name\": \"s\", \"driver\": \"simulator\", "
-          "\"template\": \"ok\"}]}', true, 1)", id=pb, co=co)
+          "\"template\": \"ok\"}]}', true, 1, 1)", id=pb, co=co)
     # Build order puts the core (position 1) first and the CPE last.
     resolution = ResolvedProvisioning(steps=[
         ResolvedNode(position=p, item_id=item, serial_number=None, mac_address=None,

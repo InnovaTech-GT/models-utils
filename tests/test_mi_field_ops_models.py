@@ -29,7 +29,7 @@ def test_mi1_labels_match_the_python_enums():
 
 
 def test_notification_kind_check_matches_model():
-    assert mi2().USER_NOTIFICATION_KIND_CHECK == _USER_NOTIFICATION_KIND_CHECK
+    # zt1 extended the CHECK; test_zt1_ztp_trigger pins mi2's literal as zt1's pre-image.
     for kind in USER_NOTIFICATION_KINDS:
         assert f"'{kind}'" in _USER_NOTIFICATION_KIND_CHECK
 

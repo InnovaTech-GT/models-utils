@@ -632,7 +632,7 @@ def test_a_successful_dry_run_stamps_unchanged_playbooks_only(db, csr):
     assert run.status == S.SUCCEEDED
     olt, router = csr.playbooks["olt-activation"], csr.playbooks["router-activation"]
     assert olt.last_dry_run_version == olt.version
-    assert router.last_dry_run_version is None, "edited during the dry run"
+    assert router.last_dry_run_version == 1 != router.version, "edited during the dry run"
 
 
 # ------------------------------------------------------------------- stranded runs

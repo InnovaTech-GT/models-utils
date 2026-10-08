@@ -118,6 +118,13 @@ Automation-authored `variables` are namespaced through `input_key()` before bein
 merged, so a step declaring `variables: {serial: ...}` cannot shadow the
 resolver's `device.serial`.
 
+**Gates (6.4.0, doc 43 §5.6).** `create_run` (non-dry) applies the provisioning
+gates to every configured node (`utils/provisioning_gates.py`: env kill switch,
+`device_type.provisioning_enabled`, dry-run gate with the system-playbook
+exemption) and raises `ProvisioningGateError`; mode A turns it into
+`ValueError("Provisioning gates blocked service …: <reasons>")`, so the step
+FAILS visibly and no run or job is inserted, exactly like a resolution error.
+
 ### Mode B — explicit playbook (pre-Cycle-3 shape, unchanged)
 
 `playbook_id` + `variables` + optional target ids. It enqueues one standalone
@@ -127,7 +134,10 @@ every author variable under `input.*`. Its idempotency pre-check
 `PENDING_INFORM`** as in-flight (Cycle 7 fix, doc 25 §6.3) — matching nc1a's
 partial-unique-index predicate, so a re-enqueue while a job is parked dedupes
 instead of tripping the index. `use_service_path` and `playbook_id` together are
-rejected as mutually exclusive.
+rejected as mutually exclusive. Since 6.4.0 (doc 43 §5.6) the always-live job
+is gated before its insert: `gate_failure(playbook, <the target item's device
+type, if any>, dry_run=False)`; a refusal raises `ValueError("Provisioning gates
+blocked playbook …")` and the step FAILS.
 
 ## Provisioning resolution (`provisioning_resolution.py`)
 

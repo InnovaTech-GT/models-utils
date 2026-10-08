@@ -103,14 +103,13 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   (splitters, splice closures) already is an `InventoryItem` and works fine; if
   untracked structural nodes are ever needed the answer is a device category for
   them, not a second table.
-- **Pre-existing and deliberately untouched:**
-  `workflow_engine._execute_enqueue_provisioning_path` (like the
-  `_execute_enqueue_provisioning` it replaced) **still never calls
-  `enforce_provisioning_gates`**, so automation-triggered runs bypass the
-  dry-run gate and the tenant kill switch — those gates live in backend-erp and
-  are only invoked by its routers. Cycle 10 moved this code but did not fix it:
-  fixing it here would change automation behaviour mid-cycle, silently. Filed
-  (doc 33 "Known gap", doc 35 §10), not smuggled in.
+- **Closed in 6.4.0 (doc 43 §5.6):** the workflow engine's
+  `ENQUEUE_PROVISIONING` used to bypass the kill switch, the device-type opt-out
+  and the dry-run gate. The gates now live in `utils/provisioning_gates.py`; a
+  live `create_run` refuses with `ProvisioningGateError` (mode A turns it into a
+  FAILED step) and mode B checks `gate_failure` before its insert. A legacy
+  automation that reaches a playbook not dry-run at its current version now
+  fails visibly instead of running.
 
 ## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
 

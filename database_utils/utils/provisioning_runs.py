@@ -33,12 +33,12 @@ a terminal run status and fires RUN_CLOSED_LISTENERS (doc 42 §6.5). Office
 actions: revert_run ("Revertir") and retry_rollback ("Reintentar reversión").
 A retry after a failure is a NEW run on the same key (create_or_get_run).
 
-WHAT THIS MODULE DOES NOT DO: it does not evaluate the provisioning gates
-(kill switch, dry-run gate). Those live in backend-erp and are called by its
-routers before create_run, exactly as they are today. The workflow-engine path
-still does not call them — a pre-existing gap recorded in doc 33 and doc 35
-§10. Closing it here would silently change automation behaviour mid-cycle;
-it is filed, not smuggled in.
+Gates (doc 43 §5.6): a live create_run refuses with ProvisioningGateError
+(utils/provisioning_gates.py: kill switch, device-type opt-out, dry-run gate)
+before it writes anything, so every producer is gated here, the workflow
+engine included. Routers still check first (enforce_gates_for) so they can
+refuse before a status write; this is the backstop. Rollback, revert and
+rollback-retry children never pass through create_run and stay exempt.
 """
 
 from __future__ import annotations
@@ -81,6 +81,7 @@ from database_utils.schemas.playbook import (
 )
 from database_utils.utils import crypto
 from database_utils.utils.acs_bootstrap import acs_values, reads_acs
+from database_utils.utils.provisioning_gates import ProvisioningGateError, run_gate_failures
 from database_utils.utils.provisioning_resolution import (
     ResolutionError,
     ResolvedNode,
@@ -415,8 +416,14 @@ def create_run(
     run ensures the CPE's acs_device_registration before any child exists; a
     dry run writes no registration. CR credentials are never minted here
     (founder round 4: the worker generates them per child, in memory).
+
+    A live run whose path fails a provisioning gate raises
+    ProvisioningGateError (doc 43 §5.6) before anything is written.
     """
     resolved = resolution or resolve_provisioning(db, client_service, purpose)
+    gate_errors = run_gate_failures(db, resolved, dry_run)
+    if gate_errors:
+        raise ProvisioningGateError(gate_errors)
 
     shared = dict(resolved.shared_variables)
     if extra_variables:
@@ -979,7 +986,9 @@ def create_or_get_run(
     caller's session stays usable (a workflow execution still commits) and the
     winner's run is returned instead of a 500. Any other error propagates —
     including create_run's ResolutionError (SECRET_SPEC_CONFLICT,
-    OUTPUT_KEY_CONFLICT, SECRETS_KEY_UNAVAILABLE), which callers map to 422.
+    OUTPUT_KEY_CONFLICT, SECRETS_KEY_UNAVAILABLE), which callers map to 422,
+    and its ProvisioningGateError (a gate that changed after the caller's own
+    check), which callers map to 409 / ENQUEUE_FAILED (doc 43 §5.6).
 
     Re-running (doc 42 §7.7, founder Q10): both idempotency indexes are partial
     over QUEUED/RUNNING/PENDING_INFORM, so once a run is terminal the same key

@@ -1704,6 +1704,10 @@ class ProvisioningSettings(Base):
     )
     # master switch, default OFF (fail-safe).
     enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    # zt1 (doc 43 §4): the tecnicos closeout of an INSTALL task starts the
+    # ACTIVATION run (ZTP). A NEW column, not the dead `enabled`, which some
+    # tenants still hold true; default off.
+    ztp_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     # tenant default inform interval (seconds) pushed to CPE presets; NULL = use
     # the platform default.
     default_inform_interval = Column(Integer, nullable=True)

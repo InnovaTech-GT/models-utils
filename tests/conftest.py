@@ -121,8 +121,10 @@ class Plant:
         return item
 
     def _playbook(self, name, definition=None):
+        # Dry-run at its version, so live runs pass create_run's gate (doc 43 §5.6).
         pb = Playbook(id=uuid.uuid4(), company_id=self.company_id, name=name,
-                      is_active=True, definition=definition or _DEF)
+                      is_active=True, definition=definition or _DEF,
+                      version=1, last_dry_run_version=1)
         self.db.add(pb)
         self.db.flush()
         self.playbooks[name] = pb

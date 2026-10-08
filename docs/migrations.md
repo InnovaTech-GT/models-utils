@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (103 revisions, head: **`pe1_playbook_phases`**) — plus
+`alembic/versions/` (104 revisions, head: **`zt1_ztp_trigger`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1050,6 +1050,25 @@ legacy playbook definitions are **not** rewritten: they are normalized on read
 and converted on their next save (doc 42 §14.1). Downgrade refuses while any
 `CLI_ENABLE` credential exists, then restores the old CHECK and drops the
 columns. `tests/pg/test_pe1_pg.py` covers the CHECKs, the refusal and the round
+trip.
+
+### `zt1_ztp_trigger` (2026-10-08, ZTP SP2, doc 43 §4)
+
+On `pe1_playbook_phases` (program chain `… → pe1 → zt1 → zt2`). Additive, under
+`lock_timeout = 5s`, `IF [NOT] EXISTS`: `provisioning_settings.ztp_enabled`
+BOOLEAN NOT NULL DEFAULT false (metadata-only; a NEW column, not the dead
+`enabled`, which some tenants still hold true); `ck_user_notification_kind`
+dropped and re-created with `ZTP_SUCCEEDED`, `ZTP_FAILED`,
+`ZTP_NEEDS_ATTENTION`, `ZTP_ROLLBACK_INCOMPLETE`; `user_notification.push_state`
+VARCHAR(12) NULL (the push outbox, no CHECK) with the partial index
+`ix_user_notification_push_pending (created_at) WHERE push_state = 'PENDING'`;
+new table `user_push_token` (token VARCHAR(255) UNIQUE, `platform` CHECK
+android/ios, `app` CHECK tecnicos, company/user FKs CASCADE, index on
+`user_id`). The literals are pinned to the models by
+`tests/test_zt1_ztp_trigger.py`. Downgrade drops the table, the index and
+`push_state`, **deletes every `ZTP_*` row** (the old CHECK rejects them),
+restores the old CHECK and drops `ztp_enabled`. `tests/pg/test_zt1_pg.py`
+covers the default, the CHECKs, the index, the token constraints and the round
 trip.
 
 ## Key rules

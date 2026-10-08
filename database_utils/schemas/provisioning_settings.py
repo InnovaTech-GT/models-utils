@@ -24,6 +24,10 @@ from datetime import datetime
 from database_utils.models.isp import DIAL_TARGETS, PROXY_KINDS
 
 
+# Update fields whose provisioning_settings column is NOT NULL.
+_NOT_NULL_FIELDS = frozenset({"enabled", "dial_target", "proxy_kind", "acs_auth_required", "ztp_enabled"})
+
+
 class ProvisioningSettingsUpdate(BaseModel):
     enabled: Optional[bool] = None
     default_inform_interval: Optional[int] = None
@@ -39,6 +43,18 @@ class ProvisioningSettingsUpdate(BaseModel):
     # received the credential locks those CPEs out, and the ACS cannot fix it
     # because fixing it requires a session.
     acs_auth_required: Optional[bool] = None
+    # --- ZTP (zt1, doc 43 §4) ------------------------------------------------
+    ztp_enabled: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def reject_null_on_not_null_columns(self):
+        """The router applies this with a blind setattr loop over
+        model_dump(exclude_unset=True), so an explicit null on a NOT NULL column
+        was a 500 IntegrityError. Omitted fields stay omitted."""
+        for name in sorted(self.model_fields_set & _NOT_NULL_FIELDS):
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
 
     @field_validator("dial_target")
     @classmethod
@@ -96,6 +112,7 @@ class ProvisioningSettingsOut(BaseModel):
     # Read-only (see the module docstring).
     acs_base_url: Optional[str] = None
     acs_auth_required: bool = False
+    ztp_enabled: bool = False
     # The tenant's TR-069 Inform credential and, during a rotation window, its
     # successor. Ids only — the secret never round-trips (canon C19); the
     # credential's own fingerprint/has_secret come from DeviceCredentialOut.

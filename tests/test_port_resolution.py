@@ -467,7 +467,8 @@ def test_a_cleared_port_behind_a_default_is_still_drift(csr):
 # ---------------------------------------------------------- playbook_version
 
 def test_playbook_version_rides_on_nodes_and_plan_entries(csr):
-    csr.plant.playbooks["olt-activation"].version = 3
+    pb = csr.plant.playbooks["olt-activation"]
+    pb.version = pb.last_dry_run_version = 3
     csr.db.flush()
     run = create_run(csr.db, csr.service, PURPOSE_ACTIVATION)
     versions = {(p["phase"], p["category_key"]): p["playbook_version"] for p in run.plan}

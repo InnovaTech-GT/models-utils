@@ -1247,6 +1247,7 @@ def _execute_enqueue_provisioning_explicit(
     # Was missing since doc 33 (fabaed9) — the namespacing change added the
     # input_key() call here but only imported it in the other mode, so every
     # explicit-playbook enqueue has NameError'd since.
+    from database_utils.utils.provisioning_gates import gate_failure
     from database_utils.utils.provisioning_resolution import input_key
 
     playbook_id = config.get("playbook_id")
@@ -1281,6 +1282,19 @@ def _execute_enqueue_provisioning_explicit(
             return {"enqueued": False, "deduped": True,
                     "job_id": str(existing.id), "idempotency_key": idempotency_key}
 
+    inventory_item_id = _owned_or_none(db, InventoryItem, resolved.get("inventory_item_id"), company_id)
+    # doc 43 §5.6: the job is always live, so every gate applies (the target
+    # item's device type for the opt-out; no item = only the kill switch and
+    # the dry-run gate). A refusal FAILS the step, like a resolution error.
+    item = db.get(InventoryItem, inventory_item_id) if inventory_item_id else None
+    failure = gate_failure(db, company_id, playbook,
+                           item.device_type if item is not None else None, dry_run=False)
+    if failure:
+        raise ValueError(
+            f"Provisioning gates blocked playbook {playbook.id}: "
+            f"{failure.get('reason') or failure['code']}. Errors: {json.dumps([failure])}"
+        )
+
     job = ProvisioningJob(
         company_id=company_id,
         playbook_id=playbook.id,
@@ -1288,7 +1302,7 @@ def _execute_enqueue_provisioning_explicit(
         # variable here is author input and takes the `input.*` namespace.
         variables={input_key(str(k)): v for k, v in (resolved["variables"] or {}).items()},
         client_service_id=_owned_or_none(db, ClientService, resolved.get("client_service_id"), company_id),
-        inventory_item_id=_owned_or_none(db, InventoryItem, resolved.get("inventory_item_id"), company_id),
+        inventory_item_id=inventory_item_id,
         integration_id=_owned_or_none(db, Integration, config.get("integration_id"), company_id),
         idempotency_key=idempotency_key,
         max_attempts=int(config.get("max_attempts", 3)),
@@ -1319,6 +1333,7 @@ def _execute_enqueue_provisioning_path(
     from database_utils.utils.provisioning_resolution import (
         ResolutionError, input_key,
     )
+    from database_utils.utils.provisioning_gates import ProvisioningGateError
     from database_utils.utils.provisioning_runs import create_or_get_run, find_in_flight_run
 
     rid = _uuid_or_none(config.get("client_service_id"))
@@ -1378,6 +1393,13 @@ def _execute_enqueue_provisioning_path(
         raise ValueError(
             f"Provisioning resolution failed for service {rid} (purpose={purpose}): "
             f"{e.code} — {e.detail}. Errors: {json.dumps(e.errors)}"
+        )
+    except ProvisioningGateError as e:
+        # doc 43 §5.6: create_run gates every live run; the step FAILS visibly.
+        raise ValueError(
+            f"Provisioning gates blocked service {rid} (purpose={purpose}): "
+            f"{', '.join(f.get('reason') or f['code'] for f in e.errors)}. "
+            f"Errors: {json.dumps(e.errors)}"
         )
     if not created:
         return {"enqueued": False, "deduped": True,
