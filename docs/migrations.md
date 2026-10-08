@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (100 revisions, head: **`ta1_task_assignee_model`**) — plus
+`alembic/versions/` (102 revisions, head: **`tl1_task_location`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1008,6 +1008,31 @@ live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
 does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
+
+### `ri1_inventory_received_at` (2026-10-08, doc 47 SP6)
+
+Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4). Under
+`lock_timeout = 5s`: adds `inventory_item.received_at TIMESTAMPTZ` nullable,
+**backfills `received_at = created_at`** (the best guess for existing stock;
+the office corrects it via xlsx), then sets `NOT NULL` + `server_default now()`
+and asserts no NULL is left. The server default is kept (unlike `created_at`)
+because raw-SQL inserts exist (`tests/pg` fixtures, scripts). No index: SP4's
+FIFO pick filters `(company_id, status)`. Downgrade drops the column.
+
+### `tl1_task_location` (2026-10-08)
+
+Additive, on `ri1_inventory_received_at` (ZTP program chain, doc 42a §4;
+this branch carries SP6's `ri1` so the chain stays single-headed). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
+`task.latitude` / `task.longitude` (DOUBLE PRECISION, nullable,
+`ADD COLUMN IF NOT EXISTS`) and `ck_task_location` (guarded by a
+`pg_constraint` lookup): both NULL, or both set and in range (lat -90..90,
+lng -180..180). The CHECK spells out `IS NOT NULL` on both sides because a half
+pair makes `BETWEEN` NULL and a NULL CHECK passes. The task's own reference
+point; NULL = derived in backend-erp (`utils/tasks.reference_point`: client,
+then device for non-INSTALL, then the planned parent). No index, no backfill.
+Post-upgrade assert on both columns + the CHECK. Downgrade drops the CHECK and
+both columns. `tests/pg/test_task_location_pg.py` covers the CHECK and
+down/up.
 
 ## Key rules
 

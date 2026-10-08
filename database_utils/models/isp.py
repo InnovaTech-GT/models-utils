@@ -808,6 +808,12 @@ class InventoryItem(Base):
     # Cycle 2). NULL stays NULL in the backfill — doc 16 §2.5.3.
     cost_cents = Column(BigInteger, nullable=True)
     notes = Column(String, nullable=True)
+    # ri1 (doc 47): when the unit (last) entered stock — FIFO key for ONT
+    # auto-assignment (SP4, doc 45). Defaults to now; the receiver may backdate
+    # it. Re-stamped when a used unit comes back to stock (REMOVED). The
+    # server_default covers raw-SQL inserts (tests/pg fixtures, scripts).
+    received_at = Column(DateTime(timezone=True), nullable=False,
+                         default=now_gt, server_default=text("now()"))
     # --- Cycle 7 management surface (doc 25 §2.3, revision nc2a_core_config) ---
     # How the CLI drivers reach a CORE-tier device. mgmt_port NULL -> driver
     # default (22 ssh / 23 telnet); cli_protocol is a CHECK-constrained string

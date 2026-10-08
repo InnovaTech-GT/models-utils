@@ -50,8 +50,8 @@ The `migrate` compose service builds this repo's `Dockerfile` and runs
 
 ```bash
 pip install -e . -r requirements-dev.txt          # editable install + test deps (pytest-asyncio is required)
-pytest -v                                         # 725 tests (in-memory SQLite; needs placeholder POSTGRES_* env)
-PG_TEST_URL=postgresql://... pytest -m pg tests/pg  # 18 Postgres-only tests (DB at alembic head)
+pytest -v                                         # 740 tests (in-memory SQLite; needs placeholder POSTGRES_* env)
+PG_TEST_URL=postgresql://... pytest -m pg tests/pg  # 25 Postgres-only tests (DB at alembic head)
 alembic revision --autogenerate -m "description"  # generate a migration (needs a reachable DB)
 ```
 
