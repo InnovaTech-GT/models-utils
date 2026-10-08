@@ -303,13 +303,17 @@ non-CPE binding), `playbook_warnings(definition, category_tier=, purpose=)`
 `NOT_RESEND_SAFE`, `CPE_NETWORK_PRECONDITION` — warnings, never errors),
 `is_resend_safe(step)`, `output_secret_ref(value)`,
 `mask_sensitive_outputs(outputs)` / `mask_log_outputs(log)` (`value: null` on
-every `sensitive` or `secret` output entry, doc 42 §10.1); constants `PHASE_KEYS`,
+every `sensitive` or `secret` output entry, doc 42 §10.1; `mask_log_outputs`
+also blanks the captures named in `log.sensitive_captures` in `log.captures`
+and in each step entry's `captures`), `sensitive_capture_keys(definition)`
+(capture keys read by a non-secret `sensitive` output — the executor masks
+them in `display`/`checks` and writes them to `log.sensitive_captures`); constants `PHASE_KEYS`,
 `SESSION_PROBE_STEP`, `SECRET_ALPHABET`, `SHARED_DEVICE_WAIT_MAX_SECONDS`.
 
 `ProvisioningJobOut.log` is serialized through `mask_log_outputs`, so a
 sensitive output a child job wrote into `log.outputs` (before `advance_run`
-merged it into `run.outputs`) is never returned by any job endpoint; the stored
-log keeps the value.
+merged it into `run.outputs`), or the capture behind it, is never returned by
+any job endpoint; the stored log keeps the value (later children render it).
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 

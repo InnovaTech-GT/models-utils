@@ -272,6 +272,15 @@ def test_a_precondition_failure_ends_the_run_without_rollback(db, csr, listener)
     assert listener == [(run.id, S.FAILED, "PRECONDITION_FAILED")]
 
 
+def test_run_error_never_carries_the_raw_driver_error(db, csr):
+    """doc 42 §6.3/§11.2: no display -> the code, never `error` (hosts, ports)."""
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    _drive(db, run, fail_at=0, steps=[_entry(
+        "onu-visible", "FAILED", code="CONNECT_TIMEOUT",
+        error="CONNECT_TIMEOUT: telnet failed against 10.9.9.9:3001")])
+    assert run.error == "OLT model · OLT-1 · ONU-VISIBLE: CONNECT_TIMEOUT"
+
+
 def test_a_cancelled_precondition_cancels_the_run(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
     _drive(db, run, fail_at=0, status=S.CANCELLED, steps=[])
@@ -494,6 +503,8 @@ def test_revert_guards(db, csr):
 
     later = create_run(db, csr.service, PURPOSE_SUSPENSION)
     _refused(db, run, "in flight")
+    _drive(db, later)
+    _refused(db, later, "only an ACTIVATION")
     later.status = S.SUCCEEDED
     later.created_at = run.created_at + timedelta(seconds=1)
     db.flush()
