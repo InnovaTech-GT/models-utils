@@ -165,7 +165,9 @@ ISP_ROLES = {
     # tk2 (Figma redesign PR 4, master plan §2.7): the cobrador. Distinct from
     # a billing clerk — a collector walks a route with cash, so the grant list is the
     # minimum that lets the mobile app show "who owes what" and record the
-    # payment: NO order/plan creation, NO client edits.
+    # payment: NO order/plan creation, NO client edits — except a new client
+    # through POST /tasks/ `new_client` (doc 46 D5: gated on mobile.collector
+    # in backend-erp, no clients.create grant).
     "COLLECTOR": {
         "description": "Field collector: collection routes, cash sessions, payment recording",
         "permissions": [
