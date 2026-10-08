@@ -431,15 +431,18 @@ def test_append_rollback_limited_to_items(db, csr):
     assert run.plan[-1] == entries[0]
 
 
-def test_ran_steps_reads_the_last_entry_per_name():
+def test_ran_steps_counts_any_entry_that_may_have_sent():
     job = ProvisioningJob(log={"steps": [
         _entry(SESSION_PROBE_STEP),
         _entry("a", "FAILED", stage="connect"), _entry("a", "SUCCEEDED"),
         _entry("b", "FAILED", stage="command"),
         _entry("c", "SUCCEEDED"), _entry("c", "FAILED", stage="connect"),
         _entry("d", "SKIPPED"),
+        # §8.2.3: a command-stage failure counts as ran whatever the retry did
+        _entry("f", "FAILED", stage="command"), _entry("f", "SKIPPED"),
+        _entry("g", "FAILED", stage="command"), _entry("g", "FAILED", stage="connect"),
     ], "interrupted_step": "e"})
-    assert ran_steps(job) == ["a", "b", "e"]
+    assert ran_steps(job) == ["a", "b", "c", "f", "g", "e"]
 
 
 def test_revert_a_succeeded_run(db, csr, listener):

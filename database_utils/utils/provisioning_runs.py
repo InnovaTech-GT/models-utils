@@ -496,15 +496,20 @@ def _last_entries(job: ProvisioningJob) -> Dict[str, Dict[str, Any]]:
 
 def ran_steps(job: ProvisioningJob) -> List[str]:
     """Configuration steps of `job` that may have changed the device (doc 42
-    §7.3): last entry SUCCEEDED, FAILED at stage `command` (or an unknown
-    stage — conservative), or anything other than SKIPPED; plus the step
-    interrupted by a crash (`log.interrupted_step`, the step NAME backend-erp's
-    _finish copies from the journal before stripping it, doc 42 §8.3). SKIPPED
-    and FAILED at stage `connect` / `render` did not run. The session probe
-    never counts."""
-    ran = []
-    for name, e in _last_entries(job).items():
-        if name == SESSION_PROBE_STEP or e.get("status") == "SKIPPED":
+    §7.3, §8.2.3): ANY entry of the step SUCCEEDED, or FAILED at stage
+    `command` (or an unknown stage — conservative), or is anything other than
+    SKIPPED — so a step that failed at `command` and was retried counts as ran
+    whatever its final outcome; plus the step interrupted by a crash
+    (`log.interrupted_step`, the step NAME backend-erp's _finish copies from
+    the journal before stripping it, doc 42 §8.3). An entry SKIPPED or FAILED
+    at stage `connect` / `render` sent nothing. The session probe never
+    counts."""
+    ran: List[str] = []
+    for e in (job.log or {}).get("steps") or []:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("name")
+        if name is None or name == SESSION_PROBE_STEP or name in ran or e.get("status") == "SKIPPED":
             continue
         stage = (e.get("detail") or {}).get("stage")
         if e.get("status") == "FAILED" and stage in ("connect", "render"):
