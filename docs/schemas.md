@@ -288,6 +288,11 @@ mirror round-tripping); differing `steps` next to `configuration` is
 `LEGACY_STEPS_CONFLICT`. `PlaybookDefinition.steps` is never stored;
 `PlaybookOut.definition` is `PlaybookDefinitionOut`, which returns a read-only
 `steps` mirror (= `configuration`) for the pre-doc-48 editor (removed in `pe2`).
+frontend-erp's `lib/playbookPhases.ts` ports this function; both sides run the
+same golden cases from a byte-identical, hash-locked fixture
+(`tests/fixtures/playbook_normalize.json` here,
+`test_playbook_normalize_fixture.py`), so a change to either fails CI until
+the fixture, the port and both hash pins move together.
 
 Helpers: `job_steps(definition, phase, probe=False)` (a phase's list, the
 `__session__` probe prepended; `phase=None` = standalone, preconditions +

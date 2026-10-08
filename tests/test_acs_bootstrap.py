@@ -15,13 +15,8 @@ from database_utils.models.isp import (
     ProvisioningJob,
     ProvisioningSettings,
 )
-from database_utils.utils import crypto
-from database_utils.utils.acs_bootstrap import (
-    acs_values,
-    cr_password,
-    mint_cr_credentials,
-    reads_acs,
-)
+from database_utils.utils import acs_bootstrap, crypto
+from database_utils.utils.acs_bootstrap import acs_values, reads_acs
 from database_utils.utils.provisioning_resolution import ResolutionError
 from database_utils.utils.provisioning_runs import create_run, preflight_run
 
@@ -64,13 +59,14 @@ def test_reads_acs():
     assert reads_acs([OLT_ACS]) and not reads_acs([{"template": "{{secret.x}} acs.url"}])
 
 
-def test_values_from_settings_env_and_minted_registration(db, acs_plant):
+def test_values_from_settings_env_and_registration(db, acs_plant):
     values = acs_values(db, acs_plant.company_id, " ont-1 ", item_id=acs_plant.cpe.id, ensure=True)
     (reg,) = _registrations(db)
     assert reg.serial_number == "ONT-1" and reg.inventory_item_id == acs_plant.cpe.id
-    assert values == {"url": "https://acs.example.com/", "inform_password": "Inf0rm_pw-xyz",
-                      "cr_username": "cr-ont-1", "cr_password": cr_password(reg)}
-    # a second call reuses the minted pair
+    assert values == {"url": "https://acs.example.com/", "inform_password": "Inf0rm_pw-xyz"}
+    # founder round 4: CR credentials are never minted nor stored here
+    assert reg.cwmp_cr_username is None and reg.cwmp_cr_secret_ciphertext is None
+    assert not hasattr(acs_bootstrap, "mint_cr_credentials")
     assert acs_values(db, acs_plant.company_id, "ONT-1") == values
 
 
@@ -111,18 +107,11 @@ def test_serial_claimed_elsewhere(db, acs_plant, owner):
     assert exc.value.code == "ACS_SERIAL_CLAIMED"
 
 
-def test_mint_is_shared_and_decryptable(db, keks):
-    reg = AcsDeviceRegistration(id=uuid.uuid4(), company_id=uuid.uuid4(), serial_number="ABC1")
-    password = mint_cr_credentials(reg)
-    assert reg.cwmp_cr_username == "cr-abc1" and cr_password(reg) == password
-
-
 def test_create_run_ensures_registration_before_children(db, acs_plant):
     run = create_run(db, acs_plant.service, PURPOSE_ACTIVATION)
     (reg,) = _registrations(db)
-    assert reg.company_id == acs_plant.company_id and reg.cwmp_cr_secret_ciphertext
-    frames = json.dumps(run.frames)
-    assert cr_password(reg) not in frames and "Inf0rm_pw-xyz" not in frames
+    assert reg.company_id == acs_plant.company_id and reg.cwmp_cr_secret_ciphertext is None
+    assert "Inf0rm_pw-xyz" not in json.dumps(run.frames)
 
 
 def test_create_run_refuses_before_any_child(db, acs_plant, monkeypatch):

@@ -412,8 +412,9 @@ def create_run(
 
     A definition that reads {{acs.*}} (doc 42 §9.7) also raises
     ACS_NOT_CONFIGURED / ACS_SERIAL_CLAIMED / ACS_VALUE_UNSAFE, and a non-dry
-    run ensures the CPE's acs_device_registration (CR credentials minted when
-    absent) before any child exists; a dry run writes no registration.
+    run ensures the CPE's acs_device_registration before any child exists; a
+    dry run writes no registration. CR credentials are never minted here
+    (founder round 4: the worker generates them per child, in memory).
     """
     resolved = resolution or resolve_provisioning(db, client_service, purpose)
 
