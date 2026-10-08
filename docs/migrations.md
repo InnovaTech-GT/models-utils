@@ -1047,7 +1047,9 @@ NULL; `event_metadata = {"task_id", "auto": false, "backfill": true}`). A unit
 held by two open tasks is reserved once, for the oldest task (rollout lists
 the duplicates for the office). Links stay manual (`onu_auto_assigned =
 false`). Idempotent (a reserved unit is no longer `IN_STOCK`); post-upgrade
-asserts the column and that no such unit is left. Downgrade drops the column
+asserts the column only — no data assert, because the old backend keeps
+serving during migrate and may release a held unit after the backfill; rollout
+step 5 (doc 45 §6.5) lists any stragglers. Downgrade drops the column
 only — the backfilled reservations are correct data and stay.
 `tests/pg/test_onu_auto_assigned_pg.py` covers the backfill and down/up.
 

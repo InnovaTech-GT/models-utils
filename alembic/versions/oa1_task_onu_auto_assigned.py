@@ -20,7 +20,7 @@ and stay.
 
 ZTP program chain (doc 42a §4): pc1 -> ta1 -> ri1 -> tl1 -> oa1 -> pe1 -> zt1.
 
-Hand-written, house style: lock_timeout, idempotent, post-upgrade assert.
+Hand-written, house style: lock_timeout, idempotent, post-upgrade schema assert.
 """
 from typing import Sequence, Union
 
@@ -73,9 +73,9 @@ def upgrade() -> None:
         "AND column_name = 'onu_auto_assigned'"
     )).scalar() != 1:
         raise RuntimeError("[oa1] task.onu_auto_assigned missing after upgrade")
-    left = connection.execute(text(f"SELECT count(*) FROM ({_HELD}) h")).scalar()
-    if left:
-        raise RuntimeError(f"[oa1] {left} IN_STOCK ONU(s) still held by an open INSTALL task")
+    # No data assert: the old backend keeps serving during migrate and can
+    # RELEASE a held unit after the backfill; rollout step 5 (doc 45 §6.5)
+    # covers any stragglers.
 
 
 def downgrade() -> None:

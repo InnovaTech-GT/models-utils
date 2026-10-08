@@ -14,7 +14,7 @@ def test_oa1_follows_tl1_in_the_program_chain():
     assert len(oa1.revision) <= 32
 
 
-def test_onu_auto_assigned_is_a_non_null_false_flag(db):
+def test_onu_auto_assigned_is_a_non_null_false_flag():
     column = Task.__table__.columns["onu_auto_assigned"]
     assert column.nullable is False
     assert column.type.python_type is bool
