@@ -2,7 +2,7 @@
 
 ## Description
 
-Shared utility modules in `database_utils/utils/` (28 modules) plus the
+Shared utility modules in `database_utils/utils/` (29 modules) plus the
 supporting `dependencies/` and `middleware/` packages. The two largest —
 the workflow engine and provisioning resolution — have their own page:
 [workflow-engine.md](workflow-engine.md).
