@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger, Text,
-    Table, Index, CheckConstraint, UniqueConstraint
+    Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -119,24 +119,26 @@ class ServiceAvailability(str, enum.Enum):
 # services_total/services_installed counts in backend-erp.
 
 
-# Association table for many-to-many relationship between Task and User (assignees)
+# Many-to-many link between Task and User (assignees), mapped as a model like the rest.
 # tk2_task_links: the Figma edit form assigns a technician AND a collector to
 # the same task, so the pair (task, user) needs a role. PK stays
 # (task_id, user_id) — one user holds one role on a task. Legacy rows are NULL
 # and are read as technicians.
 TASK_ASSIGNEE_ROLES = ("TECHNICIAN", "COLLECTOR")
 
-task_assignee = Table(
-    'task_assignee',
-    Base.metadata,
-    Column('task_id', Uuid, ForeignKey('task.id', ondelete='CASCADE'), primary_key=True),
-    Column('user_id', Uuid, ForeignKey('user.id', ondelete='CASCADE'), primary_key=True),
-    Column('role', String(20), nullable=True),
-    CheckConstraint(
-        "role IS NULL OR role IN ('TECHNICIAN','COLLECTOR')",
-        name="ck_task_assignee_role",
-    ),
-)
+class TaskAssignee(Base):
+    """One user on one task, with the role they hold there (see above)."""
+    __tablename__ = "task_assignee"
+    __table_args__ = (
+        CheckConstraint(
+            "role IS NULL OR role IN ('TECHNICIAN','COLLECTOR')",
+            name="ck_task_assignee_role",
+        ),
+    )
+
+    task_id = Column(Uuid, ForeignKey("task.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True)
+    role = Column(String(20), nullable=True)
 
 
 class Client(Base):
@@ -541,7 +543,7 @@ class Task(Base):
     # Relationships
     company = relationship("Company", back_populates="tasks")
     creator = relationship("User", foreign_keys=[created_by])
-    assignees = relationship("User", secondary=task_assignee)
+    assignees = relationship("User", secondary="task_assignee")
     closeout = relationship("TaskCloseout", back_populates="task", uselist=False, cascade="all, delete-orphan")
     client = relationship("Client", foreign_keys=[client_id])
     client_service = relationship("ClientService", foreign_keys=[client_service_id])

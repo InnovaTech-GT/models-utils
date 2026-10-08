@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (99 revisions, head: **`pc1_provisioning_claim_token`**) — plus
+`alembic/versions/` (100 revisions, head: **`ta1_task_assignee_model`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -998,6 +998,16 @@ provisioning worker's per-claim fence token (release-v1.0.0
 provisioning-concurrency fix). No index, no backfill; the three partial unique
 indexes (`uq_provisioning_job_device_lock`, `uq_provisioning_job_company_idem`,
 `uq_provisioning_run_company_idem`) are untouched. Downgrade drops the column.
+
+### `ta1_task_assignee_model` (2026-10-07)
+
+On `pc1_provisioning_claim_token`. `task_assignee` is mapped as the
+`TaskAssignee` model instead of a bare `Table`, with the same columns, primary
+key and `ck_task_assignee_role`, so no DDL. The revision only asserts that the
+live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
+does nothing. It exists so the model change travels the migrate path (the CI
+guard and the prod migrate workflow filter on `alembic/versions/**`) and a
+drifted database fails at migrate time.
 
 ## Key rules
 
