@@ -237,6 +237,66 @@ matters when reading `__init__.py`:
   `{{computed[0].x}}` is refused with `COMPUTE_NAME`, because `evaluate_all`
   never produces such a name and only a caller-supplied value could fill it.
 
+### Engine v2 (6.1.0, doc 42, revision `pe1_playbook_phases`) — `playbook` format
+
+`schemas/playbook.py` — one playbook is still one purpose on one device type;
+the definition now holds the phases at the top level (the founder's layout):
+
+| Key | Meaning |
+|---|---|
+| `variables`, `computed` | unchanged (`input.*`, `computed.*`) |
+| `session` | `PlaybookSession`, ssh/telnet only: `enable` (`command` "enable", `password_prompt` "ssword", `enabled_prompt` "#" — the password is a `CLI_ENABLE` credential), `config_command` (required by a `config_mode` step), `exit_command` "exit", `error_patterns` (None = platform default in backend-erp; a match = `COMMAND_REJECTED`), `busy_patterns` (a match = `DEVICE_BUSY`) |
+| `secrets` | `[PlaybookSecret{key, length 8..63 (12)}]`, generated once per RUN, read as `{{secret.<key>}}` |
+| `preconditions` / `configuration` / `verification` / `rollback` | `[PlaybookStep]`; `configuration` ≥ 1 step; names unique across all four; `__session__` reserved |
+| `outputs` | `[PlaybookOutput{key, label, value, unit?, audience ⊆ {technician, office}, shareable, sensitive}]`, ≤ 16 |
+
+`PlaybookStep` gains `label` (≤ 80, static) / `hint` (≤ 200, static),
+`idempotent` (was silently dropped — bug §3.2.2), `config_mode`, `capture`
+(`PlaybookCapture{key, regex with exactly one group, type number|text, label,
+unit, min/max (number, literal or ONE token), equals (text)}`, ≤ 8 per step,
+≤ 32 per playbook, never secret-named), `wait_until`
+(`PlaybookWaitUntil{tries 2..30, interval_seconds 1..60}`, tries × interval
+≤ 600) and `undoes`. `on_failure` is **retired**. `PlaybookStepValidation` gains
+`expect_regex` / `expect_not_regex` (every string is rendered before
+comparing).
+
+**Save-time rules** (`PlaybookDefinition.validate_definition`; the error code is
+the prefix of the message): `PHASE_FIELD_NOT_ALLOWED` (`undoes` outside
+rollback, `capture` in rollback, `wait_until` outside preconditions/verification
+except on a tr069 configuration step, `config_mode` outside ssh/telnet
+configuration/rollback), `CONFIG_COMMAND_REQUIRED`, `UNDOES_UNKNOWN_STEP`,
+`CAPTURE_UNDECLARED` (a step reads only captures of EARLIER steps, in
+preconditions → configuration → verification order; rollback and outputs may
+read any), `CAPTURE_SECRET_NAME`, `REGEX_UNSUPPORTED` (`check_regex`: ≤ 256
+chars, no lookaround, backreference or named group, compiled with tokens as a
+literal; a leading `(?i)`/`(?m)`/`(?s)` is fine — backend-erp's `re2.compile`
+is the authority), `SECRET_UNDECLARED`, `OUTPUT_SECRET_MIXED` (a secret output
+is exactly `{{secret.<key>}}`; it is always `sensitive`, refused as false),
+`OUTPUT_SHARE_AUDIENCE` (`shareable` needs `technician`), and the `computed`
+checks across every phase, validation/threshold strings and output values.
+No `extra="forbid"` (the editor round-trips unmodelled keys).
+
+**Legacy shape.** `normalize_definition(d)` (a `mode="before"` validator, so
+every save stores v2; also used by every reader) converts `{steps, rollback}`:
+`configuration = steps` (on_failure stripped); per-step `on_failure` becomes
+rollback steps with `undoes` in reverse order, else the legacy `rollback` is
+kept without `undoes`; rollback names that collide get a ` (rollback)` suffix.
+Precedence: `configuration` wins over an empty or identical `steps` (the
+mirror round-tripping); differing `steps` next to `configuration` is
+`LEGACY_STEPS_CONFLICT`. `PlaybookDefinition.steps` is never stored;
+`PlaybookOut.definition` is `PlaybookDefinitionOut`, which returns a read-only
+`steps` mirror (= `configuration`) for the pre-doc-48 editor (removed in `pe2`).
+
+Helpers: `job_steps(definition, phase, probe=False)` (a phase's list, the
+`__session__` probe prepended; `phase=None` = standalone, preconditions +
+configuration + verification flattened), `shared_device_wait_errors(definition)`
+(`WAIT_TOO_LONG_FOR_SHARED_DEVICE` above 120 s — the router calls it for a
+non-CPE binding), `playbook_warnings(definition, category_tier=, purpose=)`
+(`ROLLBACK_EMPTY`, `ROLLBACK_WITHOUT_UNDOES`, `ENABLE_WITHOUT_SESSION`,
+`NOT_RESEND_SAFE`, `CPE_NETWORK_PRECONDITION` — warnings, never errors),
+`is_resend_safe(step)`, `output_secret_ref(value)`; constants `PHASE_KEYS`,
+`SESSION_PROBE_STEP`, `SECRET_ALPHABET`, `SHARED_DEVICE_WAIT_MAX_SECONDS`.
+
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 
 - **`InsightChartSpec` is deleted.** Chart `spec` is an opaque `Dict[str, Any]`.

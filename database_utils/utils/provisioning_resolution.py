@@ -144,8 +144,9 @@ class ResolvedNode:
     out_slot: Optional[int] = None
     out_port: Optional[int] = None
     out_port_name: Optional[str] = None
-    # playbook.version at resolution; the worker refuses a child whose playbook
-    # was edited since (PLAYBOOK_CHANGED_DURING_RUN, backend-erp).
+    # playbook.version at resolution. Engine v2: children run the definition
+    # snapshot, and a dry run stamps a playbook only if this still equals the
+    # live version (doc 42 §9.2).
     playbook_version: Optional[int] = None
 
 

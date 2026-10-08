@@ -347,8 +347,12 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, playbook_version, category_key}]` (`playbook_version` since doc 40; the worker refuses a child whose playbook was edited mid-run). `path` entries likewise gain `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` — JSON, so no revision |
-| `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}}`, resolved **once** at run creation. Later children are built from this rather than re-resolved, so a re-parent landing mid-run cannot silently redirect the remaining steps to devices the operator never saw |
+| `plan` | JSON NOT NULL — one entry per child to run. **Engine v2 (doc 42 §6.1)**: phase-major (every device's PRECONDITIONS, CONFIGURATION, VERIFICATION, in build order — core bottom-up, CPE last; SUSPENSION/DEPROVISION reversed): `[{item_id, playbook_id, playbook_version, category_key, device_label, phase, steps: [{name, label, skip?}], probe?, ran_steps?}]`; ROLLBACK entries are **appended** when the run rolls back (the forward plan is a stable prefix). Pre-v2 runs have entries without `phase`, leaf → root. `path` entries carry `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` (doc 40) |
+| `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id: normalized definition}, "rollback": {cause_code, cause_error, no_rollback}}`, resolved **once** at run creation (`rollback` only once the run rolls back). Later children are built from this rather than re-resolved, so neither a re-parent nor a playbook edit landing mid-run can change what the remaining steps — or the rollback — do. Not exposed by the API |
+| `phase` | VARCHAR(16) NULL, CHECK `ck_provisioning_run_phase` (`pe1`) — the phase of the entry being executed; NULL = a legacy (pre-v2) run |
+| `error_code` / `error` | VARCHAR(40) / TEXT NULL (`pe1`) — the outcome: `PRECONDITION_FAILED`, `CONFIGURATION_FAILED`, `VERIFICATION_FAILED`, `CANCELLED`, `STRANDED_RUN_EXPIRED`, `ROLLBACK_INCOMPLETE`, `REVERTED` and the human detail. Written only by `provisioning_runs` |
+| `outputs` | JSON NULL (`pe1`) — `[{key, label, value, unit, audience, secret, sensitive, shareable, ok, item_id, position, category_key, ref?}]`, last writer per `(item_id, key)`; a secret output stores `value` NULL + `ref` |
+| `secrets_ciphertext` / `secrets_dek_wrapped` / `secrets_kek_id` | BYTEA / BYTEA / VARCHAR NULL (`pe1`) — the run's generated secrets (`{key: value}` JSON), envelope-encrypted like `DeviceCredential` with AAD `company_id:run.id`; NULL when the plan declares none |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |
 | `company_id` / `client_service_id` | FK company CASCADE / FK client_service CASCADE, both indexed |
@@ -366,8 +370,10 @@ in flight dedupes instead of opening a second one.
   `ix_provisioning_job_run_id`. **NULL for every job that is not part of a
   service-path run** — explicit-playbook jobs, ACS reboot/factory-reset, core
   connectivity probes. Nothing about those changes.
-- `run_position` — INTEGER NULL, the 0-based index into `ProvisioningRun.plan`,
-  i.e. leaf → root order.
+- `run_position` — INTEGER NULL, the 0-based index into `ProvisioningRun.plan`.
+- `phase` — VARCHAR(16) NULL, CHECK `ck_provisioning_job_phase` (`pe1`): the
+  phase its plan entry executes; NULL for standalone and legacy jobs. There is
+  **no new `ProvisioningJobStatus` value** for engine v2.
 
 Children are created **lazily, one at a time**, so at most one child of a run is
 QUEUED or RUNNING at once. That needed no new `ProvisioningJobStatus` value (a
@@ -626,7 +632,15 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 `ALTER TYPE … ADD VALUE` autocommit dance:
 
 - `CREDENTIAL_KINDS`: SSH, TELNET, SNMP_COMMUNITY, TR069_CONNECTION_REQUEST, HTTP_BASIC,
-  HTTP_BEARER, WIREGUARD, AGENT
+  HTTP_BEARER, WIREGUARD, AGENT, **CLI_ENABLE** (`pe1`, doc 42 §9.3: the enable /
+  privileged-mode password of a CLI device, bound like any kind — item > type >
+  company default, `username` ignored; required by a playbook with
+  `session.enable`, e.g. the CSR AN5516). `pe1` re-creates
+  `ck_device_credential_kind` from its own copy of `_CREDENTIAL_KIND_CHECK`,
+  pinned byte-identical by `tests/test_pe1_playbook_phases.py`
+- `PROVISIONING_PHASES`: PRECONDITIONS, CONFIGURATION, VERIFICATION, ROLLBACK
+  (`ck_provisioning_run_phase` / `ck_provisioning_job_phase`, NULL allowed) ·
+  `TEARDOWN_PURPOSES`: SUSPENSION, DEPROVISION (`pe1`, doc 42)
 - `DIAL_TARGETS`: device, gateway · `PROXY_KINDS`: none, socks5 — the transport axis
   (`tr1_transport_axis`, 2026-09-26; matching `ck_provisioning_settings_dial_target` /
   `_proxy_kind`, pinned by `tests/test_transport_axis.py`). They REPLACE

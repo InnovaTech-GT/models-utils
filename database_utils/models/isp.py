@@ -1325,10 +1325,15 @@ class ProvisioningRun(Base):
     #           label, path_role, out_slot, out_port, out_port_name,
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
-    # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, playbook_version, category_key}]
+    # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
+    # phase-major, build order (core bottom-up, CPE last; teardown reversed),
+    # ROLLBACK entries appended on failure:
+    # [{item_id, playbook_id, playbook_version, category_key, device_label,
+    #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
+    # Pre-v2 runs: [{item_id, playbook_id, playbook_version, category_key}], leaf -> root.
     plan = Column(JSON, nullable=False)
-    # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
+    # {"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id:
+    # normalized definition}, "rollback"?: {...}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than
     # re-resolving, so a re-parent landing mid-run cannot silently redirect the
     # remaining steps to a different set of devices than the ones the operator

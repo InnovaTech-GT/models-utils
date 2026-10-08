@@ -129,7 +129,30 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   tracked separately (R15).
 - **`IN_FLIGHT` is hand-synced** with the predicates of
   `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem`; if they
-  drift, `create_or_get_run` and the index disagree.
+  drift, `create_or_get_run` and the index disagree. SQLite builds both indexes
+  **without** their predicate, so a test that re-opens a run on the same key
+  must recreate them partial (`tests/test_provisioning_run_v2.py` does).
+
+## Engine v2 (6.1.0, doc 42) — shipped limitations
+
+- **Run events are an in-process listener list** (`RUN_CLOSED_LISTENERS`), not
+  an outbox table. A process that closes runs without importing backend-erp's
+  `provisioning/run_events.py` emits nothing; backend-erp's test that both entry
+  points import it is the guard. The workflow engine (cron-erp) only OPENS runs.
+- **Stored legacy definitions are normalized on read**, not rewritten: the
+  legacy shape, the read-only `steps` mirror and `_connectivity_definition`'s
+  legacy shape all go in a later `pe2` cleanup.
+- **The shared-device `wait_until` ceiling (120 s) needs the binding**, so the
+  schema enforces only the 600 s cap; `shared_device_wait_errors()` is called by
+  backend-erp's router.
+- **No run-level deadline** (doc 42 Q9): a stranded forward run rolls back only
+  after `STRANDED_RUN_MAX_AGE` (1 h).
+- **Rollback children have no claim priority** over forward work, and a
+  `NO_ROLLBACK_DEFINED` device always ends a rollback `ROLLBACK_INCOMPLETE`
+  (an empty rollback is a save-time warning, not an error, doc 42 Q13).
+- **Secrets need the KEK in every process that opens such a run**
+  (`CREDENTIALS_KEKS` / `CREDENTIALS_ACTIVE_KEK_ID`); plans without `secrets`
+  never touch crypto.
 
 ## Port labels (doc 40 C8) — transitional
 

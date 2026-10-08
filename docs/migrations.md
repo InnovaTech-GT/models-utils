@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (100 revisions, head: **`ta1_task_assignee_model`**) — plus
+`alembic/versions/` (101 revisions, head: **`pe1_playbook_phases`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1008,6 +1008,24 @@ live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
 does nothing. It exists so the model change travels the migrate path (the CI
 guard and the prod migrate workflow filter on `alembic/versions/**`) and a
 drifted database fails at migrate time.
+
+### `pe1_playbook_phases` (2026-10-08, ZTP SP1, doc 42 §12)
+
+On `ta1_task_assignee_model` on this branch; the program chain (doc 42a §4) is
+`… → oa1 → pe1 → zt1`, so `down_revision` is re-pointed (one line) when it is
+composed after SP4–SP6. Additive and metadata-only, under `lock_timeout = 5s`,
+`IF [NOT] EXISTS`: `provisioning_run` gains `phase` VARCHAR(16), `error_code`
+VARCHAR(40), `error` TEXT, `outputs` JSON, `secrets_ciphertext` /
+`secrets_dek_wrapped` BYTEA, `secrets_kek_id` VARCHAR; `provisioning_job` gains
+`phase` VARCHAR(16); both get `ck_<table>_phase` (`phase IS NULL OR phase IN
+(...)`). `ck_device_credential_kind` is dropped and re-created with
+`CLI_ENABLE` from the revision's own literal (pinned byte-identical to the
+model's by `tests/test_pe1_playbook_phases.py`). No backfill, no index. Stored
+legacy playbook definitions are **not** rewritten: they are normalized on read
+and converted on their next save (doc 42 §14.1). Downgrade refuses while any
+`CLI_ENABLE` credential exists, then restores the old CHECK and drops the
+columns. `tests/pg/test_pe1_pg.py` covers the CHECKs, the refusal and the round
+trip.
 
 ## Key rules
 
