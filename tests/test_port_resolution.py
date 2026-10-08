@@ -333,13 +333,40 @@ def test_a_literal_containing_default_is_still_checked(csr):
     assert _errors(csr)[0]["code"] == "UNRESOLVED_TOKEN"
 
 
-def test_rollback_and_on_failure_tokens_are_not_checked(csr):
+def test_rollback_and_on_failure_tokens_are_fatal(csr):
+    """Engine v2 (doc 42 §9.4): a run must not start if its undo cannot render."""
     definition = _template("{{cpe.serial}}")
     definition["steps"][0]["on_failure"] = [
         {"name": "c", "driver": "simulator", "template": "{{path.switch.serial}}"}]
-    definition["rollback"] = [
-        {"name": "r", "driver": "simulator", "template": "{{path.switch.serial}}"}]
     _set_def(csr, "onu-activation", definition)
+    assert {e["token"] for e in _errors(csr)} == {"path.switch.serial"}
+    _set_def(csr, "onu-activation", {
+        "configuration": [{"name": "s", "driver": "simulator", "template": "{{cpe.serial}}"}],
+        "rollback": [{"name": "r", "driver": "simulator", "template": "{{path.hub.serial}}"}]})
+    assert {e["token"] for e in _errors(csr)} == {"path.hub.serial"}
+
+
+def test_every_phase_validation_threshold_and_output_is_checked(csr):
+    sim = {"driver": "simulator", "template": "x"}
+    _set_def(csr, "onu-activation", {
+        "preconditions": [sim | {"name": "p", "validation": {"expect_regex": "{{path.a.serial}}"}}],
+        "configuration": [sim | {"name": "c"}],
+        "verification": [sim | {"name": "v", "capture": [
+            {"key": "x", "regex": "({{path.b.serial}})", "type": "number",
+             "min": "{{path.c.out_port}}"}]}],
+        "outputs": [{"key": "o", "label": "o", "value": "{{path.d.serial}}",
+                     "audience": ["office"]}]})
+    assert {e["token"] for e in _errors(csr)} == {
+        "path.a.serial", "path.b.serial", "path.c.out_port", "path.d.serial"}
+
+
+def test_capture_and_secret_tokens_are_not_resolver_tokens(csr):
+    sim = {"driver": "simulator"}
+    _set_def(csr, "onu-activation", {
+        "secrets": [{"key": "wifi_key"}],
+        "preconditions": [sim | {"name": "p", "template": "x",
+                                 "capture": [{"key": "y", "regex": "(a)"}]}],
+        "configuration": [sim | {"name": "c", "template": "{{capture.y}} {{secret.wifi_key}}"}]})
     resolve_provisioning(csr.db, csr.service)
 
 
@@ -443,7 +470,9 @@ def test_playbook_version_rides_on_nodes_and_plan_entries(csr):
     csr.plant.playbooks["olt-activation"].version = 3
     csr.db.flush()
     run = create_run(csr.db, csr.service, PURPOSE_ACTIVATION)
-    assert [p["playbook_version"] for p in run.plan] == [1, 3, 1]
+    versions = {(p["phase"], p["category_key"]): p["playbook_version"] for p in run.plan}
+    assert versions[("CONFIGURATION", "olt")] == 3
+    assert {v for (_, cat), v in versions.items() if cat != "olt"} == {1}
     olt_snapshot = next(p for p in run.path if p["category_key"] == "OLT")
     assert olt_snapshot["playbook_version"] == 3
     assert olt_snapshot["out_port"] == 4

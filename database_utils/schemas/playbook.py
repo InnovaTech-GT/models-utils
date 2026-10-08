@@ -40,11 +40,18 @@ CONFIG_COMMAND_REQUIRED, OUTPUT_SHARE_AUDIENCE, LEGACY_STEPS_CONFLICT, COMPUTE_*
 WAIT_TOO_LONG_FOR_SHARED_DEVICE needs the binding: shared_device_wait_errors().
 """
 import re
-
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
-from typing import Optional, List, Dict, Any, Union
-from uuid import UUID
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+from uuid import UUID
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from database_utils.models.isp import (
     PHASE_CONFIGURATION,

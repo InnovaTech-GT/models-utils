@@ -114,6 +114,7 @@ def test_stored_dump_is_v2_and_has_no_steps():
 
 def test_out_schema_carries_a_read_only_steps_mirror():
     import uuid
+
     from database_utils.utils.timezone_utils import now_gt
     out = PlaybookOut.model_validate({
         "id": uuid.uuid4(), "company_id": uuid.uuid4(), "version": 1,
