@@ -69,6 +69,8 @@ class TaskOut(TaskBase):
     # backend's TaskCreateIn/TaskUpdateIn.
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    # oa1 (doc 45): the server picked inventory_item_id. Output only.
+    onu_auto_assigned: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
