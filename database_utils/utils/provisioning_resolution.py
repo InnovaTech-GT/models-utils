@@ -89,6 +89,7 @@ from database_utils.models.isp import (
     ProvisioningJobStatus,
     ProvisioningRun,
 )
+from database_utils.schemas.playbook import PHASE_KEYS, normalize_definition
 from database_utils.utils import playbook_expr
 from database_utils.utils.network_graph import GraphError, resolve_path
 
@@ -143,8 +144,9 @@ class ResolvedNode:
     out_slot: Optional[int] = None
     out_port: Optional[int] = None
     out_port_name: Optional[str] = None
-    # playbook.version at resolution; the worker refuses a child whose playbook
-    # was edited since (PLAYBOOK_CHANGED_DURING_RUN, backend-erp).
+    # playbook.version at resolution. Engine v2: children run the definition
+    # snapshot, and a dry run stamps a playbook only if this still equals the
+    # live version (doc 42 §9.2).
     playbook_version: Optional[int] = None
 
 
@@ -496,24 +498,32 @@ def _has_default_filter(body: str) -> bool:
 
 
 def _step_tokens(definition: Any) -> tuple:
-    """(tokens, malformed) for every string the executor renders BEFORE a
-    step runs: templates, http/tr069 requests, target_item_id and
-    preconditions. rollback and on_failure are excluded — they run only after
-    a failure, and a run must not be refused over a compensation it may never
-    need.
+    """(tokens, malformed) for every string the executor renders: in EVERY
+    phase, rollback included — a run must not start if its undo cannot render
+    (doc 42 §9.4) — templates, http/tr069 requests, target_item_id, step
+    guards, validation strings and capture regexes/thresholds, manual
+    instructions and field values (doc 42d), plus every output value. capture.* and secret.* are outside RESOLVER_NAMESPACES, so
+    the caller skips them; their correctness is checked at save time.
 
     tokens is (name, has_default) per parseable token. malformed is every
     construct the renderer leaves in place — a token-shaped body whose head
     does not parse, or a residual `{{` outside any token shape — which the
     executor's leftover guard fails the step on, whatever its namespace."""
+    try:
+        d = normalize_definition(definition or {})
+    except ValueError:  # LEGACY_STEPS_CONFLICT on a stored row: scan it raw
+        d = definition or {}
+    if not isinstance(d, dict):
+        d = {}
     fields = []
-    for step in (definition or {}).get("steps") or []:
-        if not isinstance(step, dict):
-            continue
-        fields += [step.get("template"), step.get("request"), step.get("target_item_id")]
-        pre = step.get("precondition")
-        if isinstance(pre, dict):
-            fields += [pre.get("template"), pre.get("request"), pre.get("target_item_id")]
+    for key in PHASE_KEYS.values():
+        for step in d.get(key) or []:
+            if not isinstance(step, dict):
+                continue
+            fields += [step.get("template"), step.get("request"), step.get("target_item_id"),
+                       step.get("validation"), step.get("capture"), step.get("precondition"),
+                       step.get("manual")]  # doc 42d: instructions + field values render too
+    fields += [o.get("value") for o in d.get("outputs") or [] if isinstance(o, dict)]
     tokens, malformed = [], []
     for text in playbook_expr.strings(fields):
         for match in playbook_expr.TOKEN_SHAPE.finditer(text):

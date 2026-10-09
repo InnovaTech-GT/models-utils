@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (103 revisions, head: **`oa1_task_onu_auto_assigned`**) — plus
+`alembic/versions/` (106 revisions, head: **`zm1_manual_step`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1052,6 +1052,59 @@ serving during migrate and may release a held unit after the backfill; rollout
 step 5 (doc 45 §6.5) lists any stragglers. Downgrade drops the column
 only — the backfilled reservations are correct data and stay.
 `tests/pg/test_onu_auto_assigned_pg.py` covers the backfill and down/up.
+
+### `pe1_playbook_phases` (2026-10-08, ZTP SP1, doc 42 §12)
+
+On `oa1_task_onu_auto_assigned` (program chain, doc 42a §4: `… → tl1 → oa1 →
+pe1 → zt1 → zm1`; re-pointed from `tl1_task_location` at compose, 6.6.0). Additive and metadata-only, under `lock_timeout = 5s`,
+`IF [NOT] EXISTS`: `provisioning_run` gains `phase` VARCHAR(16), `error_code`
+VARCHAR(40), `error` TEXT, `outputs` JSON, `secrets_ciphertext` /
+`secrets_dek_wrapped` BYTEA, `secrets_kek_id` VARCHAR; `provisioning_job` gains
+`phase` VARCHAR(16); both get `ck_<table>_phase` (`phase IS NULL OR phase IN
+(...)`). `ck_device_credential_kind` is dropped and re-created with
+`CLI_ENABLE` from the revision's own literal (pinned byte-identical to the
+model's by `tests/test_pe1_playbook_phases.py`). No backfill, no index. Stored
+legacy playbook definitions are **not** rewritten: they are normalized on read
+and converted on their next save (doc 42 §14.1). Downgrade refuses while any
+`CLI_ENABLE` credential exists, then restores the old CHECK and drops the
+columns. `tests/pg/test_pe1_pg.py` covers the CHECKs, the refusal and the round
+trip.
+
+### `zt1_ztp_trigger` (2026-10-08, ZTP SP2, doc 43 §4)
+
+On `pe1_playbook_phases` (program chain `… → pe1 → zt1 → zt2`). Additive, under
+`lock_timeout = 5s`, `IF [NOT] EXISTS`: `provisioning_settings.ztp_enabled`
+BOOLEAN NOT NULL DEFAULT false (metadata-only; a NEW column, not the dead
+`enabled`, which some tenants still hold true); `ck_user_notification_kind`
+dropped and re-created with `ZTP_SUCCEEDED`, `ZTP_FAILED`,
+`ZTP_NEEDS_ATTENTION`, `ZTP_ROLLBACK_INCOMPLETE`; `user_notification.push_state`
+VARCHAR(12) NULL (the push outbox, no CHECK) with the partial index
+`ix_user_notification_push_pending (created_at) WHERE push_state = 'PENDING'`;
+new table `user_push_token` (token VARCHAR(255) UNIQUE, `platform` CHECK
+android/ios, `app` CHECK tecnicos, company/user FKs CASCADE, index on
+`user_id`). The literals are pinned to the models by
+`tests/test_zt1_ztp_trigger.py`. Downgrade drops the table, the index and
+`push_state`, **deletes every `ZTP_*` row** (the old CHECK rejects them),
+restores the old CHECK and drops `ztp_enabled`. `tests/pg/test_zt1_pg.py`
+covers the default, the CHECKs, the index, the token constraints and the round
+trip.
+
+### `zm1_manual_step` (2026-10-09, manual playbook steps, doc 42d §7)
+
+On `zt1_ztp_trigger` (the planned `zt2` re-points to `zm1`). Additive.
+`ALTER TYPE provisioningjobstatus ADD VALUE IF NOT EXISTS 'PENDING_MANUAL'` in an
+autocommit block (the `nc1a` recipe: the value must commit before a predicate
+uses it); then, under `lock_timeout = 5s`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_job_device_lock` and `uq_provisioning_run_company_idem` are
+dropped and re-created with `status IN ('QUEUED','RUNNING','PENDING_INFORM',
+'PENDING_MANUAL')` (a parked manual child keeps its CPE lock and dedupe key),
+and `ck_user_notification_kind` gains `ZTP_MANUAL_STEP`. The literals are pinned
+to the models and to `IN_FLIGHT` by `tests/test_manual_steps.py`. Downgrade
+**refuses while any job is `PENDING_MANUAL`** (`RuntimeError`; cancel or let
+them expire first), then restores the old predicates, deletes the
+`ZTP_MANUAL_STEP` rows and restores the old CHECK. The enum value stays (PG
+cannot drop one without rebuilding the type). `tests/pg/test_zm1_pg.py` covers
+the lock, the key, the kind and the refusal.
 
 ## Key rules
 

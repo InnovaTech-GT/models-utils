@@ -15,7 +15,7 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
   the worker via SELECT ... FOR UPDATE SKIP LOCKED.
 """
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text,
+    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text, Text,
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
     SmallInteger, ForeignKeyConstraint,
 )
@@ -91,6 +91,25 @@ CANONICAL_PLAYBOOK_PURPOSES = (
     PURPOSE_ACTIVATION, PURPOSE_SUSPENSION, PURPOSE_REACTIVATION, PURPOSE_DEPROVISION
 )
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
+
+# Engine v2 (doc 42 §5): purposes that take a service DOWN run the build order
+# reversed (CPE first, core top-down). Every other purpose, custom ones
+# included, runs the build order: core bottom-up, CPE last.
+TEARDOWN_PURPOSES = frozenset({PURPOSE_SUSPENSION, PURPOSE_DEPROVISION})
+
+# Engine v2 (doc 42 §6, revision pe1): the phase of a run and of each run
+# child. NULL on both = a legacy run / a standalone job.
+PHASE_PRECONDITIONS = 'PRECONDITIONS'
+PHASE_CONFIGURATION = 'CONFIGURATION'
+PHASE_VERIFICATION = 'VERIFICATION'
+PHASE_ROLLBACK = 'ROLLBACK'
+PROVISIONING_PHASES = (
+    PHASE_PRECONDITIONS, PHASE_CONFIGURATION, PHASE_VERIFICATION, PHASE_ROLLBACK
+)
+# Shared byte-for-byte with the hand-written pe1 migration.
+_PROVISIONING_PHASE_CHECK = (
+    "phase IS NULL OR phase IN ('PRECONDITIONS','CONFIGURATION','VERIFICATION','ROLLBACK')"
+)
 
 # Service-lifecycle cycle: the status machine behind the per-purpose
 # lifecycle actions (activate / suspend / reactivate / cancel). Lives HERE, not
@@ -232,6 +251,11 @@ class ProvisioningJobStatus(str, enum.Enum):
     # the inform arrives. Added to the PG enum via ALTER TYPE ADD VALUE in an
     # autocommit block (nc1a) — see the migration docstring.
     PENDING_INFORM = "PENDING_INFORM"
+    # doc 42d (revision zm1): a run child parked on a `driver: manual` step
+    # until the technician (or the office) confirms it. Job only — the run
+    # stays RUNNING. Same park mechanics as PENDING_INFORM: lease and fence
+    # released, device lock kept, deadline in scheduled_for.
+    PENDING_MANUAL = "PENDING_MANUAL"
 
 
 class ProvisioningTrigger(str, enum.Enum):
@@ -254,6 +278,10 @@ class ProvisioningTrigger(str, enum.Enum):
 CREDENTIAL_KINDS = (
     "SSH", "TELNET", "SNMP_COMMUNITY", "TR069_CONNECTION_REQUEST",
     "HTTP_BASIC", "HTTP_BEARER", "WIREGUARD", "AGENT",
+    # pe1 (doc 42 §9.3): the enable (privileged-mode) password of a CLI device,
+    # bound like any other kind (item > type > company default). `username`
+    # is ignored. Required by a playbook whose `session.enable` is set.
+    "CLI_ENABLE",
 )
 
 # tr1_transport_axis: the transport is TWO orthogonal per-tenant choices, not one
@@ -278,7 +306,9 @@ ACS_STALE_AFTER_SECONDS = 900
 
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
-_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
+# pe1_playbook_phases re-created ck_device_credential_kind with CLI_ENABLE; its
+# own copy of this literal is pinned byte-identical by tests/test_pe1_playbook_phases.py.
+_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT','CLI_ENABLE')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
@@ -1306,10 +1336,15 @@ class ProvisioningRun(Base):
     #           label, path_role, out_slot, out_port, out_port_name,
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
-    # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, playbook_version, category_key}]
+    # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
+    # phase-major, build order (core bottom-up, CPE last; teardown reversed),
+    # ROLLBACK entries appended on failure:
+    # [{item_id, playbook_id, playbook_version, category_key, device_label,
+    #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
+    # Pre-v2 runs: [{item_id, playbook_id, playbook_version, category_key}], leaf -> root.
     plan = Column(JSON, nullable=False)
-    # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
+    # {"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id:
+    # normalized definition}, "rollback"?: {...}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than
     # re-resolving, so a re-parent landing mid-run cannot silently redirect the
     # remaining steps to a different set of devices than the ones the operator
@@ -1320,6 +1355,26 @@ class ProvisioningRun(Base):
         Enum(ProvisioningTrigger), nullable=False,
         default=ProvisioningTrigger.USER, server_default='USER',
     )
+    # --- engine v2 (doc 42 §6.2, revision pe1) ---
+    # The phase of the entry being executed (PROVISIONING_PHASES). NULL = a
+    # legacy run, advanced by the pre-v2 rule.
+    phase = Column(String(16), nullable=True)
+    # The outcome code (PRECONDITION_FAILED, CONFIGURATION_FAILED,
+    # VERIFICATION_FAILED, CANCELLED, STRANDED_RUN_EXPIRED, ROLLBACK_INCOMPLETE,
+    # REVERTED) and its human detail. Written only by close_run / the rollback
+    # entry points in utils/provisioning_runs.py.
+    error_code = Column(String(40), nullable=True)
+    error = Column(Text, nullable=True)
+    # [{key, label, value, unit, audience, secret, sensitive, shareable, ok,
+    #   item_id, position, category_key, ref?}] — last writer per (item_id, key).
+    # A secret output stores value NULL + ref "secret.<key>" (doc 42 §10.1).
+    outputs = Column(JSON, nullable=True)
+    # The run's generated secrets ({key: value} JSON), envelope-encrypted with
+    # crypto.encrypt_secret(plaintext, company_id, run.id). NULL when the plan
+    # declares none (doc 42 §10.2).
+    secrets_ciphertext = Column(LargeBinary, nullable=True)
+    secrets_dek_wrapped = Column(LargeBinary, nullable=True)
+    secrets_kek_id = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1346,12 +1401,13 @@ class ProvisioningRun(Base):
             unique=True,
             postgresql_where=text(
                 "idempotency_key IS NOT NULL AND status IN "
-                "('QUEUED','RUNNING','PENDING_INFORM')"
+                "('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         Index("ix_provisioning_run_service", "client_service_id", "created_at"),
         # ng2: the company-wide run list (PR 9) is company_id = ? ORDER BY created_at.
         Index("ix_provisioning_run_company_created", "company_id", "created_at"),
+        CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_run_phase"),
     )
 
 
@@ -1401,6 +1457,9 @@ class ProvisioningJob(Base):
     # worker write after the claim is conditional on (id, status, claim_token),
     # so a reaped or superseded executor writes nothing.
     claim_token = Column(Uuid, nullable=True)
+    # Engine v2 (doc 42 §6.1, revision pe1): the phase this run child executes
+    # (its plan entry's). NULL for standalone and legacy jobs.
+    phase = Column(String(16), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1456,20 +1515,21 @@ class ProvisioningJob(Base):
             "company_id", "idempotency_key",
             unique=True,
             postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         # Cycle 5 Phase 1 (canon C11, revision nc1a): per-device serialization
         # authority — at most one live job per device_lock_key across the
-        # in-flight set (QUEUED/RUNNING/PENDING_INFORM).
+        # in-flight set (QUEUED/RUNNING/PENDING_INFORM/PENDING_MANUAL; zm1).
         Index(
             "uq_provisioning_job_device_lock",
             "device_lock_key",
             unique=True,
             postgresql_where=text(
-                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
+        CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_job_phase"),
     )
 
 
@@ -1649,6 +1709,10 @@ class ProvisioningSettings(Base):
     )
     # master switch, default OFF (fail-safe).
     enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    # zt1 (doc 43 §4): the tecnicos closeout of an INSTALL task starts the
+    # ACTIVATION run (ZTP). A NEW column, not the dead `enabled`, which some
+    # tenants still hold true; default off.
+    ztp_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     # tenant default inform interval (seconds) pushed to CPE presets; NULL = use
     # the platform default.
     default_inform_interval = Column(Integer, nullable=True)

@@ -103,14 +103,21 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   (splitters, splice closures) already is an `InventoryItem` and works fine; if
   untracked structural nodes are ever needed the answer is a device category for
   them, not a second table.
-- **Pre-existing and deliberately untouched:**
-  `workflow_engine._execute_enqueue_provisioning_path` (like the
-  `_execute_enqueue_provisioning` it replaced) **still never calls
-  `enforce_provisioning_gates`**, so automation-triggered runs bypass the
-  dry-run gate and the tenant kill switch — those gates live in backend-erp and
-  are only invoked by its routers. Cycle 10 moved this code but did not fix it:
-  fixing it here would change automation behaviour mid-cycle, silently. Filed
-  (doc 33 "Known gap", doc 35 §10), not smuggled in.
+- **Closed in 6.4.0 (doc 43 §5.6):** the workflow engine's
+  `ENQUEUE_PROVISIONING` used to bypass the kill switch, the device-type opt-out
+  and the dry-run gate. The gates now live in `utils/provisioning_gates.py`; a
+  live `create_run` refuses with `ProvisioningGateError` (mode A turns it into a
+  FAILED step) and mode B checks `gate_failure` before its insert. A legacy
+  automation that reaches a playbook not dry-run at its current version now
+  fails visibly instead of running.
+- **The system-playbook dry-run exemption is matched by name.** `playbook`
+  has no `is_system` flag, so `gate_failure` exempts any playbook whose name is
+  in `SYSTEM_PLAYBOOK_NAMES` — including a tenant's own playbook created or
+  renamed to one (e.g. `huawei_onu_activate` on a tenant never seeded with it).
+  Carried over verbatim from backend-erp; it matters more now that this is the
+  only gate for every run producer. Fix: base the exemption on something a
+  tenant cannot set (an `is_system` column, or the seed's creator), and have
+  backend-erp's playbook create/rename reject names in `SYSTEM_PLAYBOOK_NAMES`.
 
 ## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
 
@@ -118,8 +125,11 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   fails inside the worker's settle (it runs in a savepoint so the job's outcome
   still commits), the run sits with no in-flight child until the reaper calls
   `repair_stranded_runs` (> 30 s quiet). A run quiet for more than
-  `STRANDED_RUN_MAX_AGE` (1 h) is closed FAILED (`STRANDED_RUN_EXPIRED`)
-  rather than advanced from a plan resolved long ago — an operator re-provisions.
+  `STRANDED_RUN_MAX_AGE` (1 h) is not advanced forward from a plan resolved
+  long ago: in PRECONDITIONS it is closed FAILED (`STRANDED_RUN_EXPIRED`), in
+  CONFIGURATION/VERIFICATION it enters ROLLBACK (engine v2, doc 42 §8.4). The
+  one exception is a run whose final forward entry already succeeded: nothing
+  is left to configure, so it is finished SUCCEEDED instead of rolled back.
 - **No run-level cancel.** Cancelling a RUNNING child is per job; a run cannot be
   cancelled as a unit. A failed or cancelled child is never retried on its own
   (backend-erp `RUN_CHILD_NOT_RETRYABLE`): re-provision opens a new run.
@@ -128,8 +138,33 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   logs `TARGET_NOT_LOCKED`, warn-only); deriving the lock from step targets is
   tracked separately (R15).
 - **`IN_FLIGHT` is hand-synced** with the predicates of
-  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem`; if they
-  drift, `create_or_get_run` and the index disagree.
+  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem` /
+  `uq_provisioning_job_device_lock` (QUEUED, RUNNING, PENDING_INFORM, PENDING_MANUAL since `zm1`;
+  `tests/test_manual_steps.py` pins all three); if they
+  drift, `create_or_get_run` and the index disagree. SQLite builds both indexes
+  **without** their predicate, so a test that re-opens a run on the same key
+  must recreate them partial (`tests/test_provisioning_run_v2.py` does).
+
+## Engine v2 (6.3.0, doc 42) — shipped limitations
+
+- **Run events are an in-process listener list** (`RUN_CLOSED_LISTENERS`), not
+  an outbox table. A process that closes runs without importing backend-erp's
+  `provisioning/run_events.py` emits nothing; backend-erp's test that both entry
+  points import it is the guard. The workflow engine (cron-erp) only OPENS runs.
+- **Stored legacy definitions are normalized on read**, not rewritten: the
+  legacy shape, the read-only `steps` mirror and `_connectivity_definition`'s
+  legacy shape all go in a later `pe2` cleanup.
+- **The shared-device `wait_until` ceiling (120 s) needs the binding**, so the
+  schema enforces only the 600 s cap; `shared_device_wait_errors()` is called by
+  backend-erp's router.
+- **No run-level deadline** (doc 42 Q9): a stranded forward run rolls back only
+  after `STRANDED_RUN_MAX_AGE` (1 h).
+- **Rollback children have no claim priority** over forward work, and a
+  `NO_ROLLBACK_DEFINED` device always ends a rollback `ROLLBACK_INCOMPLETE`
+  (an empty rollback is a save-time warning, not an error, doc 42 Q13).
+- **Secrets need the KEK in every process that opens such a run**
+  (`CREDENTIALS_KEKS` / `CREDENTIALS_ACTIVE_KEK_ID`); plans without `secrets`
+  never touch crypto.
 
 ## Port labels (doc 40 C8) — transitional
 
