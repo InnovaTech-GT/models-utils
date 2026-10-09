@@ -3,7 +3,7 @@
 ## What models-utils is
 
 models-utils (pip package **`database-utils`**, Python module **`database_utils`**,
-v6.1.0 with ri1 (inventory intake), 4.5.1 on `main`) is the **shared data layer** of the Uplink ISP platform. It is a
+v6.3.0 with ri1 + tl1 + oa1, 4.5.1 on `main`) is the **shared data layer** of the Uplink ISP platform. It is a
 pip-installable Python library — **not a running service**. There is no server,
 no port, and no entry point; it executes only inside its consumers and as an
 Alembic migration runner.
@@ -39,8 +39,8 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
 2. **Pydantic v2 schemas** — 37 modules shared between services
    ([schemas.md](schemas.md)).
-3. **Alembic migrations + idempotent seeds** — 101 revisions (head
-   `ri1_inventory_received_at`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
+3. **Alembic migrations + idempotent seeds** — 106 revisions (head
+   `zm1_manual_step`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -67,7 +67,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 65 files, **758 tests** — 737 SQLite + 21 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 68 files, **777 tests** — 743 SQLite + 34 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and

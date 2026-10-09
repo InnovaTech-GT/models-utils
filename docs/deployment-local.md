@@ -34,7 +34,7 @@ still migrated by the `migrate` service above.
 
 ```bash
 pip install -e . -r requirements-dev.txt   # editable install + test deps (pytest, pytest-asyncio, ruff)
-pytest -v                                  # 737 tests on in-memory SQLite (placeholder POSTGRES_* env); 18 tests/pg skip
+pytest -v                                  # 743 tests on in-memory SQLite (placeholder POSTGRES_* env); 34 tests/pg skip
 PG_TEST_URL=postgresql://... pytest -m pg tests/pg   # Postgres-only lane (DB at alembic head)
 ```
 

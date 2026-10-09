@@ -20,7 +20,8 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | `Role` (role) | Permission group |
 | `Permission` (permission) | Single access right (resource + action) |
 | `Notification` (notification) | Pending user **invitation** (despite the name) |
-| `UserNotification` (user_notification) | Field-app notification feed (mi2): `kind` in `USER_NOTIFICATION_KINDS` (TASK_ASSIGNED/TASK_OVERDUE/PAYMENTS_OVERDUE, CHECK), `dedupe_key` unique per user, `payload` JSON, `read_at`. Produced lazily by backend-erp when the feed is read |
+| `UserNotification` (user_notification) | Notification feed (mi2): `kind` in `USER_NOTIFICATION_KINDS` (TASK_ASSIGNED/TASK_OVERDUE/PAYMENTS_OVERDUE, produced lazily by backend-erp when the feed is read; since `zt1` also ZTP_SUCCEEDED/ZTP_FAILED/ZTP_NEEDS_ATTENTION/ZTP_ROLLBACK_INCOMPLETE, written eagerly by backend-erp's run-event consumer, doc 43 §6.8; since `zm1` also ZTP_MANUAL_STEP, written by the worker when a run child parks on a manual step, technicians only, doc 42d §9; CHECK), `dedupe_key` unique per user, `payload` JSON, `read_at`, `push_state` (zt1: NULL = never pushed, else one of `PUSH_STATES` PENDING/SENT/NO_TOKEN/FAILED/EXPIRED — the table is its own push outbox, partial index `ix_user_notification_push_pending`) |
+| `UserPushToken` (user_push_token) | zt1 (doc 43 §4): one Expo push token per device — `token` UNIQUE (a phone signing in as another user moves its token by upsert), `platform` in `PUSH_PLATFORMS` (android/ios), `app` in `PUSH_APPS` (tecnicos), company/user FKs CASCADE |
 | `AuditLog` (audit_log) | Immutable audit trail (see `utils/audit_utils.py`) |
 | `UserInvitation` (user_invitation) | Invitation flow |
 | `EmailVerificationToken` (email_verification_token) | Email verification flow — existing users were grandfathered by the `c1f_verify_grandfather` migration |

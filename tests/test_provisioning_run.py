@@ -2,7 +2,11 @@
 
 Reuses the seeded plant from the resolver tests: one company's
 CORE-1 -> OLT-1 -> SPL-1 -> SPL-2 -> ONT-1 chain, splitters passive, ACTIVATION
-and SUSPENSION bound to the router/olt/onu device types.
+and SUSPENSION bound to the router/olt/onu device types. The plant's playbooks
+are one legacy `steps` simulator step each, which normalizes to one
+CONFIGURATION entry per device (no probe); ACTIVATION runs in build order
+(core bottom-up, CPE last, doc 42 §5). Engine v2 phases, rollback, revert and
+secrets: tests/test_provisioning_run_v2.py.
 """
 
 import uuid
@@ -63,12 +67,12 @@ def test_a_run_creates_only_its_first_child(db, plant):
     jobs = _children(db, run)
     assert len(jobs) == 1, "children are created lazily, one at a time"
     assert jobs[0].run_position == 0
-    assert jobs[0].inventory_item_id == plant.cpe.id
+    assert jobs[0].inventory_item_id == plant.olt.id
 
 
-def test_the_plan_is_leaf_to_root_and_excludes_passives(db, plant):
+def test_the_plan_is_build_order_and_excludes_passives(db, plant):
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
-    assert [p["category_key"] for p in run.plan] == ["onu", "olt", "router"]
+    assert [p["category_key"] for p in run.plan] == ["olt", "router", "onu"]
     assert [p["category_key"] for p in run.path] == [
         "ONU", "SPLITTER", "SPLITTER", "OLT", "ROUTER"]
 
@@ -82,7 +86,7 @@ def test_the_path_snapshot_keeps_the_passives_visible(db, plant):
 def test_each_child_gets_shared_plus_its_own_device_frame(db, plant):
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
     first = _children(db, run)[0]
-    assert first.variables["device.category"] == "onu"
+    assert first.variables["device.category"] == "olt"
     assert first.variables["path.olt.serial"] == "OLT-1"
     assert first.variables["cpe.serial"] == "ONT-1"
 
@@ -115,7 +119,7 @@ def test_create_run_on_busy_device_succeeds(db, plant):
     assert first.device_lock_key is None
     first.status = ProvisioningJobStatus.SUCCEEDED
     nxt = advance_run(db, first)
-    assert nxt.inventory_item_id == plant.olt.id and nxt.device_lock_key is None
+    assert nxt.inventory_item_id == plant.core.id and nxt.device_lock_key is None
 
 
 def test_author_variables_are_namespaced_and_cannot_shadow(db, plant):
@@ -133,8 +137,8 @@ def test_advance_enqueues_the_next_child_on_success(db, plant):
     first.status = ProvisioningJobStatus.SUCCEEDED
     nxt = advance_run(db, first)
     assert nxt.run_position == 1
-    assert nxt.inventory_item_id == plant.olt.id
-    assert nxt.variables["device.serial"] == "OLT-1"
+    assert nxt.inventory_item_id == plant.core.id
+    assert nxt.variables["device.serial"] == "CORE-1"
 
 
 def test_advance_stops_the_run_on_failure(db, plant):
@@ -144,7 +148,8 @@ def test_advance_stops_the_run_on_failure(db, plant):
     assert advance_run(db, first) is None
     assert run.status == ProvisioningJobStatus.FAILED
     assert run.finished_at is not None
-    assert len(_children(db, run)) == 1, "the OLT must never be touched"
+    assert run.error_code == "CONFIGURATION_FAILED", "nothing ran, nothing to roll back"
+    assert len(_children(db, run)) == 1, "the router must never be touched"
 
 
 def test_the_last_child_finishes_the_run(db, plant):

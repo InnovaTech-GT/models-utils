@@ -510,6 +510,13 @@ class Task(Base):
     # NULL = not routed. Not the board order: that is `position`, which
     # move/reorder renumber. ix_task_company_scheduled_date covers the reads.
     route_sequence = Column(Integer, nullable=True)
+    # tl1_task_location (doc 46): the task's own reference point (where the
+    # technician drives to). NULL = derived (client, then device for
+    # non-INSTALL, then the planned parent) — see backend-erp
+    # utils/tasks.reference_point. Both or neither: ck_task_location lives in
+    # the revision only (SQLite create_all in consumers).
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     # mi2_mobile_field_ops: field-job timestamps (set when the status becomes
     # IN_PROGRESS / DONE) and the technician's per-step progress, keyed by the
     # app's step id: {"pickupOnu": {"done": true, "at": "...", ...}, ...}.
@@ -535,6 +542,11 @@ class Task(Base):
     device_category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), nullable=True)
     inventory_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
     parent_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
+    # oa1_task_onu_auto_assigned (doc 45): True when inventory_item_id was
+    # chosen by the server (custody-first / warehouse FIFO). Auto picks are
+    # re-evaluated when the technician changes; manual picks (office, mobile
+    # create, field swap) never are.
+    onu_auto_assigned = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     address = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
