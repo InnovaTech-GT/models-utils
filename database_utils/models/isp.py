@@ -251,6 +251,11 @@ class ProvisioningJobStatus(str, enum.Enum):
     # the inform arrives. Added to the PG enum via ALTER TYPE ADD VALUE in an
     # autocommit block (nc1a) — see the migration docstring.
     PENDING_INFORM = "PENDING_INFORM"
+    # doc 42d (revision zm1): a run child parked on a `driver: manual` step
+    # until the technician (or the office) confirms it. Job only — the run
+    # stays RUNNING. Same park mechanics as PENDING_INFORM: lease and fence
+    # released, device lock kept, deadline in scheduled_for.
+    PENDING_MANUAL = "PENDING_MANUAL"
 
 
 class ProvisioningTrigger(str, enum.Enum):
@@ -1396,7 +1401,7 @@ class ProvisioningRun(Base):
             unique=True,
             postgresql_where=text(
                 "idempotency_key IS NOT NULL AND status IN "
-                "('QUEUED','RUNNING','PENDING_INFORM')"
+                "('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         Index("ix_provisioning_run_service", "client_service_id", "created_at"),
@@ -1510,18 +1515,18 @@ class ProvisioningJob(Base):
             "company_id", "idempotency_key",
             unique=True,
             postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         # Cycle 5 Phase 1 (canon C11, revision nc1a): per-device serialization
         # authority — at most one live job per device_lock_key across the
-        # in-flight set (QUEUED/RUNNING/PENDING_INFORM).
+        # in-flight set (QUEUED/RUNNING/PENDING_INFORM/PENDING_MANUAL; zm1).
         Index(
             "uq_provisioning_job_device_lock",
             "device_lock_key",
             unique=True,
             postgresql_where=text(
-                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_job_phase"),

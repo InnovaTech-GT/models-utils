@@ -105,7 +105,7 @@ The idempotency key never depends on resolution output, so a re-fire while a run
 is already in flight must dedupe even if the graph drifted in between; resolving
 first would turn a harmless dedupe into a spurious FAILED execution. The dedupe
 uses `find_in_flight_run`, whose in-flight set (QUEUED / RUNNING /
-`PENDING_INFORM`) mirrors `uq_provisioning_run_company_idem`.
+`PENDING_INFORM` / `PENDING_MANUAL`) mirrors `uq_provisioning_run_company_idem`.
 
 `CPE_NOT_SET` / `CPE_NOT_ATTACHED` / `PLAYBOOK_NOT_BOUND` / `PLAYBOOK_INACTIVE`
 all **fail the step visibly** (founder hard requirement: resolution failures are
@@ -130,8 +130,9 @@ FAILS visibly and no run or job is inserted, exactly like a resolution error.
 `playbook_id` + `variables` + optional target ids. It enqueues one standalone
 `ProvisioningJob` with `run_id` NULL, runs no path resolution, and namespaces
 every author variable under `input.*`. Its idempotency pre-check
-(`_find_queued_or_running_provisioning_job`) treats QUEUED, RUNNING **and
-`PENDING_INFORM`** as in-flight (Cycle 7 fix, doc 25 §6.3) — matching nc1a's
+(`_find_queued_or_running_provisioning_job`) treats QUEUED, RUNNING,
+**`PENDING_INFORM` and `PENDING_MANUAL`** as in-flight (Cycle 7 fix, doc 25 §6.3;
+`zm1`, doc 42d — it reads `provisioning_runs.IN_FLIGHT`) — matching the
 partial-unique-index predicate, so a re-enqueue while a job is parked dedupes
 instead of tripping the index. `use_service_path` and `playbook_id` together are
 rejected as mutually exclusive. Since 6.4.0 (doc 43 §5.6) the always-live job

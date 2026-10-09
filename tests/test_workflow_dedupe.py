@@ -56,6 +56,11 @@ def test_pending_inform_job_dedupes_reenqueue():
     _run(ProvisioningJobStatus.PENDING_INFORM, should_dedupe=True)
 
 
+def test_pending_manual_job_dedupes_reenqueue():
+    """doc 42d: a child parked on a manual step is in flight too (zm1)."""
+    _run(ProvisioningJobStatus.PENDING_MANUAL, should_dedupe=True)
+
+
 def test_queued_job_dedupes_reenqueue():
     _run(ProvisioningJobStatus.QUEUED, should_dedupe=True)
 

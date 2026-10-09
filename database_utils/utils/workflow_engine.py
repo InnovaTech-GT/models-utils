@@ -1140,23 +1140,20 @@ def _owned_or_none(db: Session, model, value, company_id: UUID):
 
 
 def _find_queued_or_running_provisioning_job(db: Session, company_id: UUID, idempotency_key: str):
-    from database_utils.models.isp import ProvisioningJob, ProvisioningJobStatus
+    from database_utils.models.isp import ProvisioningJob
+    from database_utils.utils.provisioning_runs import IN_FLIGHT
     # Duplicate enqueue (e.g. a retriggered workflow) is a no-op success.
     # Pre-check instead of catching the unique violation: a mid-workflow
     # rollback would discard this run's execution audit rows. A genuine
     # race still trips uq_provisioning_job_company_idem and fails the step.
-    # Cycle 7 (doc 25 §6.3): PENDING_INFORM joined the in-flight set in nc1a's
-    # uq_provisioning_job_company_idem predicate — this pre-check must match
-    # it, or a re-enqueue while a job is parked trips the unique index and
-    # fails the step instead of deduping.
+    # This pre-check must match the uq_provisioning_job_company_idem predicate
+    # (PENDING_INFORM since nc1a, PENDING_MANUAL since zm1), or a re-enqueue
+    # while a job is parked trips the unique index and fails the step instead
+    # of deduping — so it reads the one shared IN_FLIGHT tuple (doc 42d §7).
     return db.query(ProvisioningJob).filter(
         ProvisioningJob.company_id == company_id,
         ProvisioningJob.idempotency_key == idempotency_key,
-        ProvisioningJob.status.in_([
-            ProvisioningJobStatus.QUEUED,
-            ProvisioningJobStatus.RUNNING,
-            ProvisioningJobStatus.PENDING_INFORM,
-        ]),
+        ProvisioningJob.status.in_(IN_FLIGHT),
     ).first()
 
 

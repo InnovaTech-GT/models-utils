@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (104 revisions, head: **`zt1_ztp_trigger`**) — plus
+`alembic/versions/` (105 revisions, head: **`zm1_manual_step`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1070,6 +1070,23 @@ android/ios, `app` CHECK tecnicos, company/user FKs CASCADE, index on
 restores the old CHECK and drops `ztp_enabled`. `tests/pg/test_zt1_pg.py`
 covers the default, the CHECKs, the index, the token constraints and the round
 trip.
+
+### `zm1_manual_step` (2026-10-09, manual playbook steps, doc 42d §7)
+
+On `zt1_ztp_trigger` (the planned `zt2` re-points to `zm1`). Additive.
+`ALTER TYPE provisioningjobstatus ADD VALUE IF NOT EXISTS 'PENDING_MANUAL'` in an
+autocommit block (the `nc1a` recipe: the value must commit before a predicate
+uses it); then, under `lock_timeout = 5s`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_job_device_lock` and `uq_provisioning_run_company_idem` are
+dropped and re-created with `status IN ('QUEUED','RUNNING','PENDING_INFORM',
+'PENDING_MANUAL')` (a parked manual child keeps its CPE lock and dedupe key),
+and `ck_user_notification_kind` gains `ZTP_MANUAL_STEP`. The literals are pinned
+to the models and to `IN_FLIGHT` by `tests/test_manual_steps.py`. Downgrade
+**refuses while any job is `PENDING_MANUAL`** (`RuntimeError`; cancel or let
+them expire first), then restores the old predicates, deletes the
+`ZTP_MANUAL_STEP` rows and restores the old CHECK. The enum value stays (PG
+cannot drop one without rebuilding the type). `tests/pg/test_zm1_pg.py` covers
+the lock, the key, the kind and the refusal.
 
 ## Key rules
 

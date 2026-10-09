@@ -20,8 +20,13 @@ the phases directly, in the founder's layout:
 
 A Step is {name, driver, template | request, validation, timeout_seconds,
 target_item_id, precondition (configuration guard), label, hint, idempotent,
-config_mode, capture, wait_until, undoes}; PlaybookDefinition checks which
+config_mode, capture, wait_until, undoes, manual}; PlaybookDefinition checks which
 phase accepts which field (PHASE_FIELD_NOT_ALLOWED).
+
+A `driver: manual` step (doc 42d) is done by a person: `manual` holds the
+rendered instructions, display fields (secret ones revealed on demand) and an
+optional checklist; the job parks PENDING_MANUAL until it is confirmed. It is
+allowed in configuration and, as a non-blocking notice, in rollback.
 
 The legacy `{steps, rollback}` shape (with per-step `on_failure`) is still
 accepted: normalize_definition converts it on read and on save, so every save
@@ -36,7 +41,9 @@ secret.* (generated per run) are never accepted from a caller.
 Save-time error codes are the prefix of the ValueError message ("CODE: ..."):
 CAPTURE_UNDECLARED, CAPTURE_SECRET_NAME, REGEX_UNSUPPORTED, UNDOES_UNKNOWN_STEP,
 SECRET_UNDECLARED, OUTPUT_SECRET_MIXED, PHASE_FIELD_NOT_ALLOWED,
-CONFIG_COMMAND_REQUIRED, OUTPUT_SHARE_AUDIENCE, LEGACY_STEPS_CONFLICT, COMPUTE_*.
+CONFIG_COMMAND_REQUIRED, OUTPUT_SHARE_AUDIENCE, LEGACY_STEPS_CONFLICT, COMPUTE_*,
+MANUAL_PHASE_NOT_ALLOWED, MANUAL_SPEC_REQUIRED, MANUAL_FIELD_NOT_ALLOWED,
+MANUAL_SECRET_IN_TEXT, MANUAL_SECRET_MIXED.
 WAIT_TOO_LONG_FOR_SHARED_DEVICE needs the binding: shared_device_wait_errors().
 """
 import re
@@ -59,6 +66,7 @@ from database_utils.models.isp import (
     PHASE_ROLLBACK,
     PHASE_VERIFICATION,
     PLAYBOOK_PURPOSE_PATTERN,
+    PURPOSE_ACTIVATION,
     TEARDOWN_PURPOSES,
     ProvisioningJobStatus,
     ProvisioningTrigger,
@@ -87,7 +95,7 @@ def normalize_purpose(v: str) -> str:
 # Cycle 7 (doc 25 §4.3): "ping" joins the set — backend-erp's connectivity
 # probe driver (provisioning/drivers/ping.py), used by the per-company
 # core_connectivity_check system playbooks (doc 25 §5.1).
-PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping"}
+PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual"}
 _VAR_TYPES = {"TEXT", "NUMBER", "BOOLEAN"}
 
 
@@ -136,6 +144,17 @@ CLI_DRIVERS = frozenset({"ssh", "telnet"})
 NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069"})
 # Drivers that change nothing that would need undoing (doc 42 §7.1).
 NO_UNDO_DRIVERS = frozenset({"simulator", "ping"})
+
+# doc 42d: a step a person performs. Its timeout_seconds is the confirm
+# deadline, with its own range (the upper bound stays under the 1 h
+# STRANDED_RUN_MAX_AGE). Only these fields (plus `undoes` in rollback) may be set.
+MANUAL_DRIVER = "manual"
+MANUAL_TIMEOUT_DEFAULT, MANUAL_TIMEOUT_MIN, MANUAL_TIMEOUT_MAX = 1800, 300, 3600
+MANUAL_MAX_INSTRUCTIONS = 2000
+MANUAL_MAX_FIELDS = 12
+MANUAL_MAX_CHECKLIST = 8
+MANUAL_MAX_VALUE = 512
+MANUAL_MAX_CHECK_LABEL = 120
 
 MAX_REGEX_LENGTH = 256
 MAX_CAPTURES_PER_STEP = 8
@@ -325,6 +344,108 @@ class PlaybookPrecondition(BaseModel):
         return self
 
 
+def _secret_token(body: str) -> bool:
+    """A token body that reads a secret: secret.*, acs.inform_password or any
+    secret-named variable (the renderer's masking rule)."""
+    name = body.split("|", 1)[0].strip()
+    return name.startswith("secret.") or is_secret_name(name)
+
+
+def _reads_secret(text: str) -> bool:
+    return any(_secret_token(m.group("body")) for m in playbook_expr.TOKEN_SHAPE.finditer(text))
+
+
+# Exactly one token, no filter, no other text: the reveal renders one lookup.
+_ONE_PLAIN_TOKEN = re.compile(r"\A\{\{[ \t]*[^{}|\s]+[ \t]*\}\}\Z")
+
+
+def _unique_keys(items, what: str) -> None:
+    keys = [i.key for i in items]
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"a manual {what} key is declared twice")
+
+
+class PlaybookManualField(BaseModel):
+    """A value shown to the technician on the manual step card (doc 42d §4.2).
+    A secret field is stored with `value: null` in the job log and revealed
+    through an audited endpoint."""
+    key: str
+    label: str
+    value: str          # template
+    copyable: bool = True
+    # Forced true (and refused as false) when `value` reads a secret-named token.
+    secret: bool = False
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str) -> str:
+        if not playbook_expr.KEY_PATTERN.fullmatch(v):
+            raise ValueError("manual field key must match ^[a-z][a-z0-9_]{0,31}$")
+        return v
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v):
+        return _static_text(v, MAX_LABEL, "manual field label")
+
+    @model_validator(mode="after")
+    def validate_field(self) -> "PlaybookManualField":
+        where = f"manual field '{self.key}'"
+        if len(self.value) > MANUAL_MAX_VALUE:
+            raise ValueError(f"{where}: value must be at most {MANUAL_MAX_VALUE} characters")
+        if _reads_secret(self.value):
+            if not _ONE_PLAIN_TOKEN.match(self.value):
+                raise ValueError(f"MANUAL_SECRET_MIXED: {where}: a secret value is exactly one "
+                                 "token, with no other text or filter")
+            if "secret" in self.model_fields_set and not self.secret:
+                raise ValueError(f"MANUAL_SECRET_MIXED: {where}: a secret value is always secret")
+            self.secret = True
+        return self
+
+
+class PlaybookManualCheck(BaseModel):
+    """A checklist item the technician must tick before confirming."""
+    key: str
+    label: str
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str) -> str:
+        if not playbook_expr.KEY_PATTERN.fullmatch(v):
+            raise ValueError("manual checklist key must match ^[a-z][a-z0-9_]{0,31}$")
+        return v
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v):
+        return _static_text(v, MANUAL_MAX_CHECK_LABEL, "manual checklist label")
+
+
+class PlaybookManualSpec(BaseModel):
+    """The `manual` block of a `driver: manual` step (doc 42d §4.1)."""
+    instructions: str   # template; never reads a secret (MANUAL_SECRET_IN_TEXT)
+    fields: List[PlaybookManualField] = []
+    checklist: List[PlaybookManualCheck] = []
+
+    @model_validator(mode="after")
+    def validate_spec(self) -> "PlaybookManualSpec":
+        if not self.instructions.strip():
+            raise ValueError("MANUAL_SPEC_REQUIRED: manual.instructions must not be empty")
+        if len(self.instructions) > MANUAL_MAX_INSTRUCTIONS:
+            raise ValueError(f"manual.instructions must be at most {MANUAL_MAX_INSTRUCTIONS} "
+                             "characters")
+        if _reads_secret(self.instructions):
+            raise ValueError("MANUAL_SECRET_IN_TEXT: manual.instructions must not read a secret; "
+                             "show it through a secret field")
+        if len(self.fields) > MANUAL_MAX_FIELDS:
+            raise ValueError(f"at most {MANUAL_MAX_FIELDS} manual fields per step")
+        if len(self.checklist) > MANUAL_MAX_CHECKLIST:
+            raise ValueError(f"at most {MANUAL_MAX_CHECKLIST} checklist items per step")
+        _unique_keys(self.fields, "field")
+        _unique_keys(self.checklist, "checklist")
+        return self
+
+
 class PlaybookStep(BaseModel):
     name: str
     driver: str
@@ -350,6 +471,7 @@ class PlaybookStep(BaseModel):
     capture: List[PlaybookCapture] = []
     wait_until: Optional[PlaybookWaitUntil] = None
     undoes: Optional[str] = None      # rollback: runs only if that configuration step ran
+    manual: Optional[PlaybookManualSpec] = None   # driver: manual only (doc 42d)
 
     @field_validator("driver")
     @classmethod
@@ -373,6 +495,11 @@ class PlaybookStep(BaseModel):
         # canon C15: tr069 accepts a `request` dict like http. It ALSO still
         # accepts `template` so pre-Cycle-5 tr069 (stub) definitions stay valid.
         # An empty template is legal (the session probe sends no line).
+        if self.driver == MANUAL_DRIVER:
+            return self._validate_manual()
+        if self.manual is not None:
+            raise ValueError(f"MANUAL_FIELD_NOT_ALLOWED: step '{self.name}': 'manual' is for "
+                             "driver 'manual'")
         if self.driver == "http":
             if not self.request:
                 raise ValueError(f"step '{self.name}': http driver requires 'request'")
@@ -388,6 +515,28 @@ class PlaybookStep(BaseModel):
         if len(self.capture) > MAX_CAPTURES_PER_STEP:
             raise ValueError(
                 f"step '{self.name}': at most {MAX_CAPTURES_PER_STEP} captures per step")
+        return self
+
+    def _validate_manual(self) -> "PlaybookStep":
+        if self.manual is None:
+            raise ValueError(f"MANUAL_SPEC_REQUIRED: step '{self.name}': a manual step needs "
+                             "'manual' with instructions")
+        # By value, not model_fields_set: a dumped step carries every default.
+        refused = [field for field, is_set in (
+            ("template", self.template is not None), ("request", self.request is not None),
+            ("validation", self.validation is not None),
+            ("precondition", self.precondition is not None),
+            ("idempotent", self.idempotent), ("config_mode", self.config_mode),
+            ("capture", bool(self.capture)), ("wait_until", self.wait_until is not None),
+            ("target_item_id", self.target_item_id is not None)) if is_set]
+        if refused:
+            raise ValueError(f"MANUAL_FIELD_NOT_ALLOWED: step '{self.name}': a manual step "
+                             f"does not take {', '.join(refused)}")
+        if "timeout_seconds" not in self.model_fields_set:
+            self.timeout_seconds = MANUAL_TIMEOUT_DEFAULT
+        if not (MANUAL_TIMEOUT_MIN <= self.timeout_seconds <= MANUAL_TIMEOUT_MAX):
+            raise ValueError(f"step '{self.name}': timeout_seconds must be "
+                             f"{MANUAL_TIMEOUT_MIN}-{MANUAL_TIMEOUT_MAX} for a manual step")
         return self
 
 
@@ -694,11 +843,14 @@ def shared_device_wait_errors(definition: Any) -> List[Dict[str, Any]]:
 
 
 def is_resend_safe(step: Dict[str, Any]) -> bool:
-    """doc 42 §8.2.4: idempotent, guarded (when_met skip), or ping/simulator."""
+    """doc 42 §8.2.4: idempotent, guarded (when_met skip), or ping/simulator.
+    A manual step (doc 42d §4.3) is too: asking a person again is always safe,
+    so a crash before its park re-parks it instead of UNKNOWN_STEP_OUTCOME."""
     guard = step.get("precondition") or {}
     return bool(step.get("idempotent")
                 or (guard and (guard.get("when_met") or "skip") == "skip")
-                or step.get("driver") in NO_UNDO_DRIVERS)
+                or step.get("driver") in NO_UNDO_DRIVERS
+                or step.get("driver") == MANUAL_DRIVER)
 
 
 def playbook_warnings(definition: Any, *, category_tier: Optional[str] = None,
@@ -727,6 +879,17 @@ def playbook_warnings(definition: Any, *, category_tier: Optional[str] = None,
         if not is_resend_safe(s):
             warnings.append({"code": "NOT_RESEND_SAFE", "step": s.get("name"),
                              "detail": "Este paso no se reintenta si se corta la conexión"})
+    for s in cfg:
+        if s.get("driver") != MANUAL_DRIVER:
+            continue
+        if not d.get("verification"):
+            warnings.append({"code": "MANUAL_UNVERIFIED", "step": s.get("name"),
+                             "detail": "Un paso manual sin verificación automática: un «Hecho» "
+                                       "por error no se detecta"})
+        if purpose is not None and purpose != PURPOSE_ACTIVATION:
+            warnings.append({"code": "MANUAL_OUTSIDE_ACTIVATION", "step": s.get("name"),
+                             "detail": "Sin un técnico en sitio, solo la oficina podrá confirmar "
+                                       "este paso"})
     if (category_tier == "EDGE" and purpose is not None
             and purpose not in TEARDOWN_PURPOSES
             and any(s.get("driver") in NETWORK_DRIVERS for s in d.get("preconditions") or [])):
@@ -788,6 +951,13 @@ class PlaybookDefinition(BaseModel):
         session = self.session or PlaybookSession()
         for key, steps in phases:
             for s in steps:
+                if s.driver == MANUAL_DRIVER:
+                    if key not in ("configuration", "rollback"):
+                        raise ValueError(f"MANUAL_PHASE_NOT_ALLOWED: {key} step '{s.name}': "
+                                         "manual steps are for configuration and rollback")
+                    if key == "rollback" and (s.manual.fields or s.manual.checklist):
+                        raise ValueError(f"MANUAL_FIELD_NOT_ALLOWED: rollback step '{s.name}' "
+                                         "is a notice: no fields and no checklist")
                 where = f"PHASE_FIELD_NOT_ALLOWED: {key} step '{s.name}'"
                 if s.undoes is not None and key != "rollback":
                     raise ValueError(f"{where}: 'undoes' is rollback-only")

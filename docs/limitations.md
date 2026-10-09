@@ -138,7 +138,9 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   logs `TARGET_NOT_LOCKED`, warn-only); deriving the lock from step targets is
   tracked separately (R15).
 - **`IN_FLIGHT` is hand-synced** with the predicates of
-  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem`; if they
+  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem` /
+  `uq_provisioning_job_device_lock` (QUEUED, RUNNING, PENDING_INFORM, PENDING_MANUAL since `zm1`;
+  `tests/test_manual_steps.py` pins all three); if they
   drift, `create_or_get_run` and the index disagree. SQLite builds both indexes
   **without** their predicate, so a test that re-opens a run on the same key
   must recreate them partial (`tests/test_provisioning_run_v2.py` does).

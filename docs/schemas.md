@@ -310,6 +310,30 @@ and in each step entry's `captures`), `sensitive_capture_keys(definition)`
 them in `display`/`checks` and writes them to `log.sensitive_captures`); constants `PHASE_KEYS`,
 `SESSION_PROBE_STEP`, `SECRET_ALPHABET`, `SHARED_DEVICE_WAIT_MAX_SECONDS`.
 
+**Manual steps (6.5.0, doc 42d).** `PLAYBOOK_DRIVERS` gains `manual`
+(`MANUAL_DRIVER`): a step a person performs. `PlaybookStep.manual` is a
+`PlaybookManualSpec` — `instructions` (template, 1–2000 chars), `fields`
+(≤ 12 `PlaybookManualField` `{key, label (static ≤ 80), value (template ≤ 512),
+copyable = true, secret = false}`, keys unique) and `checklist` (≤ 8
+`PlaybookManualCheck` `{key, label (static ≤ 120)}`, keys unique). A manual
+step takes only `name, label, hint, driver, timeout_seconds, manual` (+ `undoes`
+in rollback); its `timeout_seconds` is the confirm deadline, default
+`MANUAL_TIMEOUT_DEFAULT` 1800, range `MANUAL_TIMEOUT_MIN`–`MAX` 300–3600.
+Save-time codes: `MANUAL_PHASE_NOT_ALLOWED` (only configuration and
+rollback), `MANUAL_SPEC_REQUIRED`, `MANUAL_FIELD_NOT_ALLOWED` (a refused step
+field, a `manual` block on another driver, or fields/checklist on a rollback
+step — a rollback manual step is a non-blocking notice),
+`MANUAL_SECRET_IN_TEXT` (instructions reading `secret.*`, `acs.inform_password`
+or any secret-named token), `MANUAL_SECRET_MIXED` (a field reading a secret is
+exactly one token with no filter; it is forced `secret: true`, and `false` is
+refused). `CAPTURE_UNDECLARED` / `SECRET_UNDECLARED` / `COMPUTE_NAME` and the
+resolver's up-front token refusal also scan the `manual` block.
+`is_resend_safe` is true for a manual step. `playbook_warnings` adds
+`MANUAL_UNVERIFIED` (manual configuration step, empty verification) and
+`MANUAL_OUTSIDE_ACTIVATION` (binding purpose other than ACTIVATION);
+`ROLLBACK_EMPTY` fires for a manual step with no rollback. Execution (park,
+confirm, reveal, expiry) lives in backend-erp.
+
 `ProvisioningJobOut.log` is serialized through `mask_log_outputs`, so a
 sensitive output a child job wrote into `log.outputs` (before `advance_run`
 merged it into `run.outputs`), or the capture behind it, is never returned by

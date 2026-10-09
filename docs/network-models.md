@@ -31,6 +31,10 @@ pre-baked chain.
 
 ## `ProvisioningJob` extensions (nc1a)
 
+- `status` gains **`PENDING_MANUAL`** in `zm1` (doc 42d): a run child parked on a
+  `driver: manual` step until a person confirms it (lease released, CPE lock kept,
+  deadline in `scheduled_for`); job only, the run stays RUNNING. It joins the three
+  in-flight partial indexes.
 - `status` gains **`PENDING_INFORM`** (`ProvisioningJobStatus`): the job parks when a
   TR-069 connection-request task returns 202; the worker slot is released and a poller
   settles it once the inform arrives. Added via `ALTER TYPE … ADD VALUE` in an

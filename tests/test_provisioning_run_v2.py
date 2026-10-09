@@ -81,7 +81,7 @@ def partial_idem_indexes(db):
         db.execute(sa.text(f"DROP INDEX {name}"))
         db.execute(sa.text(
             f"CREATE UNIQUE INDEX {name} ON {table} (company_id, idempotency_key) "
-            "WHERE idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"))
+            "WHERE idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"))
 
 
 @pytest.fixture()

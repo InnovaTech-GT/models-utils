@@ -501,8 +501,8 @@ def _step_tokens(definition: Any) -> tuple:
     """(tokens, malformed) for every string the executor renders: in EVERY
     phase, rollback included — a run must not start if its undo cannot render
     (doc 42 §9.4) — templates, http/tr069 requests, target_item_id, step
-    guards, validation strings and capture regexes/thresholds, plus every
-    output value. capture.* and secret.* are outside RESOLVER_NAMESPACES, so
+    guards, validation strings and capture regexes/thresholds, manual
+    instructions and field values (doc 42d), plus every output value. capture.* and secret.* are outside RESOLVER_NAMESPACES, so
     the caller skips them; their correctness is checked at save time.
 
     tokens is (name, has_default) per parseable token. malformed is every
@@ -521,7 +521,8 @@ def _step_tokens(definition: Any) -> tuple:
             if not isinstance(step, dict):
                 continue
             fields += [step.get("template"), step.get("request"), step.get("target_item_id"),
-                       step.get("validation"), step.get("capture"), step.get("precondition")]
+                       step.get("validation"), step.get("capture"), step.get("precondition"),
+                       step.get("manual")]  # doc 42d: instructions + field values render too
     fields += [o.get("value") for o in d.get("outputs") or [] if isinstance(o, dict)]
     tokens, malformed = [], []
     for text in playbook_expr.strings(fields):

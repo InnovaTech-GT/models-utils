@@ -73,6 +73,7 @@ from database_utils.models.isp import (
 )
 from database_utils.schemas.playbook import (
     CLI_DRIVERS,
+    MANUAL_DRIVER,
     NO_UNDO_DRIVERS,
     SECRET_ALPHABET,
     SESSION_PROBE_STEP,
@@ -97,6 +98,7 @@ IN_FLIGHT = (
     ProvisioningJobStatus.QUEUED,
     ProvisioningJobStatus.RUNNING,
     ProvisioningJobStatus.PENDING_INFORM,
+    ProvisioningJobStatus.PENDING_MANUAL,   # doc 42d, zm1
 )
 
 TERMINAL_OK = (ProvisioningJobStatus.SUCCEEDED,)
@@ -229,7 +231,11 @@ def _needs_probe(definition: Dict[str, Any], cpe_in_build_order: bool) -> bool:
 
 
 def _step_labels(steps: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [{"name": s.get("name"), "label": s.get("label") or s.get("name")} for s in steps]
+    # doc 42d §4.3: a manual step's plan entry carries kind "manual" (the
+    # progress view copies it to the step row); other entries are unchanged.
+    return [{"name": s.get("name"), "label": s.get("label") or s.get("name")}
+            | ({"kind": MANUAL_DRIVER} if s.get("driver") == MANUAL_DRIVER else {})
+            for s in steps]
 
 
 def _plan_entry(node: ResolvedNode, phase: str, steps: List[Dict[str, Any]],

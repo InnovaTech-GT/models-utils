@@ -209,15 +209,18 @@ class Notification(Base):
 # mi2: the field apps' notification feed. Not `notification` — that table
 # holds user invitations. The three legacy kinds are produced lazily by
 # backend-erp when the feed is read; the ZTP_* kinds (zt1, doc 43 §6.8) are
-# written eagerly by the run-event consumer. dedupe_key makes each event insert
+# written eagerly by the run-event consumer; ZTP_MANUAL_STEP (zm1, doc 42d §9)
+# by the worker's manual park, technicians only. dedupe_key makes each event insert
 # at most once per user.
 USER_NOTIFICATION_KINDS = (
     "TASK_ASSIGNED", "TASK_OVERDUE", "PAYMENTS_OVERDUE",
     "ZTP_SUCCEEDED", "ZTP_FAILED", "ZTP_NEEDS_ATTENTION", "ZTP_ROLLBACK_INCOMPLETE",
+    "ZTP_MANUAL_STEP",
 )
 _USER_NOTIFICATION_KIND_CHECK = (
     "kind IN ('TASK_ASSIGNED','TASK_OVERDUE','PAYMENTS_OVERDUE',"
-    "'ZTP_SUCCEEDED','ZTP_FAILED','ZTP_NEEDS_ATTENTION','ZTP_ROLLBACK_INCOMPLETE')"
+    "'ZTP_SUCCEEDED','ZTP_FAILED','ZTP_NEEDS_ATTENTION','ZTP_ROLLBACK_INCOMPLETE',"
+    "'ZTP_MANUAL_STEP')"
 )
 # zt1: user_notification doubles as the push outbox (doc 43 §6.9). NULL = no
 # push; the worker's sender moves PENDING to one of the others. No CHECK.

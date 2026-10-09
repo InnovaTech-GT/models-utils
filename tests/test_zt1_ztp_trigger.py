@@ -36,9 +36,10 @@ def test_chain_position():
 
 def test_kind_check_literals():
     m = zt1()
-    assert m._KIND_CHECK == auth._USER_NOTIFICATION_KIND_CHECK
+    # zm1 (doc 42d) extended the CHECK after zt1: zt1's literal is zm1's "pre".
+    assert m._KIND_CHECK == load("versions/zm1_manual_step.py", "zm1_manual_step")._KIND_CHECK_PRE
     assert m._KIND_CHECK_PRE == mi2().USER_NOTIFICATION_KIND_CHECK
-    assert USER_NOTIFICATION_KINDS[-4:] == ZTP_KINDS
+    assert USER_NOTIFICATION_KINDS[3:7] == ZTP_KINDS
     for kind in USER_NOTIFICATION_KINDS:
         assert f"'{kind}'" in auth._USER_NOTIFICATION_KIND_CHECK
         assert len(kind) <= 32
