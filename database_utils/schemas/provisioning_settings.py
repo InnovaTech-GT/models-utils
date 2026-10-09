@@ -1,7 +1,9 @@
 # schemas/provisioning_settings.py
 """
-Provisioning settings (canon C6 + C9): the tenant's provisioning enable gate,
-transport axis and ACS configuration — one singleton row per tenant. Plan:
+Provisioning settings (canon C6 + C9): the tenant's transport axis, ACS
+configuration and ZTP switch — one singleton row per tenant. `enabled` is a
+legacy column and NOT a gate (the gates live in utils/provisioning_gates.py);
+`ztp_enabled` (zt1) turns on the INSTALL-closeout ZTP trigger. Plan:
 docs/isp-platform/23-network-config-implementation-plan.md §2.6, extended by
 revision `tr1_transport_axis`, which folded the whole multi-row `network_access`
 table (and its `schemas/network_access.py`, deleted) in here.
@@ -24,6 +26,10 @@ from datetime import datetime
 from database_utils.models.isp import DIAL_TARGETS, PROXY_KINDS
 
 
+# Update fields whose provisioning_settings column is NOT NULL.
+_NOT_NULL_FIELDS = frozenset({"enabled", "dial_target", "proxy_kind", "acs_auth_required", "ztp_enabled"})
+
+
 class ProvisioningSettingsUpdate(BaseModel):
     enabled: Optional[bool] = None
     default_inform_interval: Optional[int] = None
@@ -39,6 +45,18 @@ class ProvisioningSettingsUpdate(BaseModel):
     # received the credential locks those CPEs out, and the ACS cannot fix it
     # because fixing it requires a session.
     acs_auth_required: Optional[bool] = None
+    # --- ZTP (zt1, doc 43 §4) ------------------------------------------------
+    ztp_enabled: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def reject_null_on_not_null_columns(self):
+        """The router applies this with a blind setattr loop over
+        model_dump(exclude_unset=True), so an explicit null on a NOT NULL column
+        was a 500 IntegrityError. Omitted fields stay omitted."""
+        for name in sorted(self.model_fields_set & _NOT_NULL_FIELDS):
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        return self
 
     @field_validator("dial_target")
     @classmethod
@@ -96,6 +114,7 @@ class ProvisioningSettingsOut(BaseModel):
     # Read-only (see the module docstring).
     acs_base_url: Optional[str] = None
     acs_auth_required: bool = False
+    ztp_enabled: bool = False
     # The tenant's TR-069 Inform credential and, during a rotation window, its
     # successor. Ids only — the secret never round-trips (canon C19); the
     # credential's own fingerprint/has_secret come from DeviceCredentialOut.

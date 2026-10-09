@@ -30,7 +30,7 @@ from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
 )
 from database_utils.utils import provisioning_runs
-from database_utils.utils.provisioning_resolution import ResolvedProvisioning
+from database_utils.utils.provisioning_resolution import ResolvedNode, ResolvedProvisioning
 from database_utils.utils.provisioning_runs import (
     advance_run,
     create_or_get_run,
@@ -78,11 +78,16 @@ def seed(engine):
               "device_type_id, network_attached) VALUES (:id, now(), now(), :co, :t, true)",
               id=item, co=co, t=dtype)
         x("INSERT INTO playbook (id, created_at, updated_at, company_id, name, definition, "
-          "is_active, version) VALUES (:id, now(), now(), :co, 'pc pb', "
-          "'{\"steps\": []}', true, 1)", id=pb, co=co)
+          "is_active, version, last_dry_run_version) VALUES (:id, now(), now(), :co, 'pc pb', "
+          "'{\"configuration\": [{\"name\": \"s\", \"driver\": \"simulator\", "
+          "\"template\": \"ok\"}]}', true, 1, 1)", id=pb, co=co)
+    # Build order puts the core (position 1) first and the CPE last.
     resolution = ResolvedProvisioning(steps=[
-        SimpleNamespace(item_id=item, playbook_id=pb, playbook_version=1, category_key=k)
-        for item, k in ((cpe, "onu"), (olt, "olt"))
+        ResolvedNode(position=p, item_id=item, serial_number=None, mac_address=None,
+                     device_type_id=dtype, device_type_name="pc type", category_key=k,
+                     category_tier=None, mgmt_host=None, mgmt_port=None,
+                     playbook_id=pb, playbook_version=1)
+        for p, item, k in ((0, cpe, "onu"), (1, olt, "olt"))
     ])
     yield SimpleNamespace(co=co, svc=svc, resolution=resolution)
     with engine.begin() as c:

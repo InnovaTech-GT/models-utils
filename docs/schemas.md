@@ -23,7 +23,7 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
 | CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration` |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
-| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`) |
+| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`; `ztp_enabled` on `Update` (optional) and `Out` (default false) since `zt1`, doc 43. `ProvisioningSettingsUpdate` rejects an explicit `null` for every NOT NULL column — `enabled`, `dial_target`, `proxy_kind`, `acs_auth_required`, `ztp_enabled` — with a 422 instead of the router's 500; omitted fields stay omitted) |
 | Workflow | `workflow` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
 
@@ -236,6 +236,108 @@ matters when reading `__init__.py`:
   `{{computed.<key>}}` (plus filters): `{{computed.onu.y}}` or
   `{{computed[0].x}}` is refused with `COMPUTE_NAME`, because `evaluate_all`
   never produces such a name and only a caller-supplied value could fill it.
+
+### Engine v2 (6.3.0, doc 42, revision `pe1_playbook_phases`) — `playbook` format
+
+`schemas/playbook.py` — one playbook is still one purpose on one device type;
+the definition now holds the phases at the top level (the founder's layout):
+
+| Key | Meaning |
+|---|---|
+| `variables`, `computed` | unchanged (`input.*`, `computed.*`) |
+| `session` | `PlaybookSession`, ssh/telnet only: `enable` (`command` "enable", `password_prompt` "ssword", `enabled_prompt` "#" — the password is a `CLI_ENABLE` credential), `config_command` (required by a `config_mode` step), `exit_command` "exit", `error_patterns` (None = platform default in backend-erp; a match = `COMMAND_REJECTED`), `busy_patterns` (a match = `DEVICE_BUSY`) |
+| `secrets` | `[PlaybookSecret{key, length 8..63 (12)}]`, generated once per RUN, read as `{{secret.<key>}}` |
+| `preconditions` / `configuration` / `verification` / `rollback` | `[PlaybookStep]`; `configuration` ≥ 1 step; names unique across all four; `__session__` reserved |
+| `outputs` | `[PlaybookOutput{key, label, value, unit?, audience ⊆ {technician, office}, shareable, sensitive}]`, ≤ 16 |
+
+`PlaybookStep` gains `label` (≤ 80, static) / `hint` (≤ 200, static),
+`idempotent` (was silently dropped — bug §3.2.2), `config_mode`, `capture`
+(`PlaybookCapture{key, regex with exactly one group, type number|text, label,
+unit, min/max (number, literal or ONE token), equals (text)}`, ≤ 8 per step,
+≤ 32 per playbook, never secret-named), `wait_until`
+(`PlaybookWaitUntil{tries 2..30, interval_seconds 1..60}`, tries × interval
+≤ 600) and `undoes`. `on_failure` is **retired**. `PlaybookStepValidation` gains
+`expect_regex` / `expect_not_regex` (every string is rendered before
+comparing).
+
+**Save-time rules** (`PlaybookDefinition.validate_definition`; the error code is
+the prefix of the message): `PHASE_FIELD_NOT_ALLOWED` (`undoes` outside
+rollback, `capture` in rollback, `wait_until` outside preconditions/verification
+except on a tr069 configuration step, `config_mode` outside ssh/telnet
+configuration/rollback, the step guard `precondition` and `idempotent` outside
+configuration), `CONFIG_COMMAND_REQUIRED`, `UNDOES_UNKNOWN_STEP`,
+`CAPTURE_UNDECLARED` (a step reads only captures of EARLIER steps, in
+preconditions → configuration → verification order; rollback and outputs may
+read any), `CAPTURE_SECRET_NAME`, `REGEX_UNSUPPORTED` (`check_regex`: ≤ 256
+chars, no lookaround, backreference or named group, compiled with tokens as a
+literal; escaped text such as `\(?=` or `\\1` is not mistaken for a
+construct; a leading `(?i)`/`(?m)`/`(?s)` is fine — backend-erp's `re2.compile`
+is the authority), `SECRET_UNDECLARED`, `OUTPUT_SECRET_MIXED` (a secret output
+is exactly `{{secret.<key>}}`; it is always `sensitive`, refused as false),
+`OUTPUT_SHARE_AUDIENCE` (`shareable` needs `technician`), and the `computed`
+checks across every phase, validation/threshold strings and output values.
+No `extra="forbid"` (the editor round-trips unmodelled keys).
+
+**Legacy shape.** `normalize_definition(d)` (a `mode="before"` validator, so
+every save stores v2; also used by every reader) converts `{steps, rollback}`:
+`configuration = steps` (on_failure stripped); per-step `on_failure` becomes
+rollback steps with `undoes` in reverse order, else the legacy `rollback` is
+kept without `undoes`; rollback names that collide get a ` (rollback)` suffix.
+Precedence: `configuration` wins over an empty or identical `steps` (the
+mirror round-tripping); differing `steps` next to `configuration` is
+`LEGACY_STEPS_CONFLICT`. `PlaybookDefinition.steps` is never stored;
+`PlaybookOut.definition` is `PlaybookDefinitionOut`, which returns a read-only
+`steps` mirror (= `configuration`) for the pre-doc-48 editor (removed in `pe2`).
+frontend-erp's `lib/playbookPhases.ts` ports this function; both sides run the
+same golden cases from a byte-identical, hash-locked fixture
+(`tests/fixtures/playbook_normalize.json` here,
+`test_playbook_normalize_fixture.py`), so a change to either fails CI until
+the fixture, the port and both hash pins move together.
+
+Helpers: `job_steps(definition, phase, probe=False)` (a phase's list, the
+`__session__` probe prepended; `phase=None` = standalone, preconditions +
+configuration + verification flattened), `shared_device_wait_errors(definition)`
+(`WAIT_TOO_LONG_FOR_SHARED_DEVICE` above 120 s — the router calls it for a
+non-CPE binding), `playbook_warnings(definition, category_tier=, purpose=)`
+(`ROLLBACK_EMPTY`, `ROLLBACK_WITHOUT_UNDOES`, `ENABLE_WITHOUT_SESSION`,
+`NOT_RESEND_SAFE`, `CPE_NETWORK_PRECONDITION` — warnings, never errors),
+`is_resend_safe(step)`, `output_secret_ref(value)`,
+`mask_sensitive_outputs(outputs)` / `mask_log_outputs(log)` (`value: null` on
+every `sensitive` or `secret` output entry, doc 42 §10.1; `mask_log_outputs`
+also blanks the captures named in `log.sensitive_captures` in `log.captures`
+and in each step entry's `captures`), `sensitive_capture_keys(definition)`
+(capture keys read by a non-secret `sensitive` output — the executor masks
+them in `display`/`checks` and writes them to `log.sensitive_captures`); constants `PHASE_KEYS`,
+`SESSION_PROBE_STEP`, `SECRET_ALPHABET`, `SHARED_DEVICE_WAIT_MAX_SECONDS`.
+
+**Manual steps (6.5.0, doc 42d).** `PLAYBOOK_DRIVERS` gains `manual`
+(`MANUAL_DRIVER`): a step a person performs. `PlaybookStep.manual` is a
+`PlaybookManualSpec` — `instructions` (template, 1–2000 chars), `fields`
+(≤ 12 `PlaybookManualField` `{key, label (static ≤ 80), value (template ≤ 512),
+copyable = true, secret = false}`, keys unique) and `checklist` (≤ 8
+`PlaybookManualCheck` `{key, label (static ≤ 120)}`, keys unique). A manual
+step takes only `name, label, hint, driver, timeout_seconds, manual` (+ `undoes`
+in rollback); its `timeout_seconds` is the confirm deadline, default
+`MANUAL_TIMEOUT_DEFAULT` 1800, range `MANUAL_TIMEOUT_MIN`–`MAX` 300–3600.
+Save-time codes: `MANUAL_PHASE_NOT_ALLOWED` (only configuration and
+rollback), `MANUAL_SPEC_REQUIRED`, `MANUAL_FIELD_NOT_ALLOWED` (a refused step
+field, a `manual` block on another driver, or fields/checklist on a rollback
+step — a rollback manual step is a non-blocking notice),
+`MANUAL_SECRET_IN_TEXT` (instructions reading `secret.*`, `acs.inform_password`
+or any secret-named token), `MANUAL_SECRET_MIXED` (a field reading a secret is
+exactly one token with no filter; it is forced `secret: true`, and `false` is
+refused; a field hand-marked `secret: true` is held to the same one-token rule). `CAPTURE_UNDECLARED` / `SECRET_UNDECLARED` / `COMPUTE_NAME` and the
+resolver's up-front token refusal also scan the `manual` block.
+`is_resend_safe` is true for a manual step. `playbook_warnings` adds
+`MANUAL_UNVERIFIED` (manual configuration step, empty verification) and
+`MANUAL_OUTSIDE_ACTIVATION` (binding purpose other than ACTIVATION);
+`ROLLBACK_EMPTY` fires for a manual step with no rollback. Execution (park,
+confirm, reveal, expiry) lives in backend-erp.
+
+`ProvisioningJobOut.log` is serialized through `mask_log_outputs`, so a
+sensitive output a child job wrote into `log.outputs` (before `advance_run`
+merged it into `run.outputs`), or the capture behind it, is never returned by
+any job endpoint; the stored log keeps the value (later children render it).
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 
