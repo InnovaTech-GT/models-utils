@@ -326,7 +326,7 @@ step — a rollback manual step is a non-blocking notice),
 `MANUAL_SECRET_IN_TEXT` (instructions reading `secret.*`, `acs.inform_password`
 or any secret-named token), `MANUAL_SECRET_MIXED` (a field reading a secret is
 exactly one token with no filter; it is forced `secret: true`, and `false` is
-refused). `CAPTURE_UNDECLARED` / `SECRET_UNDECLARED` / `COMPUTE_NAME` and the
+refused; a field hand-marked `secret: true` is held to the same one-token rule). `CAPTURE_UNDECLARED` / `SECRET_UNDECLARED` / `COMPUTE_NAME` and the
 resolver's up-front token refusal also scan the `manual` block.
 `is_resend_safe` is true for a manual step. `playbook_warnings` adds
 `MANUAL_UNVERIFIED` (manual configuration step, empty verification) and

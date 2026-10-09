@@ -184,9 +184,13 @@ def test_secret_field_is_forced_and_exactly_one_token():
     with pytest.raises(ValidationError, match="MANUAL_SECRET_MIXED"):
         PlaybookStep.model_validate(_manual(manual={"instructions": "x", "fields": [
             {"key": "p", "label": "P", "value": "{{acs.inform_password}}", "secret": False}]}))
-    # a literal value may still be flagged secret by the author
+    # a hand-marked secret field is held to the one-token rule (the reveal renders one lookup)
     assert PlaybookStep.model_validate(_manual(manual={"instructions": "x", "fields": [
-        {"key": "p", "label": "P", "value": "hunter2", "secret": True}]})).manual.fields[0].secret
+        {"key": "p", "label": "P", "value": "{{computed.svlan}}", "secret": True}]})).manual.fields[0].secret
+    for value in ("hunter2", "VLAN {{computed.svlan}} x", "{{computed.svlan | upper}}"):
+        with pytest.raises(ValidationError, match="MANUAL_SECRET_MIXED"):
+            PlaybookStep.model_validate(_manual(manual={"instructions": "x", "fields": [
+                {"key": "p", "label": "P", "value": value, "secret": True}]}))
 
 
 def test_field_and_checklist_keys_and_limits():

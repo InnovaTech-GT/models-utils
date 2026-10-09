@@ -373,7 +373,8 @@ class PlaybookManualField(BaseModel):
     label: str
     value: str          # template
     copyable: bool = True
-    # Forced true (and refused as false) when `value` reads a secret-named token.
+    # Forced true (and refused as false) when `value` reads a secret-named token;
+    # a secret field (forced or hand-marked) is exactly one plain token.
     secret: bool = False
 
     @field_validator("key")
@@ -400,6 +401,8 @@ class PlaybookManualField(BaseModel):
             if "secret" in self.model_fields_set and not self.secret:
                 raise ValueError(f"MANUAL_SECRET_MIXED: {where}: a secret value is always secret")
             self.secret = True
+        if self.secret and not _ONE_PLAIN_TOKEN.match(self.value):
+            raise ValueError(f"MANUAL_SECRET_MIXED: {where}: a secret field is exactly one token")
         return self
 
 

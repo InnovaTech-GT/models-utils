@@ -15,9 +15,11 @@ provisioning_run           ~ uq_provisioning_run_company_idem
                            predicate cannot be altered, so drop + re-create)
 user_notification          ~ ck_user_notification_kind + 'ZTP_MANUAL_STEP'
 
-Downgrade refuses while any job is PENDING_MANUAL (the old predicates would
-release its device lock and dedupe key), then restores the old predicates,
-deletes the ZTP_MANUAL_STEP rows and the old CHECK. The enum value stays: PG
+Downgrade locks provisioning_job (SHARE ROW EXCLUSIVE, so nothing can park a
+job between the check and the rebuild) and refuses while any job is
+PENDING_MANUAL (the old predicates would release its device lock and dedupe
+key), then restores the old predicates, deletes the ZTP_MANUAL_STEP rows and
+the old CHECK. The enum value stays: PG
 cannot drop it without rebuilding the type, and nothing reads it once the code
 is gone.
 
@@ -85,6 +87,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     c = op.get_bind()
     c.execute(text("SET lock_timeout = '5s'"))
+    # Blocks writers until commit, so no job can park between the count and the rebuild.
+    c.execute(text("LOCK TABLE provisioning_job IN SHARE ROW EXCLUSIVE MODE"))
     parked = c.execute(text(
         "SELECT count(*) FROM provisioning_job WHERE status = 'PENDING_MANUAL'"
     )).scalar()
