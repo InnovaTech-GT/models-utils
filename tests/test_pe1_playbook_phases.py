@@ -64,5 +64,5 @@ def test_check_constraints_are_named():
 def test_migration_chain_position():
     pe1 = _load_pe1()
     assert pe1.revision == "pe1_playbook_phases"
-    # Program chain (doc 42a §4): on the develop head tl1; re-pointed to oa1 when SP4 composes.
-    assert pe1.down_revision == "tl1_task_location"
+    # Program chain (doc 42a §4): tl1 -> oa1 -> pe1 (re-pointed at compose, 6.6.0).
+    assert pe1.down_revision == "oa1_task_onu_auto_assigned"

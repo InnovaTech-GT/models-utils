@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (105 revisions, head: **`zm1_manual_step`**) — plus
+`alembic/versions/` (106 revisions, head: **`zm1_manual_step`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1034,11 +1034,29 @@ Post-upgrade assert on both columns + the CHECK. Downgrade drops the CHECK and
 both columns. `tests/pg/test_task_location_pg.py` covers the CHECK and
 down/up.
 
+### `oa1_task_onu_auto_assigned` (2026-10-08, doc 45 SP4)
+
+On `tl1_task_location` (ZTP program chain, doc 42a §4: `… → tl1 → oa1 → pe1 →
+zt1`). Under `lock_timeout = 5s`: `task.onu_auto_assigned BOOLEAN NOT NULL
+DEFAULT false` (`ADD COLUMN IF NOT EXISTS`). Then a **one-off data backfill**
+that runs automatically on dev and prod migrate: every `IN_STOCK` ONU
+(`device_category.key = 'ONU'`) referenced by an open (`status <> 'DONE'`)
+`INSTALL` task becomes `RESERVED`, with one `RESERVED` `equipment_event`
+(`technician_id` = that task's lowest-`user_id` TECHNICIAN-or-NULL assignee, or
+NULL; `event_metadata = {"task_id", "auto": false, "backfill": true}`). Candidate units are locked `FOR NO KEY UPDATE` before the insert/update, so a concurrent status change by the still-serving old backend is never overwritten. A unit
+held by two open tasks is reserved once, for the oldest task (rollout lists
+the duplicates for the office). Links stay manual (`onu_auto_assigned =
+false`). Idempotent (a reserved unit is no longer `IN_STOCK`); post-upgrade
+asserts the column only — no data assert, because the old backend keeps
+serving during migrate and may release a held unit after the backfill; rollout
+step 5 (doc 45 §6.5) lists any stragglers. Downgrade drops the column
+only — the backfilled reservations are correct data and stay.
+`tests/pg/test_onu_auto_assigned_pg.py` covers the backfill and down/up.
+
 ### `pe1_playbook_phases` (2026-10-08, ZTP SP1, doc 42 §12)
 
-On `tl1_task_location` (the `develop` head, merged into this branch); the
-program chain (doc 42a §4) is `… → tl1 → oa1 → pe1 → zt1`, so `down_revision`
-is re-pointed to `oa1` (one line) when SP4 composes first. Additive and metadata-only, under `lock_timeout = 5s`,
+On `oa1_task_onu_auto_assigned` (program chain, doc 42a §4: `… → tl1 → oa1 →
+pe1 → zt1 → zm1`; re-pointed from `tl1_task_location` at compose, 6.6.0). Additive and metadata-only, under `lock_timeout = 5s`,
 `IF [NOT] EXISTS`: `provisioning_run` gains `phase` VARCHAR(16), `error_code`
 VARCHAR(40), `error` TEXT, `outputs` JSON, `secrets_ciphertext` /
 `secrets_dek_wrapped` BYTEA, `secrets_kek_id` VARCHAR; `provisioning_job` gains

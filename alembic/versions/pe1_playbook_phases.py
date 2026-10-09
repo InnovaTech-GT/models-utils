@@ -1,7 +1,7 @@
 """engine v2: run/job phase, run outcome + outputs + secrets, CLI_ENABLE credential kind
 
 Revision ID: pe1_playbook_phases
-Revises: tl1_task_location
+Revises: oa1_task_onu_auto_assigned
 Create Date: 2026-10-08
 
 ZTP SP1 (doc 42 §12). Additive and metadata-only (nullable columns, no default,
@@ -13,7 +13,7 @@ provisioning_job  + phase (CHECK; NULL = standalone or legacy child)
 device_credential   ck_device_credential_kind re-created with 'CLI_ENABLE'
 
 The program chain (doc 42a §4) puts this revision after oa1 (tl1 -> oa1 -> pe1);
-on tl1 (develop head) until SP4 composes, then re-pointed to oa1 (one line).
+re-pointed from tl1 to oa1 at compose (models-utils 6.6.0).
 
 The CHECK literals are this revision's own copies (revisions are immutable, so
 it cannot import the model); tests/test_pe1_playbook_phases.py pins them
@@ -28,7 +28,7 @@ from alembic import op
 from sqlalchemy.sql import text
 
 revision: str = "pe1_playbook_phases"
-down_revision: Union[str, Sequence[str], None] = "tl1_task_location"
+down_revision: Union[str, Sequence[str], None] = "oa1_task_onu_auto_assigned"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
