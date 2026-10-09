@@ -11,6 +11,7 @@ On `develop` (Railway development, head `pc1_provisioning_claim_token`), not yet
 on `main`: the v1.0.1 cycle.
 
 ### Added
+- **6.3.0** - `Task.onu_auto_assigned` (Boolean, NOT NULL, default false): the server picked `inventory_item_id` (doc 45, ONT auto-assignment; backend-erp `services/onu_assignment.py`). Output-only on `TaskOut` (`onu_auto_assigned: bool = False`). Alembic `oa1_task_onu_auto_assigned` (**new head**, on `tl1_task_location`, doc 42a §4 chain): the column + a one-off backfill reserving every `IN_STOCK` ONU held by an open `INSTALL` task (`RESERVED` + one `RESERVED` `equipment_event`, `event_metadata.backfill = true`; doubly held units reserved once). Downgrade drops the column only.
 - **6.2.0** - `Task.latitude` / `Task.longitude` (Float, nullable): the task's own reference point (doc 46, pre-dispatch). NULL = derived in backend-erp (`utils/tasks.reference_point`). Output-only on `TaskOut`; inputs belong to backend-erp's `TaskCreateIn`/`TaskUpdateIn`. Alembic `tl1_task_location` (**new head**, on `ri1_inventory_received_at`, doc 42a §4 chain; this branch carries `ri1`): two nullable DOUBLE PRECISION columns + `ck_task_location` (both or neither, in range). `isp_seed` COLLECTOR comment notes the `POST /tasks/` `new_client` exception (no grant change).
 
 ### Changed
