@@ -507,10 +507,38 @@ def mask_sensitive_outputs(outputs: Any) -> Any:
             else o for o in outputs]
 
 
+def sensitive_capture_keys(definition: Any) -> List[str]:
+    """Capture keys read by a non-secret `sensitive` output (doc 42 §10.1).
+    The capture holds the same value as the output, so the executor masks it
+    in step `display` / `checks` and records these keys as
+    `log.sensitive_captures` for mask_log_outputs."""
+    keys = set()
+    for o in (definition or {}).get("outputs") or []:
+        if isinstance(o, dict) and o.get("sensitive") and not output_secret_ref(o.get("value") or ""):
+            keys.update(_refs([o.get("value") or ""], _CAPTURE_REF))
+    return sorted(keys)
+
+
 def mask_log_outputs(log: Any) -> Any:
-    """A job log with its `outputs` masked (mask_sensitive_outputs)."""
-    if isinstance(log, dict) and log.get("outputs"):
-        return dict(log, outputs=mask_sensitive_outputs(log["outputs"]))
+    """A job log with its `outputs` masked (mask_sensitive_outputs) and the
+    captures named in `log.sensitive_captures` blanked, in `log.captures` and
+    in every step entry's `captures` (the raw values stay in the DB: later children
+    of the run render them)."""
+    if not isinstance(log, dict):
+        return log
+    if log.get("outputs"):
+        log = dict(log, outputs=mask_sensitive_outputs(log["outputs"]))
+    keys = set(log.get("sensitive_captures") or [])
+    if keys:
+        def _blank(captures):
+            if not isinstance(captures, dict):
+                return captures
+            return {k: (None if k in keys else v) for k, v in captures.items()}
+        log = dict(log, captures=_blank(log.get("captures")))
+        for key in ("steps", "rollback_steps", "compensation_steps"):
+            if isinstance(log.get(key), list):
+                log[key] = [dict(e, captures=_blank(e["captures"]))
+                            if isinstance(e, dict) and "captures" in e else e for e in log[key]]
     return log
 
 

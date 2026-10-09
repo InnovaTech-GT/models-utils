@@ -10,8 +10,10 @@ from database_utils.schemas.playbook import (
     PlaybookDefinition,
     PlaybookOut,
     job_steps,
+    mask_log_outputs,
     normalize_definition,
     playbook_warnings,
+    sensitive_capture_keys,
     shared_device_wait_errors,
 )
 
@@ -448,3 +450,28 @@ def test_job_out_masks_sensitive_log_outputs():
     assert [o["value"] for o in out.log["outputs"]] == [None, None, "-21"]
     assert "10.1.4.84" not in out.model_dump_json()
     assert log["outputs"][0]["value"] == "10.1.4.84"  # the stored log is untouched
+
+
+# ----------------------------------------------------------------- sensitive captures
+
+def test_sensitive_capture_keys_are_the_captures_a_non_secret_sensitive_output_reads():
+    d = {"outputs": [
+        {"key": "ip", "value": "{{ capture.ip }}/{{capture.mask}}", "sensitive": True},
+        {"key": "rx", "value": "{{capture.rx}}"},
+        {"key": "wifi", "value": "{{secret.wifi_key}}", "sensitive": True},
+    ]}
+    assert sensitive_capture_keys(d) == ["ip", "mask"]
+    assert sensitive_capture_keys({}) == []
+
+
+def test_mask_log_outputs_blanks_sensitive_captures_everywhere():
+    log = {"sensitive_captures": ["ip"], "captures": {"ip": "10.0.0.9", "rx": "-20"},
+           "steps": [{"name": "a", "captures": {"ip": "10.0.0.9"}}, {"name": "b"}],
+           "rollback_steps": [{"name": "r", "captures": {"rx": "-20"}}],
+           "outputs": [{"key": "ip", "value": "10.0.0.9", "sensitive": True}]}
+    out = mask_log_outputs(log)
+    assert out["captures"] == {"ip": None, "rx": "-20"}
+    assert out["steps"] == [{"name": "a", "captures": {"ip": None}}, {"name": "b"}]
+    assert out["rollback_steps"][0]["captures"] == {"rx": "-20"}
+    assert out["outputs"][0]["value"] is None
+    assert log["captures"]["ip"] == "10.0.0.9", "the stored log is not mutated"

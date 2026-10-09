@@ -575,18 +575,21 @@ def _failed_steps(job: ProvisioningJob, entry: Dict[str, Any]) -> List[Dict[str,
         {"device": entry.get("device_label"),
          "step": e.get("label") or _label_of(entry, name),
          "code": e.get("code") or (e.get("detail") or {}).get("code"),
-         "display": e.get("display") or e.get("error")}
+         "display": e.get("display")}
         for name, e in _last_entries(job).items() if e.get("status") == "FAILED"
     ]
 
 
 def _failure_text(job: ProvisioningJob, entry: Dict[str, Any]) -> str:
-    """"<device> · <step label>: <display>" for the step that failed."""
+    """"<device> · <step label>: <display>" for the step that failed (doc 42
+    §6.3). Falls back to the step's code, never its raw `error`: run.error
+    reaches the technician (§11.2) and a driver error can carry hosts, ports
+    or rendered expectations; the raw error stays in jobs[].log (office)."""
     failed = _failed_steps(job, entry)
     if failed:
         f = failed[-1]
         return f"{f['device']} · {f['step']}: {f['display'] or f['code'] or job.status.value}"
-    return f"{entry.get('device_label')}: {job.error or job.status.value}"
+    return f"{entry.get('device_label')}: {(job.log or {}).get('code') or job.status.value}"
 
 
 # --------------------------------------------------------------------- rollback
@@ -731,7 +734,7 @@ def _finish_rollback(db: Session, run: ProvisioningRun) -> None:
         entry = plan[job.run_position]
         steps = _failed_steps(job, entry) or [
             {"device": entry.get("device_label"), "step": None,
-             "code": job.error or job.status.value, "display": None}]
+             "code": (job.log or {}).get("code") or job.status.value, "display": None}]
         details += steps
         db.add(DeviceActionLog(
             id=uuid.uuid4(), company_id=run.company_id, actor_kind="system",
@@ -914,8 +917,11 @@ def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
     configured, through each playbook's own rollback. Returns the first
     rollback child, or None when the run closed at once (nothing to undo).
     Raises RunNotRevertible (409) unless the run is non-dry, SUCCEEDED, v2,
-    with no in-flight run on the service and no later non-dry run (reverting
-    an ACTIVATION after a later SUSPENSION would undo the wrong state)."""
+    an ACTIVATION, with no in-flight run on the service and no later non-dry
+    run (reverting an ACTIVATION after a later SUSPENSION would undo the wrong
+    state). Only ACTIVATION: reverting a SUSPENSION/DEPROVISION/REACTIVATION
+    would flip the device while ClientService.status stays put — nothing here
+    reconciles the service status, only install_state."""
     run = _lock_run(db, run.id)
     if run.dry_run:
         raise RunNotRevertible("a dry run changed nothing")
@@ -923,6 +929,10 @@ def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
         raise RunNotRevertible("only a SUCCEEDED run can be reverted")
     if run.phase is None:
         raise RunNotRevertible("a legacy run has no rollback snapshot")
+    if run.purpose != PURPOSE_ACTIVATION:
+        raise RunNotRevertible(
+            f"only an ACTIVATION run can be reverted (this one is {run.purpose}); "
+            "change the service status instead")
     _guard_service(db, run)
 
     _set_cause(run, REVERTED, None)
