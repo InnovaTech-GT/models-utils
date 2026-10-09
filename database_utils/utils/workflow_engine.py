@@ -1193,7 +1193,7 @@ def _execute_enqueue_provisioning(
     devices and therefore several playbooks. The run queues its first child;
     the worker advances the rest.
 
-    Mode B — explicit playbook (pre-Cycle-3 shape, unchanged):
+    Mode B — explicit playbook (pre-Cycle-3 shape; gated since doc 43 §5.6):
     {
       "playbook_id": "uuid",
       "variables": {"onu_serial": "{{trigger.after.serial_number}}"},
@@ -1240,7 +1240,12 @@ def _execute_enqueue_provisioning_explicit(
     context: dict,
     company_id: UUID,
 ) -> dict:
-    """Mode B: explicit playbook_id (pre-Cycle-3 shape, unchanged behavior)."""
+    """Mode B: explicit playbook_id (pre-Cycle-3 shape).
+
+    Gated (doc 43 §5.6): `gate_failure(dry_run=False)` runs before the job
+    insert, so the kill switch, the device-type opt-out and DRY_RUN_REQUIRED
+    refuse it; a refusal raises and fails the step.
+    """
     from database_utils.models.isp import Playbook, ProvisioningJob, ProvisioningTrigger
     from database_utils.models.isp import ClientService, InventoryItem
     from database_utils.models.crm import Integration
