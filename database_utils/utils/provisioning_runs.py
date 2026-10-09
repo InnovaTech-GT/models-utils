@@ -888,7 +888,8 @@ def advance_run(db: Session, job: ProvisioningJob) -> Optional[ProvisioningJob]:
 
 # --------------------------------------------------------------------- office actions
 
-def _in_flight_for_service(db: Session, run: ProvisioningRun) -> bool:
+def in_flight_for_service(db: Session, run: ProvisioningRun) -> bool:
+    """Another run for `run`'s service is still in flight (any purpose/mode)."""
     return db.execute(
         sa.select(ProvisioningRun.id).where(
             ProvisioningRun.client_service_id == run.client_service_id,
@@ -911,11 +912,36 @@ def _later_run_for_service(db: Session, run: ProvisioningRun) -> bool:
     ).first() is not None
 
 
-def _guard_service(db: Session, run: ProvisioningRun) -> None:
-    if _in_flight_for_service(db, run):
-        raise RunNotRevertible("another run for this service is in flight")
+def _service_refusal(db: Session, run: ProvisioningRun) -> Optional[str]:
+    if in_flight_for_service(db, run):
+        return "another run for this service is in flight"
     if _later_run_for_service(db, run):
-        raise RunNotRevertible("a later run exists for this service")
+        return "a later run exists for this service"
+    return None
+
+
+def revert_refusal(db: Session, run: ProvisioningRun) -> Optional[str]:
+    """Why `revert_run` would refuse `run` (409 RUN_NOT_REVERTIBLE reason), or
+    None. The ONE guard: revert_run raises from it, and the backend's run
+    `actions` (doc 48 §10.3) call it read-only to enable the button."""
+    if run.dry_run:
+        return "a dry run changed nothing"
+    if run.status != ProvisioningJobStatus.SUCCEEDED:
+        return "only a SUCCEEDED run can be reverted"
+    if run.phase is None:
+        return "a legacy run has no rollback snapshot"
+    if run.purpose != PURPOSE_ACTIVATION:
+        return (f"only an ACTIVATION run can be reverted (this one is {run.purpose}); "
+                "change the service status instead")
+    return _service_refusal(db, run)
+
+
+def rollback_retry_refusal(db: Session, run: ProvisioningRun) -> Optional[str]:
+    """Why `retry_rollback` would refuse `run`, or None (see revert_refusal)."""
+    if (run.dry_run or run.status != ProvisioningJobStatus.FAILED
+            or run.error_code != ROLLBACK_INCOMPLETE or run.phase is None):
+        return "only a ROLLBACK_INCOMPLETE run can retry its rollback"
+    return _service_refusal(db, run)
 
 
 def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
@@ -929,17 +955,9 @@ def revert_run(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJob]:
     would flip the device while ClientService.status stays put — nothing here
     reconciles the service status, only install_state."""
     run = _lock_run(db, run.id)
-    if run.dry_run:
-        raise RunNotRevertible("a dry run changed nothing")
-    if run.status != ProvisioningJobStatus.SUCCEEDED:
-        raise RunNotRevertible("only a SUCCEEDED run can be reverted")
-    if run.phase is None:
-        raise RunNotRevertible("a legacy run has no rollback snapshot")
-    if run.purpose != PURPOSE_ACTIVATION:
-        raise RunNotRevertible(
-            f"only an ACTIVATION run can be reverted (this one is {run.purpose}); "
-            "change the service status instead")
-    _guard_service(db, run)
+    reason = revert_refusal(db, run)
+    if reason:
+        raise RunNotRevertible(reason)
 
     _set_cause(run, REVERTED, None)
     run.status = ProvisioningJobStatus.RUNNING
@@ -960,10 +978,9 @@ def retry_rollback(db: Session, run: ProvisioningRun) -> Optional[ProvisioningJo
     or once a later non-dry run exists (a §7.7 corrective run that succeeded
     must not be undone by retrying the old rollback)."""
     run = _lock_run(db, run.id)
-    if (run.dry_run or run.status != ProvisioningJobStatus.FAILED
-            or run.error_code != ROLLBACK_INCOMPLETE or run.phase is None):
-        raise RunNotRevertible("only a ROLLBACK_INCOMPLETE run can retry its rollback")
-    _guard_service(db, run)
+    reason = rollback_retry_refusal(db, run)
+    if reason:
+        raise RunNotRevertible(reason)
 
     plan = run.plan or []
     latest: Dict[str, Optional[ProvisioningJob]] = {

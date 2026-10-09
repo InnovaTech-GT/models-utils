@@ -43,7 +43,9 @@ from database_utils.utils.provisioning_runs import (
     ran_steps,
     repair_stranded_runs,
     retry_rollback,
+    revert_refusal,
     revert_run,
+    rollback_retry_refusal,
 )
 from database_utils.utils.timezone_utils import now_gt
 
@@ -480,6 +482,7 @@ def test_revert_with_nothing_to_roll_back_ends_at_once(db, csr):
 
 
 def _refused(db, run, why):
+    assert why in (revert_refusal(db, run) or ""), "the read-only guard agrees"
     with pytest.raises(RunNotRevertible) as exc:
         revert_run(db, run)
     assert exc.value.code == "RUN_NOT_REVERTIBLE"
@@ -531,8 +534,15 @@ def test_rollback_retry_reruns_only_the_failed_devices(db, csr, listener):
 def test_rollback_retry_guard(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
     _drive(db, run)
+    assert revert_refusal(db, run) is None
+    assert "ROLLBACK_INCOMPLETE" in rollback_retry_refusal(db, run)
     with pytest.raises(RunNotRevertible):
         retry_rollback(db, run)
+
+
+def test_rollback_retry_refusal_allows_an_incomplete_rollback(db, csr):
+    run = _rollback_incomplete(db, csr)
+    assert rollback_retry_refusal(db, run) is None
 
 
 def _rollback_incomplete(db, csr):
