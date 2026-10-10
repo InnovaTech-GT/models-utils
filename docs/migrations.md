@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (106 revisions, head: **`zm1_manual_step`**) — plus
+`alembic/versions/` (107 revisions, head: **`zt3_ztp_always_on`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1085,8 +1085,8 @@ android/ios, `app` CHECK tecnicos, company/user FKs CASCADE, index on
 `user_id`). The literals are pinned to the models by
 `tests/test_zt1_ztp_trigger.py`. Downgrade drops the table, the index and
 `push_state`, **deletes every `ZTP_*` row** (the old CHECK rejects them),
-restores the old CHECK and drops `ztp_enabled`. `tests/pg/test_zt1_pg.py`
-covers the default, the CHECKs, the index, the token constraints and the round
+restores the old CHECK and drops `ztp_enabled` (the column is gone at head since
+`zt3_ztp_always_on`). `tests/pg/test_zt1_pg.py` covers the CHECKs, the index, the token constraints and the round
 trip.
 
 ### `zm1_manual_step` (2026-10-09, manual playbook steps, doc 42d §7)
@@ -1105,6 +1105,26 @@ them expire first), then restores the old predicates, deletes the
 `ZTP_MANUAL_STEP` rows and restores the old CHECK. The enum value stays (PG
 cannot drop one without rebuilding the type). `tests/pg/test_zm1_pg.py` covers
 the lock, the key, the kind and the refusal.
+
+### `zt3_ztp_always_on` (2026-10-09, ZTP always on, founder decision)
+
+On `zm1_manual_step`. **Destructive** (one column): `ALTER TABLE
+provisioning_settings DROP COLUMN IF EXISTS ztp_enabled` under `lock_timeout =
+5s`. ZTP is always on for every tenant: the INSTALL closeout always starts the
+ACTIVATION run, and the safety mechanisms are the provisioning gates
+(`DRY_RUN_REQUIRED`, …) and the env `PROVISIONING_KILL_SWITCH`, never a column.
+Safe to drop because `zt1` only ever reached Railway development, not prod.
+**Order (reverses the usual push-order rule for this cycle):** a backend-erp
+still pinned to a models-utils that maps `ztp_enabled` SELECTs the column on
+every `ProvisioningSettings` load and 500s (UndefinedColumn) once it is gone,
+while code that no longer maps it works fine against a DB that still has it
+(the column has `DEFAULT false`, so inserts that omit it succeed). So: (1) push
+backend-erp `develop` repinned to this revision's SHA (with its `ztp_enabled`
+reads removed) and wait for Backend + ProvisionWorker to deploy; (2) only then
+merge and push models-utils `develop` so `migrate.yml` drops the column. Hand
+this to erp-release as a stated exception. Downgrade re-adds it `BOOLEAN NOT NULL
+DEFAULT false` (metadata-only; every tenant off, the zt1 shape).
+`tests/pg/test_zt3_pg.py` covers the idempotent round trip.
 
 ## Key rules
 
