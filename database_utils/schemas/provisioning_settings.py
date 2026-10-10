@@ -1,9 +1,9 @@
 # schemas/provisioning_settings.py
 """
 Provisioning settings (canon C6 + C9): the tenant's transport axis, ACS
-configuration and ZTP switch — one singleton row per tenant. `enabled` is a
-legacy column and NOT a gate (the gates live in utils/provisioning_gates.py);
-`ztp_enabled` (zt1) turns on the INSTALL-closeout ZTP trigger. Plan:
+configuration — one singleton row per tenant. `enabled` is a legacy column
+and NOT a gate (the gates live in utils/provisioning_gates.py). There is no ZTP
+switch: ZTP is always on (zt3_ztp_always_on dropped zt1's `ztp_enabled`). Plan:
 docs/isp-platform/23-network-config-implementation-plan.md §2.6, extended by
 revision `tr1_transport_axis`, which folded the whole multi-row `network_access`
 table (and its `schemas/network_access.py`, deleted) in here.
@@ -27,7 +27,7 @@ from database_utils.models.isp import DIAL_TARGETS, PROXY_KINDS
 
 
 # Update fields whose provisioning_settings column is NOT NULL.
-_NOT_NULL_FIELDS = frozenset({"enabled", "dial_target", "proxy_kind", "acs_auth_required", "ztp_enabled"})
+_NOT_NULL_FIELDS = frozenset({"enabled", "dial_target", "proxy_kind", "acs_auth_required"})
 
 
 class ProvisioningSettingsUpdate(BaseModel):
@@ -45,8 +45,6 @@ class ProvisioningSettingsUpdate(BaseModel):
     # received the credential locks those CPEs out, and the ACS cannot fix it
     # because fixing it requires a session.
     acs_auth_required: Optional[bool] = None
-    # --- ZTP (zt1, doc 43 §4) ------------------------------------------------
-    ztp_enabled: Optional[bool] = None
 
     @model_validator(mode="after")
     def reject_null_on_not_null_columns(self):
@@ -114,7 +112,6 @@ class ProvisioningSettingsOut(BaseModel):
     # Read-only (see the module docstring).
     acs_base_url: Optional[str] = None
     acs_auth_required: bool = False
-    ztp_enabled: bool = False
     # The tenant's TR-069 Inform credential and, during a rotation window, its
     # successor. Ids only — the secret never round-trips (canon C19); the
     # credential's own fingerprint/has_secret come from DeviceCredentialOut.

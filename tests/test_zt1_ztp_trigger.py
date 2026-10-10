@@ -14,11 +14,7 @@ from database_utils.models import (
     UserPushToken,
     auth,
 )
-from database_utils.models.isp import ProvisioningSettings
-from database_utils.schemas.provisioning_settings import (
-    ProvisioningSettingsOut,
-    ProvisioningSettingsUpdate,
-)
+from database_utils.schemas.provisioning_settings import ProvisioningSettingsUpdate
 
 ZTP_KINDS = ("ZTP_SUCCEEDED", "ZTP_FAILED", "ZTP_NEEDS_ATTENTION", "ZTP_ROLLBACK_INCOMPLETE")
 
@@ -61,9 +57,6 @@ def test_push_pending_index_matches_the_migration():
 
 
 def test_columns():
-    ztp = ProvisioningSettings.__table__.c["ztp_enabled"]
-    assert ztp.nullable is False
-    assert ztp.server_default.arg == "false"
     push = UserNotification.__table__.c["push_state"]
     assert push.nullable is True and push.type.length == 12
     t = UserPushToken.__table__.c
@@ -99,15 +92,11 @@ def test_ztp_kinds_and_push_token_constraints(db):
 
 
 def test_settings_update_rejects_explicit_null_on_not_null_fields():
-    for field in ("ztp_enabled", "enabled", "acs_auth_required", "dial_target", "proxy_kind"):
+    for field in ("enabled", "acs_auth_required", "dial_target", "proxy_kind"):
         with pytest.raises(ValidationError):
             ProvisioningSettingsUpdate(**{field: None})
     # Omitted is fine, and nullable fields still accept an explicit null.
     assert ProvisioningSettingsUpdate().model_dump(exclude_unset=True) == {}
-    assert ProvisioningSettingsUpdate(ztp_enabled=True).model_dump(exclude_unset=True) == {
-        "ztp_enabled": True}
+    assert ProvisioningSettingsUpdate(enabled=True).model_dump(exclude_unset=True) == {
+        "enabled": True}
     ProvisioningSettingsUpdate(proxy_address=None, gateway_host=None, default_inform_interval=None)
-
-
-def test_settings_out_defaults_ztp_off():
-    assert ProvisioningSettingsOut.model_fields["ztp_enabled"].default is False

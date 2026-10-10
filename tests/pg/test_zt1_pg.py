@@ -1,6 +1,5 @@
-"""zt1_ztp_trigger on a real Postgres (doc 43 §4): the switch's server default,
-the extended kinds CHECK, the push-outbox index, user_push_token's constraints,
-and a downgrade that deletes ZTP_* rows first. Run against a database already
+"""zt1_ztp_trigger on a real Postgres (doc 43 §4): the extended kinds CHECK,
+the push-outbox index, user_push_token's constraints, and a downgrade that deletes ZTP_* rows first. Run against a database already
 at `alembic upgrade head`; each test runs in one rolled-back transaction."""
 import os
 import uuid
@@ -63,14 +62,6 @@ def _raises(conn, fn):
     with pytest.raises(sa.exc.DBAPIError):
         fn()
     sp.rollback()
-
-
-def test_ztp_enabled_defaults_off(conn):
-    co, _ = _tenant(conn)
-    _x(conn, "INSERT INTO provisioning_settings (id, created_at, updated_at, company_id) "
-             "VALUES (:id, now(), now(), :co)", id=uuid.uuid4(), co=co)
-    assert _x(conn, "SELECT ztp_enabled FROM provisioning_settings WHERE company_id = :co",
-              co=co).scalar() is False
 
 
 def test_kinds_check_and_push_index(conn):
