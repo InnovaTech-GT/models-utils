@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (106 revisions, head: **`zm1_manual_step`**) — plus
+`alembic/versions/` (107 revisions, head: **`pd2_payment_day_backfill`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1106,6 +1106,19 @@ them expire first), then restores the old predicates, deletes the
 cannot drop one without rebuilding the type). `tests/pg/test_zm1_pg.py` covers
 the lock, the key, the kind and the refusal.
 
+
+### `pd2_payment_day_backfill` (2026-10-09)
+
+On `zm1_manual_step` (a later `zt2` re-points to `pd2`). Data only, no DDL.
+Fills `client.payment_day` (added empty by `pd1_client_payment_day`) for every
+client where it is NULL: the day of month, in Guatemala time, that appears on
+the most dates of the client's PAYMENT ledger rows (`payment.order_id` →
+`order.client_id`). Several payments on the same date count once, payments
+reversed by a REFUND are skipped, and a tie goes to the day of the most recent
+tied date. A client with no usable payment gets 15 (`DEFAULT_DAY`). A value
+already set is never touched, so a re-run is a no-op; the upgrade prints both
+counts and asserts no NULL is left. Downgrade is a no-op (nothing records which
+values it wrote). Feeds the collector route ETL in dispatch-etls.
 ## Key rules
 
 - **Not all migrations are reversible**: `c1e_install_actions` uses
