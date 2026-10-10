@@ -1114,10 +1114,15 @@ provisioning_settings DROP COLUMN IF EXISTS ztp_enabled` under `lock_timeout =
 ACTIVATION run, and the safety mechanisms are the provisioning gates
 (`DRY_RUN_REQUIRED`, …) and the env `PROVISIONING_KILL_SWITCH`, never a column.
 Safe to drop because `zt1` only ever reached Railway development, not prod.
-**Order:** a backend-erp still pinned to a models-utils that maps
-`ztp_enabled` SELECTs the column on every `ProvisioningSettings` load, so the
-backend repin (which also drops its closeout/router reads) must deploy together
-with this migration on Railway dev. Downgrade re-adds it `BOOLEAN NOT NULL
+**Order (reverses the usual push-order rule for this cycle):** a backend-erp
+still pinned to a models-utils that maps `ztp_enabled` SELECTs the column on
+every `ProvisioningSettings` load and 500s (UndefinedColumn) once it is gone,
+while code that no longer maps it works fine against a DB that still has it
+(the column has `DEFAULT false`, so inserts that omit it succeed). So: (1) push
+backend-erp `develop` repinned to this revision's SHA (with its `ztp_enabled`
+reads removed) and wait for Backend + ProvisionWorker to deploy; (2) only then
+merge and push models-utils `develop` so `migrate.yml` drops the column. Hand
+this to erp-release as a stated exception. Downgrade re-adds it `BOOLEAN NOT NULL
 DEFAULT false` (metadata-only; every tenant off, the zt1 shape).
 `tests/pg/test_zt3_pg.py` covers the idempotent round trip.
 

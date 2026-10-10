@@ -1,6 +1,7 @@
 """zt1_ztp_trigger on a real Postgres (doc 43 §4): the extended kinds CHECK,
-the push-outbox index, user_push_token's constraints, and a downgrade that deletes ZTP_* rows first. Run against a database already
-at `alembic upgrade head`; each test runs in one rolled-back transaction."""
+the push-outbox index, user_push_token's constraints, and a downgrade that
+deletes ZTP_* rows first. Run against a database already at
+`alembic upgrade head`; each test runs in one rolled-back transaction."""
 import os
 import uuid
 
