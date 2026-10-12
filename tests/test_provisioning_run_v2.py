@@ -162,11 +162,11 @@ def _nodes(*positions):
 
 
 @pytest.mark.parametrize("purpose,expected", [
-    (PURPOSE_ACTIVATION, [3, 4, 0]),
-    (PURPOSE_REACTIVATION, [3, 4, 0]),
-    ("CUSTOM_THING", [3, 4, 0]),
-    (PURPOSE_SUSPENSION, [0, 4, 3]),
-    (PURPOSE_DEPROVISION, [0, 4, 3]),
+    (PURPOSE_ACTIVATION, [0, 3, 4]),
+    (PURPOSE_REACTIVATION, [0, 3, 4]),
+    ("CUSTOM_THING", [0, 3, 4]),
+    (PURPOSE_SUSPENSION, [0, 3, 4]),
+    (PURPOSE_DEPROVISION, [0, 3, 4]),
 ])
 def test_order_for_purpose(purpose, expected):
     assert [n.position for n in order_for_purpose(_nodes(0, 3, 4), purpose)] == expected
@@ -179,15 +179,15 @@ def test_order_without_a_configured_cpe():
 
 # ------------------------------------------------------------------- the plan
 
-def test_phase_major_build_order_plan(db, csr):
+def test_phase_major_leaf_to_root_plan(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
     assert _shape(run) == [
         ("PRECONDITIONS", "olt"), ("PRECONDITIONS", "router"),
-        ("CONFIGURATION", "olt"), ("CONFIGURATION", "router"), ("CONFIGURATION", "onu"),
+        ("CONFIGURATION", "onu"), ("CONFIGURATION", "olt"), ("CONFIGURATION", "router"),
         ("VERIFICATION", "olt"), ("VERIFICATION", "router"),
     ]
     assert run.phase == "PRECONDITIONS"
-    olt_cfg = run.plan[2]
+    olt_cfg = run.plan[3]
     assert olt_cfg["steps"] == [{"name": "authorize", "label": "AUTHORIZE"},
                                 {"name": "vlan", "label": "VLAN"}]
     assert olt_cfg["device_label"] == "OLT model · OLT-1"
@@ -212,7 +212,7 @@ def test_no_probe_for_the_cpe_in_build_order(db, csr):
 def test_teardown_order(db, csr):
     run = create_run(db, csr.service, PURPOSE_SUSPENSION)
     assert [e["category_key"] for e in run.plan if e["phase"] == "CONFIGURATION"] == [
-        "onu", "router", "olt"], "HG260 -> MikroTik -> OLT"
+        "onu", "olt", "router"], "HG260 -> OLT -> MikroTik"
 
 
 def test_the_definitions_are_snapshotted(db, csr):
@@ -246,7 +246,9 @@ def test_children_carry_their_phase_and_step_budget(db, csr):
     assert first.phase == "PRECONDITIONS" and first.max_attempts == 3
     second = _settle(db, first)
     assert second.phase == "PRECONDITIONS" and second.max_attempts == 3  # probe only
-    cfg = _settle(db, second)
+    onu_cfg = _settle(db, second)
+    assert onu_cfg.phase == "CONFIGURATION" and onu_cfg.max_attempts == 3  # 3 x 1 step
+    cfg = _settle(db, onu_cfg)
     assert cfg.phase == "CONFIGURATION" and cfg.max_attempts == 6  # 3 x 2 steps
     assert run.phase == "CONFIGURATION" and run.status == S.RUNNING
 
@@ -291,11 +293,11 @@ def test_a_cancelled_precondition_cancels_the_run(db, csr):
 
 def test_a_router_configuration_failure_rolls_back_router_then_olt(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
-    nxt = _drive(db, run, fail_at=3, steps=[_entry("add", "FAILED", stage="command")])
+    nxt = _drive(db, run, fail_at=4, steps=[_entry("add", "FAILED", stage="command")])
     assert run.status == S.RUNNING and run.phase == "ROLLBACK"
     assert run.error_code == "CONFIGURATION_FAILED"
     rollback = [e for e in run.plan if e["phase"] == "ROLLBACK"]
-    assert [e["category_key"] for e in rollback] == ["router", "olt"], "the CPE never started"
+    assert [e["category_key"] for e in rollback] == ["router", "olt"], "the ONU has no rollback"
     assert nxt.phase == "ROLLBACK" and nxt.inventory_item_id == csr.core.id
     assert nxt.max_attempts == 5
     assert rollback[0]["ran_steps"] == ["add"]
@@ -317,7 +319,7 @@ def test_nothing_ran_means_failed_with_devices_untouched(db, csr, steps):
 
 def test_a_crash_on_step_zero_still_rolls_the_olt_back(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
-    _drive(db, run, fail_at=2, steps=[], interrupted_step="authorize")
+    _drive(db, run, fail_at=3, steps=[], interrupted_step="authorize")
     rollback = [e for e in run.plan if e["phase"] == "ROLLBACK"]
     assert [e["category_key"] for e in rollback] == ["olt"]
     assert rollback[0]["steps"] == [
@@ -359,7 +361,7 @@ def test_no_rollback_defined_with_zero_entries_is_rollback_incomplete(db, csr):
     csr.playbooks["router-activation"].definition = ROUTER | {"rollback": []}
     db.flush()
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
-    _drive(db, run, fail_at=3, steps=[_entry("add", "FAILED")])
+    _drive(db, run, fail_at=4, steps=[_entry("add", "FAILED")])
     assert run.status == S.FAILED and run.error_code == "ROLLBACK_INCOMPLETE"
     assert "NO_ROLLBACK_DEFINED" in run.error
     assert all(e["phase"] != "ROLLBACK" for e in run.plan)
@@ -367,7 +369,7 @@ def test_no_rollback_defined_with_zero_entries_is_rollback_incomplete(db, csr):
 
 def test_cancel_during_configuration(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
-    _drive(db, run, fail_at=3, status=S.CANCELLED, steps=[])
+    _drive(db, run, fail_at=4, status=S.CANCELLED, steps=[])
     assert run.phase == "ROLLBACK" and run.error_code == "CANCELLED"
     job = _children(db, run)[-1]
     while job is not None:
@@ -676,7 +678,7 @@ def test_stranded_in_preconditions_expires_failed(db, csr):
 def test_stranded_in_configuration_enters_rollback(db, csr):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION)
     job = _children(db, run)[0]
-    for _ in range(2):
+    for _ in range(3):
         job = _settle(db, job)
     job.status = S.SUCCEEDED
     job.log = {"steps": [_entry("authorize"), _entry("vlan")]}

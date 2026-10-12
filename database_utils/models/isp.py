@@ -92,9 +92,9 @@ CANONICAL_PLAYBOOK_PURPOSES = (
 )
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
 
-# Engine v2 (doc 42 §5): purposes that take a service DOWN run the build order
-# reversed (CPE first, core top-down). Every other purpose, custom ones
-# included, runs the build order: core bottom-up, CPE last.
+# Engine v2 (doc 42 §5): purposes that take a service DOWN. Devices run
+# leaf -> root (CPE first, core last) for every purpose; this set only gates
+# the CPE probe and the CPE_NETWORK_PRECONDITION playbook warning.
 TEARDOWN_PURPOSES = frozenset({PURPOSE_SUSPENSION, PURPOSE_DEPROVISION})
 
 # Engine v2 (doc 42 §6, revision pe1): the phase of a run and of each run
@@ -1337,7 +1337,7 @@ class ProvisioningRun(Base):
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
-    # phase-major, build order (core bottom-up, CPE last; teardown reversed),
+    # phase-major, leaf -> root (CPE first, core last, every purpose),
     # ROLLBACK entries appended on failure:
     # [{item_id, playbook_id, playbook_version, category_key, device_label,
     #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]

@@ -22,8 +22,8 @@ run is QUEUED or RUNNING at any moment. Two consequences worth stating plainly:
   never resurrect a finished run or queue a child twice.
 
 Engine v2 (doc 42 §5-§8): the plan is phase-major — every device's
-PRECONDITIONS, then CONFIGURATION, then VERIFICATION, in build order (core
-bottom-up, CPE last; teardown purposes reversed) — one entry and one child per
+PRECONDITIONS, then CONFIGURATION, then VERIFICATION, leaf -> root (CPE ->
+OLT -> core, every purpose) — one entry and one child per
 (device, phase). A precondition failure ends the run with nothing changed; a
 configuration or verification failure APPENDS one ROLLBACK entry per device
 that ran a step, in reverse configuration order, each running that playbook's
@@ -203,14 +203,11 @@ def _child_variables(run: ProvisioningRun, item_id: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------- plan
 
 def order_for_purpose(steps: List[ResolvedNode], purpose: str) -> List[ResolvedNode]:
-    """Configuration order (doc 42 §5). `steps` is resolved.steps, leaf -> root
-    (position 0 = the CPE when it is configured). Build order = core
-    bottom-up, CPE LAST (founder 9.A); SUSPENSION / DEPROVISION run it
-    reversed, so the ONU is de-authorized last (after that it is unreachable)."""
-    cpe = [n for n in steps if n.position == 0]
-    core = [n for n in steps if n.position != 0]
-    build = core + cpe
-    return build[::-1] if purpose in TEARDOWN_PURPOSES else build
+    """Configuration order: the network tree bottom-up, leaf -> root (CPE ->
+    OLT -> core router), for every purpose. `steps` is resolved.steps, already
+    leaf -> root, so this is the identity (founder 2026-10-12, reverting 9.A's
+    core-first build order)."""
+    return list(steps)
 
 
 def _device_label(node: ResolvedNode) -> str:
@@ -218,9 +215,9 @@ def _device_label(node: ResolvedNode) -> str:
     return " · ".join(p for p in (node.device_type_name, ident) if p)
 
 
-def _needs_probe(definition: Dict[str, Any], cpe_in_build_order: bool) -> bool:
+def _needs_probe(definition: Dict[str, Any], cpe_not_up_yet: bool) -> bool:
     """The implicit preflight session probe (doc 42 §6.4)."""
-    if cpe_in_build_order:
+    if cpe_not_up_yet:
         return False
     if not any(s.get("driver") in CLI_DRIVERS
                for key in ("configuration", "verification")
@@ -438,12 +435,12 @@ def create_run(
     ordered, definitions, secret_specs = _plan_checks(
         db, client_service, resolved, purpose, ensure=not dry_run)
 
-    build = purpose not in TEARDOWN_PURPOSES
+    bring_up = purpose not in TEARDOWN_PURPOSES
     plan: List[Dict[str, Any]] = []
     for phase in _FORWARD_PHASES:
         for node in ordered:
             d = definitions[str(node.playbook_id)]
-            probe = phase == PHASE_PRECONDITIONS and _needs_probe(d, build and node.position == 0)
+            probe = phase == PHASE_PRECONDITIONS and _needs_probe(d, bring_up and node.position == 0)
             steps = job_steps(d, phase, probe=probe)
             if steps:
                 plan.append(_plan_entry(node, phase, steps, probe))
