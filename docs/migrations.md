@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (107 revisions, head: **`zt3_ztp_always_on`**) — plus
+`alembic/versions/` (108 revisions, head: **`pd2_payment_day_backfill`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1125,6 +1125,19 @@ merge and push models-utils `develop` so `migrate.yml` drops the column. Hand
 this to erp-release as a stated exception. Downgrade re-adds it `BOOLEAN NOT NULL
 DEFAULT false` (metadata-only; every tenant off, the zt1 shape).
 `tests/pg/test_zt3_pg.py` covers the idempotent round trip.
+
+### `pd2_payment_day_backfill` (2026-10-09)
+
+On `zt3_ztp_always_on`. Data only, no DDL.
+Fills `client.payment_day` (added empty by `pd1_client_payment_day`) for every
+client where it is NULL: the day of month, in Guatemala time, that appears on
+the most dates of the client's PAYMENT ledger rows (`payment.order_id` →
+`order.client_id`). Several payments on the same date count once, payments
+reversed by a REFUND are skipped, and a tie goes to the day of the most recent
+tied date. A client with no usable payment gets 15 (`DEFAULT_DAY`). A value
+already set is never touched, so a re-run is a no-op; the upgrade prints both
+counts and asserts no NULL is left. Downgrade is a no-op (nothing records which
+values it wrote). Feeds the collector route ETL in dispatch-etls.
 
 ## Key rules
 
