@@ -10,7 +10,7 @@ def _pd2():
 def test_chain_position():
     mod = _pd2()
     assert mod.revision == "pd2_payment_day_backfill"
-    assert mod.down_revision == "zm1_manual_step"
+    assert mod.down_revision == "zt3_ztp_always_on"
 
 
 def test_default_day_and_timezone():

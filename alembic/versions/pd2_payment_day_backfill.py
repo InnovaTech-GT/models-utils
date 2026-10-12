@@ -1,7 +1,7 @@
 """Backfill client.payment_day from each client's payment history
 
 Revision ID: pd2_payment_day_backfill
-Revises: zm1_manual_step
+Revises: zt3_ztp_always_on
 Create Date: 2026-10-09
 
 Data only, no DDL. pd1 added client.payment_day empty for every client; the
@@ -29,7 +29,7 @@ from alembic import op
 from sqlalchemy.sql import text
 
 revision: str = "pd2_payment_day_backfill"
-down_revision: Union[str, Sequence[str], None] = "zm1_manual_step"
+down_revision: Union[str, Sequence[str], None] = "zt3_ztp_always_on"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

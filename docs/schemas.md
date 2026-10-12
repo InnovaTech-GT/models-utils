@@ -23,7 +23,7 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
 | CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration` |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
-| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`; `ztp_enabled` on `Update` (optional) and `Out` (default false) since `zt1`, doc 43. `ProvisioningSettingsUpdate` rejects an explicit `null` for every NOT NULL column — `enabled`, `dial_target`, `proxy_kind`, `acs_auth_required`, `ztp_enabled` — with a 422 instead of the router's 500; omitted fields stay omitted) |
+| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`; no ZTP switch: ZTP is always on, `zt1`'s `ztp_enabled` was removed in 6.7.0 / `zt3_ztp_always_on` (a stale `ztp_enabled` key in a PATCH is ignored). `ProvisioningSettingsUpdate` rejects an explicit `null` for every NOT NULL column — `enabled`, `dial_target`, `proxy_kind`, `acs_auth_required` — with a 422 instead of the router's 500; omitted fields stay omitted) |
 | Workflow | `workflow` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
 
