@@ -37,3 +37,17 @@ def test_integration_defaults_and_schema_round_trip(db):
     assert IntegrationUpdate(enabled=False).model_dump(exclude_unset=True) == {"enabled": False}
     with pytest.raises(ValueError):
         IntegrationUpdate(provider="SLACK")
+
+
+def test_whatsapp_app_secret_is_masked(db):
+    integ = Integration(
+        id=uuid.uuid4(), company_id=CO_A, name="WA", base_url="https://x",
+        provider="WHATSAPP_BUSINESS",
+        credentials={"token": "t", "app_secret": "s", "verify_token": "v", "phone_number_id": "1"},
+    )
+    db.add(integ)
+    db.commit()
+    creds = IntegrationOut.from_orm_masked(integ).credentials
+    assert creds["token"] == "***" and creds["app_secret"] == "***"
+    # verify_token no es secreto: el tenant necesita verlo para configurar Meta
+    assert creds["verify_token"] == "v" and creds["phone_number_id"] == "1"
