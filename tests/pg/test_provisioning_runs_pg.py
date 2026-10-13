@@ -81,7 +81,7 @@ def seed(engine):
           "is_active, version, last_dry_run_version) VALUES (:id, now(), now(), :co, 'pc pb', "
           "'{\"configuration\": [{\"name\": \"s\", \"driver\": \"simulator\", "
           "\"template\": \"ok\"}]}', true, 1, 1)", id=pb, co=co)
-    # Build order puts the core (position 1) first and the CPE last.
+    # Leaf -> root: the CPE (position 0) first, the core last.
     resolution = ResolvedProvisioning(steps=[
         ResolvedNode(position=p, item_id=item, serial_number=None, mac_address=None,
                      device_type_id=dtype, device_type_name="pc type", category_key=k,
