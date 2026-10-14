@@ -399,11 +399,12 @@ def create_run(
     extra_variables: Optional[Dict[str, Any]] = None,
     resolution: Optional[ResolvedProvisioning] = None,
     mode: str = ProvisioningRunMode.AUTOMATIC.value,
-    guided_timeout_seconds: int = GUIDED_TIMEOUT_DEFAULT,
+    guided_timeout_seconds: Optional[int] = GUIDED_TIMEOUT_DEFAULT,
 ) -> ProvisioningRun:
     """Resolve the path and open a run with only its first child queued.
 
-    `mode` / `guided_timeout_seconds` (doc 50) are stored on the run; an
+    `mode` / `guided_timeout_seconds` (doc 50) are stored on the run (a None
+    timeout means GUIDED_TIMEOUT_DEFAULT); an
     unknown mode or a timeout outside GUIDED_TIMEOUT_MIN..MAX raises
     ValueError before anything is resolved or written. A dry run keeps the
     stored mode but never pauses (the executor's call).
@@ -438,6 +439,8 @@ def create_run(
     ProvisioningGateError (doc 43 §5.6) before anything is written.
     """
     mode = ProvisioningRunMode(mode).value  # ValueError on an unknown mode
+    if guided_timeout_seconds is None:  # ClientServiceProvisionIn's "run default"
+        guided_timeout_seconds = GUIDED_TIMEOUT_DEFAULT
     if not GUIDED_TIMEOUT_MIN <= guided_timeout_seconds <= GUIDED_TIMEOUT_MAX:
         raise ValueError(
             f"guided_timeout_seconds must be {GUIDED_TIMEOUT_MIN}-{GUIDED_TIMEOUT_MAX}, "

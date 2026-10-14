@@ -74,3 +74,11 @@ def test_provision_in_accepts_guided():
     assert body.mode == "GUIDED" and body.guided_timeout_seconds == 300
     with pytest.raises(ValidationError):
         ClientServiceProvisionIn(mode="STEPWISE")
+
+
+def test_create_run_none_timeout_means_default(db, plant):
+    # ClientServiceProvisionIn.guided_timeout_seconds is Optional (None = the
+    # run default), so a caller forwarding the body field as-is must not 500.
+    run = create_run(db, plant.service, PURPOSE_ACTIVATION,
+                     mode="GUIDED", guided_timeout_seconds=None)
+    assert run.guided_timeout_seconds == GUIDED_TIMEOUT_DEFAULT
