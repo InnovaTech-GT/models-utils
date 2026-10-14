@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (108 revisions, head: **`pd2_payment_day_backfill`**) — plus
+`alembic/versions/` (109 revisions, head: **`gr1_guided_runs`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1138,6 +1138,16 @@ tied date. A client with no usable payment gets 15 (`DEFAULT_DAY`). A value
 already set is never touched, so a re-run is a no-op; the upgrade prints both
 counts and asserts no NULL is left. Downgrade is a no-op (nothing records which
 values it wrote). Feeds the collector route ETL in dispatch-etls.
+
+### `gr1_guided_runs` (2026-10-14) — models-utils 6.8.0
+
+On `pd2_payment_day_backfill`. Additive (guided provisioning runs, doc 50):
+`provisioning_run.mode VARCHAR(16) NOT NULL DEFAULT 'AUTOMATIC'` and
+`provisioning_run.guided_timeout_seconds INTEGER NOT NULL DEFAULT 1800`, so
+every existing run reads AUTOMATIC / 1800 and code that never writes them keeps
+working. No PG enum and no CHECK: `ProvisioningRunMode` and the 300–14400 range
+are enforced by `create_run`. `ADD COLUMN IF NOT EXISTS`, `lock_timeout 5s`,
+post-upgrade assert; downgrade drops both columns (reversible).
 
 ## Key rules
 
