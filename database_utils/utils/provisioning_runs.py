@@ -69,6 +69,7 @@ from database_utils.models.isp import (
     ProvisioningJob,
     ProvisioningJobStatus,
     ProvisioningRun,
+    ProvisioningRunMode,
     ProvisioningTrigger,
 )
 from database_utils.schemas.playbook import (
@@ -124,6 +125,12 @@ STRANDED_RUN_EXPIRED = "STRANDED_RUN_EXPIRED"
 ROLLBACK_INCOMPLETE = "ROLLBACK_INCOMPLETE"
 REVERTED = "REVERTED"
 NO_ROLLBACK_DEFINED = "NO_ROLLBACK_DEFINED"
+
+# Guided runs (doc 50): bounds of run.guided_timeout_seconds, the deadline of
+# each guided pause. ClientServiceProvisionIn validates the same range.
+GUIDED_TIMEOUT_MIN = 300
+GUIDED_TIMEOUT_MAX = 14400
+GUIDED_TIMEOUT_DEFAULT = 1800
 
 # Per-step attempt budget by phase (doc 42 §8.2.3). A child's max_attempts
 # (the claim-time backstop) is this times its step count.
@@ -391,8 +398,15 @@ def create_run(
     idempotency_key: Optional[str] = None,
     extra_variables: Optional[Dict[str, Any]] = None,
     resolution: Optional[ResolvedProvisioning] = None,
+    mode: str = ProvisioningRunMode.AUTOMATIC.value,
+    guided_timeout_seconds: int = GUIDED_TIMEOUT_DEFAULT,
 ) -> ProvisioningRun:
     """Resolve the path and open a run with only its first child queued.
+
+    `mode` / `guided_timeout_seconds` (doc 50) are stored on the run; an
+    unknown mode or a timeout outside GUIDED_TIMEOUT_MIN..MAX raises
+    ValueError before anything is resolved or written. A dry run keeps the
+    stored mode but never pauses (the executor's call).
 
     `resolution` may be passed by a caller that already resolved (the manual
     endpoint resolves first so it can 422 with the error list before touching
@@ -423,6 +437,11 @@ def create_run(
     A live run whose path fails a provisioning gate raises
     ProvisioningGateError (doc 43 §5.6) before anything is written.
     """
+    mode = ProvisioningRunMode(mode).value  # ValueError on an unknown mode
+    if not GUIDED_TIMEOUT_MIN <= guided_timeout_seconds <= GUIDED_TIMEOUT_MAX:
+        raise ValueError(
+            f"guided_timeout_seconds must be {GUIDED_TIMEOUT_MIN}-{GUIDED_TIMEOUT_MAX}, "
+            f"got {guided_timeout_seconds}")
     resolved = resolution or resolve_provisioning(db, client_service, purpose)
     gate_errors = run_gate_failures(db, resolved, dry_run)
     if gate_errors:
@@ -461,6 +480,8 @@ def create_run(
         client_service_id=client_service.id,
         purpose=purpose,
         dry_run=dry_run,
+        mode=mode,
+        guided_timeout_seconds=guided_timeout_seconds,
         status=ProvisioningJobStatus.QUEUED,
         phase=plan[0]["phase"] if plan else None,
         path=[asdict(n) | {"item_id": str(n.item_id),
@@ -1009,6 +1030,9 @@ def create_or_get_run(
     **kw: Any,
 ) -> Tuple[ProvisioningRun, bool]:
     """create_run, deduped on the run key: returns (run, created).
+
+    `**kw` goes to create_run unchanged — mode / guided_timeout_seconds
+    (doc 50) included. A deduped in-flight run keeps its own mode.
 
     An in-flight run with the same key wins and comes back with created=False.
     The INSERT runs in a SAVEPOINT, so losing the race to a concurrent producer

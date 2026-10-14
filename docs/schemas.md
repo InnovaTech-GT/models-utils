@@ -200,7 +200,14 @@ matters when reading `__init__.py`:
 > does not have.
 >
 > No Pydantic schema exists for `ProvisioningRun` — backend-erp shapes the
-> `/automations/runs` response itself.
+> `/automations/runs` response itself (so it, not models-utils, exposes the
+> run's `mode` / `guided_timeout_seconds`).
+>
+> **Guided runs (6.8.0, doc 50):** `ClientServiceProvisionIn` (the
+> `/provision` body) carries `mode: Literal["AUTOMATIC","GUIDED"] = "AUTOMATIC"`
+> and `guided_timeout_seconds: Optional[int]` (300–14400, `None` = the run
+> default 1800). backend-erp's `ClientServiceLifecycleIn` lives in its own
+> router and adds the same two fields there.
 
 ### Port-level topology (4.4.0, doc 40, revision `pt1_port_topology`)
 
