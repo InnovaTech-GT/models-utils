@@ -122,7 +122,7 @@ def enqueue_connectivity_check(
     """The one job-construction path for a core_connectivity_check job (doc
     25 §5.1, spec N10 nat_mode selection) — shared by the manual "test
     connection" button (`routers/core_devices.py`) and the hourly sweep
-    (`enqueue_connectivity_sweep` below). Resolves protocol/nat_mode from the
+    (the worker's `enqueue_connectivity_sweep`). Resolves protocol/nat_mode from the
     item and its company's provisioning_settings row exactly once, so
     the two callers can never disagree on which playbook a device gets.
 
