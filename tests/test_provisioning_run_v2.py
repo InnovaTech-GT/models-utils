@@ -21,6 +21,7 @@ from database_utils.models.isp import (
     PURPOSE_REACTIVATION,
     PURPOSE_SUSPENSION,
     DeviceActionLog,
+    ProvisioningEvent,
     ProvisioningJob,
     ProvisioningRun,
 )
@@ -29,9 +30,9 @@ from database_utils.models.isp import (
 )
 from database_utils.schemas.playbook import SESSION_PROBE_STEP
 from database_utils.utils import provisioning_runs as pr
+from database_utils.utils.provisioning_events import RUN_CLOSED
 from database_utils.utils.provisioning_resolution import ResolutionError, ResolvedNode
 from database_utils.utils.provisioning_runs import (
-    RUN_CLOSED_LISTENERS,
     RunNotRevertible,
     advance_run,
     append_rollback,
@@ -138,12 +139,14 @@ def _shape(run):
 
 
 @pytest.fixture()
-def listener():
-    calls = []
-    fn = lambda db, run: calls.append((run.id, run.status, run.error_code))  # noqa: E731
-    RUN_CLOSED_LISTENERS.append(fn)
-    yield calls
-    RUN_CLOSED_LISTENERS.remove(fn)
+def listener(db):
+    """The RUN_CLOSED outbox rows close_run wrote, in id order, as
+    (run_id, status, error_code) — what the old in-process listener saw."""
+    def closed():
+        rows = db.execute(sa.select(ProvisioningEvent).where(ProvisioningEvent.kind == RUN_CLOSED)
+                          .order_by(ProvisioningEvent.id)).scalars().all()
+        return [(e.run_id, S(e.payload["status"]), e.payload["error_code"]) for e in rows]
+    return closed
 
 
 @pytest.fixture()
@@ -262,7 +265,7 @@ def test_all_green_succeeds(db, csr, listener):
     assert run.status == S.SUCCEEDED and run.error_code is None
     assert len(_children(db, run)) == 7
     assert csr.service.path_changed_at is None
-    assert listener == [(run.id, S.SUCCEEDED, None)]
+    assert listener() == [(run.id, S.SUCCEEDED, None)]
 
 
 def test_a_precondition_failure_ends_the_run_without_rollback(db, csr, listener):
@@ -273,7 +276,7 @@ def test_a_precondition_failure_ends_the_run_without_rollback(db, csr, listener)
     assert run.error == "OLT model · OLT-1 · ONU-VISIBLE: ONU no visible"
     assert all(e["phase"] != "ROLLBACK" for e in run.plan)
     assert len(_children(db, run)) == 1
-    assert listener == [(run.id, S.FAILED, "PRECONDITION_FAILED")]
+    assert listener() == [(run.id, S.FAILED, "PRECONDITION_FAILED")]
 
 
 def test_run_error_never_carries_the_raw_driver_error(db, csr):
@@ -338,7 +341,7 @@ def test_a_verification_failure_rolls_back_every_configured_device(db, csr, list
     while nxt is not None:
         nxt = _settle(db, nxt)
     assert run.status == S.ROLLED_BACK and run.error_code == "VERIFICATION_FAILED"
-    assert listener == [(run.id, S.ROLLED_BACK, "VERIFICATION_FAILED")]
+    assert listener() == [(run.id, S.ROLLED_BACK, "VERIFICATION_FAILED")]
 
 
 def test_a_failed_rollback_continues_and_ends_rollback_incomplete(db, csr, listener):
@@ -353,7 +356,7 @@ def test_a_failed_rollback_continues_and_ends_rollback_incomplete(db, csr, liste
     logs = db.execute(sa.select(DeviceActionLog)).scalars().all()
     assert [log.action for log in logs] == ["rollback_incomplete"]
     assert logs[0].provisioning_job_id == rb.id
-    assert listener[-1] == (run.id, S.FAILED, "ROLLBACK_INCOMPLETE")
+    assert listener()[-1] == (run.id, S.FAILED, "ROLLBACK_INCOMPLETE")
 
 
 def test_no_rollback_defined_with_zero_entries_is_rollback_incomplete(db, csr):
@@ -417,21 +420,14 @@ def test_legacy_plan_entries_follow_the_old_rule(db, csr):
 def test_close_run_skips_listeners_for_dry_runs(db, csr, listener):
     run = create_run(db, csr.service, PURPOSE_ACTIVATION, dry_run=True)
     close_run(db, run, S.FAILED)
-    assert listener == []
+    assert listener() == []
 
 
-def test_a_raising_listener_keeps_the_outcome(db, csr, listener):
-    def boom(db, run):
-        raise RuntimeError("listener broke")
-
-    RUN_CLOSED_LISTENERS.insert(0, boom)
-    try:
-        run = create_run(db, csr.service, PURPOSE_ACTIVATION)
-        close_run(db, run, S.FAILED, "PRECONDITION_FAILED", "x")
-    finally:
-        RUN_CLOSED_LISTENERS.remove(boom)
+def test_close_run_emits_one_run_closed_event(db, csr, listener):
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    close_run(db, run, S.FAILED, "PRECONDITION_FAILED", "x")
     assert run.status == S.FAILED and run.finished_at is not None
-    assert listener == [(run.id, S.FAILED, "PRECONDITION_FAILED")]
+    assert listener() == [(run.id, S.FAILED, "PRECONDITION_FAILED")]
 
 
 # ------------------------------------------------------------------- append / revert / retry
@@ -469,7 +465,7 @@ def test_revert_a_succeeded_run(db, csr, listener):
     while job is not None:
         job = _settle(db, job)
     assert run.status == S.ROLLED_BACK and run.error_code == "REVERTED"
-    assert listener[-1] == (run.id, S.ROLLED_BACK, "REVERTED")
+    assert listener()[-1] == (run.id, S.ROLLED_BACK, "REVERTED")
 
 
 def test_revert_with_nothing_to_roll_back_ends_at_once(db, csr):
@@ -529,7 +525,7 @@ def test_rollback_retry_reruns_only_the_failed_devices(db, csr, listener):
     assert first.inventory_item_id == csr.olt.id
     assert _settle(db, first) is None
     assert run.status == S.ROLLED_BACK and run.error_code == "VERIFICATION_FAILED"
-    assert [c[1:] for c in listener] == [(S.FAILED, "ROLLBACK_INCOMPLETE"),
+    assert [c[1:] for c in listener()] == [(S.FAILED, "ROLLBACK_INCOMPLETE"),
                                          (S.ROLLED_BACK, "VERIFICATION_FAILED")]
 
 

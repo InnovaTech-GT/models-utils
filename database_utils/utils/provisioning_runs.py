@@ -29,7 +29,7 @@ configuration or verification failure APPENDS one ROLLBACK entry per device
 that ran a step, in reverse configuration order, each running that playbook's
 own rollback (append_rollback). Every child executes the definition snapshot
 in frames["definitions"], never the live row. close_run is the only writer of
-a terminal run status and fires RUN_CLOSED_LISTENERS (doc 42 §6.5). Office
+a terminal run status and emits RUN_CLOSED (doc 42 §6.5; outbox since R2). Office
 actions: revert_run ("Revertir") and retry_rollback ("Reintentar reversión").
 A retry after a failure is a NEW run on the same key (create_or_get_run).
 
@@ -48,7 +48,7 @@ import secrets as _secrets
 import uuid
 from dataclasses import asdict
 from datetime import timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import sqlalchemy as sa
 from loguru import logger
@@ -84,6 +84,7 @@ from database_utils.schemas.playbook import (
 from database_utils.utils import crypto
 from database_utils.utils.acs_bootstrap import acs_values, reads_acs
 from database_utils.utils.provisioning_gates import ProvisioningGateError, run_gate_failures
+from database_utils.utils.provisioning_events import RUN_CLOSED, emit_event
 from database_utils.utils.provisioning_resolution import (
     ResolutionError,
     ResolvedNode,
@@ -141,14 +142,6 @@ PHASE_MAX_ATTEMPTS = {
     PHASE_ROLLBACK: 5,
 }
 _FORWARD_PHASES = (PHASE_PRECONDITIONS, PHASE_CONFIGURATION, PHASE_VERIFICATION)
-
-# Run-closed hooks (doc 42 §6.5). close_run calls each with (db, run) for a
-# non-dry run, inside its own SAVEPOINT; a raising listener is logged and
-# rolled back alone, the run outcome is kept. backend-erp's
-# provisioning/run_events.py registers the one listener at import.
-# ponytail: an in-process list, not an outbox table; rows are produced eagerly.
-RUN_CLOSED_LISTENERS: List[Callable[[Session, ProvisioningRun], None]] = []
-
 
 class RunNotRevertible(Exception):
     """409 RUN_NOT_REVERTIBLE from revert_run / retry_rollback (doc 42 §7.6)."""
@@ -518,8 +511,11 @@ def close_run(db: Session, run: ProvisioningRun, status: ProvisioningJobStatus,
               error_code: Optional[str] = None, error: Optional[str] = None) -> None:
     """The ONLY writer of a terminal run status (doc 42 §6.5). Sets status,
     finished_at and (when given) error_code / error, then — for a non-dry run —
-    calls every RUN_CLOSED_LISTENERS entry with (db, run), each in its own
-    SAVEPOINT. A listener that raises is logged and rolled back alone."""
+    emits one RUN_CLOSED `provisioning_event` in the same transaction
+    (worker split R2; it replaced the in-process RUN_CLOSED_LISTENERS).
+    The payload records the status / error_code this close wrote, since a
+    run can close more than once (revert, rollback retry). backend-erp's
+    event consumer classifies and settles it."""
     run.status = status
     if error_code is not None:
         run.error_code = error_code
@@ -527,14 +523,9 @@ def close_run(db: Session, run: ProvisioningRun, status: ProvisioningJobStatus,
         run.error = error
     run.finished_at = now_gt()
     db.flush()
-    if run.dry_run:
-        return
-    for listener in list(RUN_CLOSED_LISTENERS):
-        try:
-            with db.begin_nested():
-                listener(db, run)
-        except Exception:  # noqa: BLE001 — the run outcome must survive a listener
-            logger.bind(run_id=str(run.id)).exception("close_run: run-closed listener failed")
+    if not run.dry_run:
+        emit_event(db, RUN_CLOSED, run=run,
+                   payload={"status": run.status.value, "error_code": run.error_code})
 
 
 def _merge_outputs(run: ProvisioningRun, job: ProvisioningJob, entry: Dict[str, Any]) -> None:

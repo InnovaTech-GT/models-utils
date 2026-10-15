@@ -23,7 +23,7 @@ tokens, backend-erp validates them via `jwt_utils`).
 
 | Consumer | How | What it uses |
 |---|---|---|
-| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint); **6.9.0**: the shared playbook language, `finish_job`/`fail_parked`, connectivity-job construction and the GenieACS NBI read helpers ([playbook-language.md](playbook-language.md)), imported by both the API and the provisioning worker |
+| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint); **6.9.0**: the shared playbook language, `finish_job`/`fail_parked`, connectivity-job construction and the GenieACS NBI read helpers ([playbook-language.md](playbook-language.md)), imported by both the API and the provisioning worker; **6.10.0**: the `provisioning_event` outbox: the worker writes it (via `close_run`, `finish_job`, `emit_event`), the API drains it and runs the business follow-ons |
 | `auth-erp` | same SHA-pinned dependency | Auth models/schemas, `jwt_utils`, **email service + templates**, invitation/verification/reset tokens, SaaS billing models |
 | `cron-erp` | pip dependency | `RecurrenceEnum` / client_service billing (legacy `RecurringOrder` dropped by `ld1_legacy_drop`) |
 | `frontend-erp` | none (indirect) | Consumes JSON shaped by these Pydantic schemas via backend proxies |

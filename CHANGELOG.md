@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-On `develop` (Railway development, head `pc1_provisioning_claim_token`; this branch adds `gr1_guided_runs`), not yet
+On `develop` (Railway development, head `pc1_provisioning_claim_token`; this branch adds `gr1_guided_runs` and `pw1_provisioning_event`), not yet
 on `main`: the v1.0.1 cycle.
 
 ### Added
+- **6.10.0** - Provisioning worker split, R2: the provisioning outbox (Alembic `pw1_provisioning_event` on `gr1_guided_runs`, additive; downgrade drops the table). **Schema:** new `provisioning_event` (`id` bigserial, `company_id` FK company ON DELETE CASCADE, `kind` VARCHAR(32), `run_id`/`job_id` plain UUIDs with no FK, `payload` JSONB, `created_at` default now(), `processed_at`, `attempts` default 0, `last_error`) and the partial index `ix_provisioning_event_pending (id) WHERE processed_at IS NULL`; model `ProvisioningEvent`. **New** `utils/provisioning_events.py`: `emit_event(db, kind, *, job=None, run=None, company_id=None, payload=None)` (adds and flushes, never commits; `ValueError` on an unknown kind or no company) and the kinds `RUN_CLOSED`, `MANUAL_WAITING`, `JOB_FINISHED`, `JOB_UPDATED`, `INSTALL_STATE_STALE`. **Behaviour changes (consumers must repin together):**
+  - `close_run` emits one `RUN_CLOSED` event (payload `{status, error_code}`) for a non-dry run, in place of calling listeners. `RUN_CLOSED_LISTENERS` is **deleted**; backend-erp's `provisioning/run_events.py` registration must go in the same repin.
+  - `finish_job` drops `extra_follow_ons`. Its last follow-on, after `advance_run`, emits `JOB_FINISHED` (payload `{status, error, probed, playbook_name, client_service_id}`), so a final child's `RUN_CLOSED` always has the smaller id. `fail_parked` drops `extra_follow_ons` too.
+  - `stamp_connectivity` drops `promote` and only stamps `mgmt_last_check_at`/`mgmt_last_check_ok`; it never changes `inventory_item.status`. The IN_STOCK/RESERVED → INSTALLED promotion and the install_state recompute move to backend-erp's `JOB_FINISHED` handler.
+
+  New tests `test_provisioning_events.py` and `pg/test_pw1_pg.py` (defaults, partial index, company FK, idempotent downgrade/upgrade); `test_provisioning_run_v2.py` reads `RUN_CLOSED` rows instead of a listener; `test_finish_job.py` follows the new seams.
 - **6.9.0** - Provisioning worker split, R1: shared pure moves. There is no schema change and no behaviour change. Code from backend-erp was moved verbatim, and only its imports changed, so the API and the provisioning worker (which moves to its own repo, ADR-011) import one implementation and neither imports the other. New modules in `database_utils/utils/`:
   - `playbook_template.py`: all of backend `provisioning/renderer.py`.
   - `playbook_render.py`: the executor's render half and `dry_run_playbook`, plus `redaction.redact_secrets` and the guided helpers. `re2` is imported inside `_render_regex`. `RenderError` and `merge_captures` are public now; the `_`-prefixed aliases stay.

@@ -26,7 +26,7 @@ ISP platform. Start with the [repo README](../README.md) for a quickstart.
 | [workflow-models.md](workflow-models.md) | Workflow automation models: workflows, triggers, step DAG, executions |
 | [workflow-engine.md](workflow-engine.md) | Engine semantics: trigger matching, DAG execution, the two `ENQUEUE_PROVISIONING` modes, provisioning resolution |
 | [schemas.md](schemas.md) | The 37 Pydantic v2 schema modules |
-| [playbook-language.md](playbook-language.md) | **6.9.0, provisioning worker split R1**: the playbook language (renderer, render-only preview, guided, redaction, driver matrix, failure codes), `finish_job` / `fail_parked`, connectivity-job construction and the read-side GenieACS NBI helpers, moved from backend-erp so the API and the worker share one implementation |
+| [playbook-language.md](playbook-language.md) | **6.9.0, provisioning worker split R1**: the playbook language (renderer, render-only preview, guided, redaction, driver matrix, failure codes), `finish_job` / `fail_parked`, connectivity-job construction and the read-side GenieACS NBI helpers, moved from backend-erp so the API and the worker share one implementation; **6.10.0 (R2)**: the `provisioning_event` outbox (`emit_event`, `RUN_CLOSED` / `JOB_FINISHED`) |
 | [utilities.md](utilities.md) | The 37 shared utility modules (network graph, provisioning resolution + runs, JWT, permissions, audit, SSRF, OTEL, ...) |
 | [email-service.md](email-service.md) | Transactional email service, SMTP implementation, Jinja2 templates |
 | [migrations.md](migrations.md) | Alembic workflow, revision chains, seed scripts |

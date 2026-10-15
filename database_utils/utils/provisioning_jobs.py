@@ -6,31 +6,28 @@ on a parked guided/manual step).
 Moved from backend-erp provisioning/worker.py (provisioning worker split, R1):
 `_finish` -> `finish_job`, `_write_device_action_log` ->
 `write_device_action_log`, `_stamp_connectivity` -> `stamp_connectivity`,
-`fail_parked`. R1 is behaviour-neutral: the caller injects what is still
-business logic (the install_state recompute via `extra_follow_ons`, the
-INSTALLED promotion via `stamp_connectivity(promote=)`); R2 removes both
-seams and emits `JOB_FINISHED` instead. The caller always commits.
+`fail_parked`. R2 (6.10.0): the business follow-ons left this module. Every
+terminal transition emits a `JOB_FINISHED` provisioning_event, and
+backend-erp's event consumer runs the install_state recompute and the
+IN_STOCK/RESERVED -> INSTALLED promotion from it. The caller always commits.
 """
 from __future__ import annotations
 
-from typing import Callable, Iterable, Optional, Tuple
+from typing import Optional
 
 from loguru import logger
 
 from database_utils.models.isp import (
     DeviceActionLog,
     InventoryItem,
-    InventoryItemStatus,
     ProvisioningJob,
     ProvisioningJobStatus,
     ProvisioningRun,
 )
 from database_utils.utils.provisioning_gates import CORE_CONNECTIVITY_PLAYBOOK_NAMES
+from database_utils.utils.provisioning_events import JOB_FINISHED, emit_event
 from database_utils.utils.provisioning_runs import advance_run, parked_step
 from database_utils.utils.timezone_utils import now_gt
-
-# (name, fn(db, job)): one SAVEPOINT-isolated terminal follow-on.
-FollowOn = Tuple[str, Callable]
 
 
 def write_device_action_log(db, job: ProvisioningJob) -> None:
@@ -64,12 +61,12 @@ def write_device_action_log(db, job: ProvisioningJob) -> None:
     db.flush()
 
 
-def stamp_connectivity(db, job: ProvisioningJob, *, promote: bool = True) -> None:
+def stamp_connectivity(db, job: ProvisioningJob) -> None:
     """Cycle 7 (doc 25 §5.3): a job running a core_connectivity_check playbook
     stamps inventory_item.mgmt_last_check_at / mgmt_last_check_ok
-    (ok = SUCCEEDED). `promote` keeps the IN_STOCK/RESERVED -> INSTALLED
-    promotion below; R1 keeps it on (unchanged behaviour), R2 moves it to the
-    backend's event consumer and drops the flag."""
+    (ok = SUCCEEDED). Timestamps only: it never touches `status`. The
+    IN_STOCK/RESERVED -> INSTALLED promotion of a core device that answered
+    moved to backend-erp's JOB_FINISHED handler (R2)."""
     playbook_name = job.playbook.name if job.playbook else None
     if playbook_name not in CORE_CONNECTIVITY_PLAYBOOK_NAMES or job.inventory_item_id is None:
         return
@@ -78,21 +75,11 @@ def stamp_connectivity(db, job: ProvisioningJob, *, promote: bool = True) -> Non
         return
     item.mgmt_last_check_at = now_gt()
     item.mgmt_last_check_ok = job.status == ProvisioningJobStatus.SUCCEEDED
-    # A shared core device that answers a connectivity check is deployed
-    # infrastructure, not stock — promote it to INSTALLED so the graph
-    # and the inventory agree about where it is. Only ever promotes from
-    # the pre-deployment stock states; never touches a device already in
-    # service/repair/etc.
-    if promote and item.mgmt_last_check_ok and item.status in (
-        InventoryItemStatus.IN_STOCK,
-        InventoryItemStatus.RESERVED,
-    ):
-        item.status = InventoryItemStatus.INSTALLED
     db.flush()
 
 
 def finish_job(db, job: ProvisioningJob, status: ProvisioningJobStatus, error: Optional[str],
-               *, probed: bool, extra_follow_ons: Iterable[FollowOn] = ()) -> None:
+               *, probed: bool) -> None:
     """The ONE terminal transition (success, failure, rollback, gate-blocked,
     INTEGRATION_DISABLED, PLAYBOOK_CHANGED, INFORM_TIMEOUT, LEASE_EXPIRED,
     UNKNOWN_STEP_OUTCOME, MAX_ATTEMPTS_EXCEEDED, INTERRUPTED_AFTER_STEP_FAILURE).
@@ -105,11 +92,12 @@ def finish_job(db, job: ProvisioningJob, status: ProvisioningJobStatus, error: O
         device was actually talked to);
       - Cycle 10 (doc 35 §5) advance_run — queues the next device's child job
         or closes the run. `repair_stranded_runs` (reaper) is its backstop;
-      - `extra_follow_ons`, in order, AFTER advance_run: the caller's
-        `(name, fn(db, job))` pairs. The worker passes its install_state
-        recompute here (R1), which must follow advance_run: it reads run
-        status, so recomputing first would see the run still RUNNING on its
-        own final child and refuse to reach INSTALLED.
+      - a JOB_FINISHED provisioning_event, AFTER advance_run (so its id
+        follows the RUN_CLOSED that a final child's close_run emits). Payload
+        `{status, error, probed, playbook_name, client_service_id}`. The
+        backend's handler recomputes install_state, which reads run status,
+        so it must see the run already closed; then it promotes a core
+        device that answered a connectivity check.
     The caller commits."""
     job_id, company_id = job.id, job.company_id
     job.status = status
@@ -136,7 +124,7 @@ def finish_job(db, job: ProvisioningJob, status: ProvisioningJobStatus, error: O
     if probed:
         follow_ons += [("device_action_log", write_device_action_log),
                        ("connectivity_stamp", stamp_connectivity)]
-    follow_ons += [("advance_run", advance_run), *extra_follow_ons]
+    follow_ons += [("advance_run", advance_run), ("event", _emit_finished(probed))]
     for name, fn in follow_ons:
         try:
             with db.begin_nested():
@@ -147,11 +135,23 @@ def finish_job(db, job: ProvisioningJob, status: ProvisioningJobStatus, error: O
             )
 
 
+def _emit_finished(probed: bool):
+    def emit(db, job: ProvisioningJob) -> None:
+        emit_event(db, JOB_FINISHED, job=job, payload={
+            "status": job.status.value,
+            "error": job.error,
+            "probed": probed,
+            "playbook_name": job.playbook.name if job.playbook else None,
+            "client_service_id": str(job.client_service_id) if job.client_service_id else None,
+        })
+    return emit
+
+
 def fail_parked(db, job: ProvisioningJob, code: str, *, error: str, display: str,
-                extra_follow_ons: Iterable[FollowOn] = (), **extra) -> None:
+                **extra) -> None:
     """Fail a PENDING_MANUAL job the caller holds locked: its PENDING entry
     becomes FAILED `code`, then `finish_job` (rollback / close via
-    advance_run; `extra_follow_ons` passed through).
+    advance_run, then JOB_FINISHED).
     A manual entry fails at stage command (the person may have changed the
     device, so ran_steps counts it); a guided one keeps stage render (never
     sent). Shared by the expiry (§6.4, doc 50 §4.5) and «Abortar» (doc 50
@@ -172,5 +172,4 @@ def fail_parked(db, job: ProvisioningJob, code: str, *, error: str, display: str
         steps[-1] = entry
     log.update(steps=steps, inflight_step=None, code=code)
     job.log = log
-    finish_job(db, job, ProvisioningJobStatus.FAILED, code, probed=True,
-               extra_follow_ons=extra_follow_ons)
+    finish_job(db, job, ProvisioningJobStatus.FAILED, code, probed=True)
