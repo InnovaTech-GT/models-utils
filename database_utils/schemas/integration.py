@@ -7,7 +7,8 @@ from database_utils.models.crm import IntegrationAuthType
 
 MASKED = "***"
 IntegrationProvider = Literal["WHATSAPP_BUSINESS"]
-SENSITIVE_KEYS = {"api_key", "token", "password"}
+# app_secret: App Secret de Meta (WhatsApp Business); firma los webhooks del tenant.
+SENSITIVE_KEYS = {"api_key", "token", "password", "app_secret"}
 
 
 class IntegrationCreate(BaseModel):
