@@ -39,7 +39,7 @@ Design and plan: workspace `docs/superpowers/specs/2026-10-15-provisioning-worke
 | `playbook_drivers.py` | `services/playbook_drivers.py`, without `reject_driver_mismatch` and fastapi | `DRIVER_NOT_ALLOWED_FOR_TARGET`, `EDITOR_DRIVERS`, `ALLOWED_BY_TIER`, `allowed_drivers`, `ping_probe`, `driver_options`, `mismatches` |
 | `genieacs_nbi.py` | the helpers in `provisioning/drivers/genieacs.py` | `tenant_tag`, `nbi_base_url`, `_nbi_auth`, `nbi_client` (imports httpx lazily), `find_device_id`, `GENIEACS_NBI_TIMEOUT_SECONDS` |
 | `connectivity.py` | `provisioning/worker.py` (connectivity section) | `DEFAULT_PROBE_COMMAND`, `_connectivity_definition`, `_get_or_create_connectivity_playbook`, `enqueue_connectivity_check` |
-| `provisioning_jobs.py` | `provisioning/worker.py` | `finish_job` (was `_finish`), `write_device_action_log`, `stamp_connectivity`, `fail_parked`, `FollowOn` |
+| `provisioning_jobs.py` | `provisioning/worker.py` | `finish_job` (was `_finish`), `write_device_action_log`, `stamp_connectivity`, `fail_parked` (`FollowOn` removed in 6.10.0) |
 
 Additions to existing modules:
 
