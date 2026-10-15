@@ -357,6 +357,8 @@ and **each configured device gets its own child job**.
 | `error_code` / `error` | VARCHAR(40) / TEXT NULL (`pe1`) — the outcome: `PRECONDITION_FAILED`, `CONFIGURATION_FAILED`, `VERIFICATION_FAILED`, `CANCELLED`, `STRANDED_RUN_EXPIRED`, `ROLLBACK_INCOMPLETE`, `REVERTED` and the human detail. Written only by `provisioning_runs` |
 | `outputs` | JSON NULL (`pe1`) — `[{key, label, value, unit, audience, secret, sensitive, shareable, ok, item_id, position, category_key, ref?}]`, last writer per `(item_id, key)`; a secret output stores `value` NULL + `ref` |
 | `secrets_ciphertext` / `secrets_dek_wrapped` / `secrets_kek_id` | BYTEA / BYTEA / VARCHAR NULL (`pe1`) — the run's generated secrets (`{key: value}` JSON), envelope-encrypted like `DeviceCredential` with AAD `company_id:run.id`; NULL when the plan declares none |
+| `mode` | VARCHAR(16) NOT NULL DEFAULT `'AUTOMATIC'` (`gr1`, doc 50) — `ProvisioningRunMode` value: `AUTOMATIC` runs steps back to back, `GUIDED` parks before every non-rollback step (job `PENDING_MANUAL` + `log.pending_kind="guided"`) until an admin continues or aborts. A dry run never pauses whatever is stored |
+| `guided_timeout_seconds` | INTEGER NOT NULL DEFAULT 1800 (`gr1`) — each guided pause's deadline (300–14400, validated by `create_run`); expiry fails the step `GUIDED_TIMEOUT` and rolls back |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |
 | `company_id` / `client_service_id` | FK company CASCADE / FK client_service CASCADE, both indexed |

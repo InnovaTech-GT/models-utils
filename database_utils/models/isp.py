@@ -258,6 +258,15 @@ class ProvisioningJobStatus(str, enum.Enum):
     PENDING_MANUAL = "PENDING_MANUAL"
 
 
+class ProvisioningRunMode(str, enum.Enum):
+    """doc 50 (revision gr1): how a run advances. AUTOMATIC runs every step
+    back to back; GUIDED parks before each non-rollback step (job
+    PENDING_MANUAL + log.pending_kind="guided") until an admin continues or
+    aborts. Stored as a plain String(16) on provisioning_run.mode — no PG enum."""
+    AUTOMATIC = "AUTOMATIC"
+    GUIDED = "GUIDED"
+
+
 class ProvisioningTrigger(str, enum.Enum):
     USER = "USER"
     WORKFLOW = "WORKFLOW"
@@ -1359,6 +1368,13 @@ class ProvisioningRun(Base):
     # The phase of the entry being executed (PROVISIONING_PHASES). NULL = a
     # legacy run, advanced by the pre-v2 rule.
     phase = Column(String(16), nullable=True)
+    # --- guided runs (doc 50, revision gr1) ---
+    # ProvisioningRunMode value. GUIDED pauses before every non-rollback step;
+    # a dry run never pauses whatever is stored here.
+    mode = Column(String(16), nullable=False, default="AUTOMATIC", server_default="AUTOMATIC")
+    # Deadline of each guided pause, seconds (300-14400, validated by
+    # create_run). Expiry fails the step with GUIDED_TIMEOUT + normal rollback.
+    guided_timeout_seconds = Column(Integer, nullable=False, default=1800, server_default="1800")
     # The outcome code (PRECONDITION_FAILED, CONFIGURATION_FAILED,
     # VERIFICATION_FAILED, CANCELLED, STRANDED_RUN_EXPIRED, ROLLBACK_INCOMPLETE,
     # REVERTED) and its human detail. Written only by close_run / the rollback
