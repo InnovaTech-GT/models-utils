@@ -19,6 +19,7 @@ from sqlalchemy import (
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
     SmallInteger, ForeignKeyConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
 
 from database_utils.database import Base
@@ -1546,6 +1547,40 @@ class ProvisioningJob(Base):
             ),
         ),
         CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_job_phase"),
+    )
+
+
+class ProvisioningEvent(Base):
+    """Transactional outbox (provisioning worker split R2, Alembic
+    pw1_provisioning_event). The worker and models-utils state-machine code
+    insert one row in the same transaction as the state change
+    (`utils/provisioning_events.emit_event`); backend-erp's single drainer
+    (advisory lock, `id` order) runs the business follow-on and stamps
+    `processed_at`, or bumps `attempts` / `last_error`. `run_id` / `job_id`
+    are plain UUIDs, not FKs: an event outlives a deleted run or job.
+    `kind` is an open string set (`provisioning_events.KINDS`), no CHECK."""
+    __tablename__ = "provisioning_event"
+
+    # bigserial on Postgres; SQLite only autoincrements an INTEGER PK.
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String(32), nullable=False)
+    run_id = Column(Uuid, nullable=True)
+    job_id = Column(Uuid, nullable=True)
+    payload = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt,
+                        server_default=text("now()"))
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        # The drainer's scan: WHERE processed_at IS NULL ORDER BY id.
+        Index("ix_provisioning_event_pending", "id",
+              postgresql_where=text("processed_at IS NULL"),
+              sqlite_where=text("processed_at IS NULL")),
     )
 
 

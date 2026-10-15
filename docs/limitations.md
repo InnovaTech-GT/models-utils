@@ -147,10 +147,13 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
 
 ## Engine v2 (6.3.0, doc 42) — shipped limitations
 
-- **Run events are an in-process listener list** (`RUN_CLOSED_LISTENERS`), not
-  an outbox table. A process that closes runs without importing backend-erp's
-  `provisioning/run_events.py` emits nothing; backend-erp's test that both entry
-  points import it is the guard. The workflow engine (cron-erp) only OPENS runs.
+- **Run events go through the `provisioning_event` outbox** (6.10.0;
+  the in-process `RUN_CLOSED_LISTENERS` list is gone). `close_run` only writes
+  the row; nothing happens until backend-erp's drainer runs, so settlement
+  lags by up to one poll interval, and with the backend down events pile up
+  (a stale WARNING fires after 5 minutes). Delivery is at-least-once, so the
+  backend handlers must stay idempotent. The table has no retention of its
+  own here; backend-erp deletes processed rows after 30 days.
 - **Stored legacy definitions are normalized on read**, not rewritten: the
   legacy shape, the read-only `steps` mirror and `_connectivity_definition`'s
   legacy shape all go in a later `pe2` cleanup.
@@ -195,6 +198,29 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   that can never match — but they are drift, and they should be removed in a
   follow-up.
 
+## Provisioning worker split (R1 6.9.0, R2 6.10.0)
+
+- **R2 removed the R1 seams.** `finish_job` has no `extra_follow_ons` and
+  `stamp_connectivity` has no `promote`; both emit/stamp only. The install_state
+  recompute and the INSTALLED promotion now depend on backend-erp draining the
+  `JOB_FINISHED` event, so with no backend running they do not happen. A
+  backend-erp pin older than 6.10.0 that still passes `extra_follow_ons` or
+  registers a `RUN_CLOSED_LISTENERS` listener fails at import or call time:
+  repin backend-erp (and the worker) to the same SHA. See
+  [playbook-language.md](playbook-language.md).
+- **`fail_parked` emits `JOB_FINISHED` like every other terminal transition**,
+  so an «Abortar» that needs install_state immediately must recompute it
+  itself before committing (backend-erp's `guided_steps` does).
+- **`google-re2` and `httpx` are not in `install_requires`.** A consumer that
+  calls `_prepare_checks` / `dry_run_playbook` with a regex, or calls
+  `nbi_client()`, gets an `ImportError` unless it pins them. backend-erp
+  already does, and auth-erp never calls them.
+- **Renderer changes now need a models-utils release.** That is the price of
+  one renderer for preview and execution. The shared filter fixture
+  `tests/fixtures/playbook_filters.json` now has three hash-locked copies
+  (here, backend-erp and frontend-erp) until backend-erp's copy of the test
+  moves in P1.2.
+
 ## CI / packaging
 
 - **ruff is advisory only** in CI (`continue-on-error: true`) — lint failures
@@ -209,7 +235,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
 ## Platform-level accepted debt (ADR-009)
 
 - Real device drivers (ssh / telnet / snmp / tr069) are tracked TODOs. They
-  will land in backend-erp's provisioning worker; the **resolution logic**
+  will land in the provisioning worker; the **resolution logic**
   (graph path → per-node playbook → variable frames) lives here. The network
   config layer design (platform docs 21/23 — cloud-side drivers, shared
   GenieACS, netmiko) is design-only and not implemented in this repo.

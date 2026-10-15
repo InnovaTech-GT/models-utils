@@ -137,3 +137,27 @@ def resolve_endpoint(
     if not host:
         return None, "MGMT_HOST_NOT_SET"
     return ResolvedEndpoint(host, item.mgmt_port or default_port, proxy, "device"), None
+
+
+def company_dials_gateway(db, company_id) -> bool:
+    """Does this tenant dial its GATEWAY (dst-nat + `nat_port`) rather than the
+    device's own `mgmt_host`? (spec N10, `provisioning_settings.dial_target`.)
+
+    The one place this is resolved, so `enqueue_connectivity_check`, the sweep
+    filter and the manual test-connection endpoint can never disagree. Moved
+    from backend-erp provisioning/worker.py (provisioning worker split, R1).
+
+    ONE predicate still serves both call sites, and under the orthogonal axis it
+    does so CORRECTLY rather than by coincidence — the old `mode in NAT_MODES`
+    version needed a paragraph explaining why `vpn` did not belong here:
+      * routers/core_devices.py — "does this tenant dial item.mgmt_host?" is
+        exactly `dial_target == 'device'`, so the 422 MGMT_HOST_NOT_SET
+        precondition keeps firing for a proxied device-dial tenant (the old
+        `vpn`), which is what it must do.
+      * here, via _connectivity_definition — "is ICMP useless on this path?"
+        ICMP carries no port, so a dst-nat mapping cannot forward it: also
+        exactly `dial_target == 'gateway'`. A proxied device-dial tenant keeps
+        its ping step, which drivers/ping.py turns into a proxied TCP probe.
+    """
+    settings = company_provisioning_settings(db, company_id)
+    return settings is not None and settings.dial_target == "gateway"

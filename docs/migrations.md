@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (109 revisions, head: **`gr1_guided_runs`**) — plus
+`alembic/versions/` (110 revisions, head: **`pw1_provisioning_event`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1148,6 +1148,19 @@ every existing run reads AUTOMATIC / 1800 and code that never writes them keeps
 working. No PG enum and no CHECK: `ProvisioningRunMode` and the 300–14400 range
 are enforced by `create_run`. `ADD COLUMN IF NOT EXISTS`, `lock_timeout 5s`,
 post-upgrade assert; downgrade drops both columns (reversible).
+
+### `pw1_provisioning_event` (2026-10-15) — models-utils 6.10.0
+
+On `gr1_guided_runs`. Additive. Creates the provisioning outbox
+`provisioning_event` (provisioning worker split R2): `id BIGSERIAL PK`,
+`company_id UUID NOT NULL` → `company` ON DELETE CASCADE, `kind VARCHAR(32)`,
+`run_id`/`job_id UUID NULL` (no FK, so an event outlives its run or job),
+`payload JSONB`, `created_at TIMESTAMPTZ DEFAULT now()`, `processed_at`,
+`attempts INTEGER DEFAULT 0`, `last_error TEXT`, plus the drainer's partial
+index `ix_provisioning_event_pending (id) WHERE processed_at IS NULL`.
+`CREATE ... IF NOT EXISTS`, `lock_timeout 5s`, post-upgrade assert on the
+index. Downgrade drops the table (reversible, but unprocessed events are lost:
+let backend-erp drain first). Guard: `tests/pg/test_pw1_pg.py`.
 
 ## Key rules
 

@@ -4,3 +4,6 @@
 pytest
 pytest-asyncio
 ruff
+# playbook_render._render_regex imports re2 lazily; models-utils does not
+# install it at runtime (the rendering consumers pin it), only for its tests.
+google-re2
