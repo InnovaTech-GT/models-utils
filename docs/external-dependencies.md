@@ -18,6 +18,15 @@
 | `Jinja2` | >= 3.1 | Email HTML templates |
 | `aiosmtplib` | >= 3.0 | Async SMTP email delivery |
 
+Not installed by this package, imported lazily inside the one function that
+needs it (6.9.0, [playbook-language.md](playbook-language.md)). Every consumer
+that calls those functions pins it itself:
+
+| Dependency | Imported in | Notes |
+|---|---|---|
+| `google-re2` (`re2`) | `playbook_render._render_regex` | Linear-time regex for rendered `expect_regex` / captures; in `requirements-dev.txt` for this repo's tests |
+| `httpx` | `genieacs_nbi.nbi_client` | Sync client against the GenieACS NBI |
+
 ## External systems
 
 | System | Relationship |
@@ -28,6 +37,8 @@
 | **SMTP server** | Transactional email transport (host/credentials supplied by the consuming service; see [email-service.md](email-service.md)). |
 | **Honeycomb** | Indirect — this repo ships OTEL API helpers only; consumers export the traces. |
 
-Not used by this repo: **Redis** (backend-erp concern), **GenieACS** and other
-device-management targets (the network config layer, docs 21/23 in the platform
-ADRs, is design-only and not implemented here).
+| **GenieACS NBI** | 6.9.0: `utils/genieacs_nbi.py` holds the read-side helpers (`nbi_client`, `find_device_id`, `tenant_tag`). This library never dials it on its own; backend-erp (ACS administration) and the provisioning worker (tr069 driver, poller) call them. |
+
+Not used by this repo: **Redis** (backend-erp concern) and device-management
+targets other than the GenieACS NBI helpers above (device drivers live in the
+provisioning worker).

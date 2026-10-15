@@ -195,6 +195,27 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   that can never match — but they are drift, and they should be removed in a
   follow-up.
 
+## Provisioning worker split R1 (6.9.0) — transitional seams
+
+- **`finish_job(extra_follow_ons=)` and `stamp_connectivity(promote=)` are
+  R1-only seams.** The worker still injects the install_state recompute and
+  keeps the INSTALLED promotion on, so R1 changes no behaviour. R2 (P2)
+  removes both, emits `JOB_FINISHED` instead, and moves the follow-ons to the
+  backend's event consumer. See [playbook-language.md](playbook-language.md).
+- **Callers of `fail_parked` must pass the same `extra_follow_ons` as the
+  worker's `_finish`.** That means install_state today. A bare call skips the
+  recompute. The worker's alias in backend-erp P1.2 has to wrap the call, not
+  only rename it.
+- **`google-re2` and `httpx` are not in `install_requires`.** A consumer that
+  calls `_prepare_checks` / `dry_run_playbook` with a regex, or calls
+  `nbi_client()`, gets an `ImportError` unless it pins them. backend-erp
+  already does, and auth-erp never calls them.
+- **Renderer changes now need a models-utils release.** That is the price of
+  one renderer for preview and execution. The shared filter fixture
+  `tests/fixtures/playbook_filters.json` now has three hash-locked copies
+  (here, backend-erp and frontend-erp) until backend-erp's copy of the test
+  moves in P1.2.
+
 ## CI / packaging
 
 - **ruff is advisory only** in CI (`continue-on-error: true`) — lint failures
@@ -209,7 +230,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
 ## Platform-level accepted debt (ADR-009)
 
 - Real device drivers (ssh / telnet / snmp / tr069) are tracked TODOs. They
-  will land in backend-erp's provisioning worker; the **resolution logic**
+  will land in the provisioning worker; the **resolution logic**
   (graph path → per-node playbook → variable frames) lives here. The network
   config layer design (platform docs 21/23 — cloud-side drivers, shared
   GenieACS, netmiko) is design-only and not implemented in this repo.

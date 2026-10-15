@@ -24,6 +24,7 @@ library, never the reverse).
 | `provisioning_gates.py` | The provisioning gates, enforced where every run is created (doc 43 §5.6) — see below |
 | `acs_bootstrap.py` | The `acs.*` playbook namespace (doc 42 §9.7): ACS URL, tenant inform password, the CPE's registration ensure — see below |
 | `playbook_expr.py` | Declared integer arithmetic for a playbook's `computed` block (doc 40 §3.3.3, ADR-006 amendment) and the shared `is_secret_name`/`_SECRET_HINTS` (moved from backend-erp's renderer, which re-exports them) — see below |
+| `playbook_template.py`, `playbook_render.py`, `provisioning_codes.py`, `playbook_drivers.py`, `genieacs_nbi.py`, `connectivity.py`, `provisioning_jobs.py` | **6.9.0, provisioning worker split R1**: the playbook language, the job terminal transition (`finish_job`, `fail_parked`), connectivity-job construction and the read-side GenieACS NBI helpers, moved verbatim from backend-erp so the API and the worker share them — see [playbook-language.md](playbook-language.md) |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
@@ -270,6 +271,7 @@ so the workflow engine can apply them too (backend-erp keeps its public names an
 | `SYSTEM_PLAYBOOK_NAMES` / `CORE_CONNECTIVITY_PLAYBOOK_NAMES` | SaaS-verified playbooks, exempt from the dry-run gate (matched by name) |
 | `kill_switch_enabled()` | env `PROVISIONING_KILL_SWITCH` in `1`/`true`/`yes` |
 | `enable_gate_reason(db, company_id, device_type)` | `"kill_switch"`, `"device_type_disabled"` (`device_type.provisioning_enabled` false) or None. backend-erp's worker claim re-check uses it |
+| `claim_time_gate_blocked(db, company_id, device_type)` | 6.9.0, moved from backend-erp `utils/provisioning_guards.py`: `enable_gate_reason(...) is not None`, the worker's claim-time re-check (never for dry runs) |
 | `gate_failure(db, company_id, playbook, device_type, dry_run)` | None, or exactly today's 409 body: `{"code": "PROVISIONING_DISABLED", "reason"}` or `{"code": "DRY_RUN_REQUIRED", "playbook_version", "last_dry_run_version"}` (no `playbook_id`) |
 | `run_gate_failures(db, resolved, dry_run)` | One `gate_failure` per configured node of the resolved path, each + `item_id` / `playbook_id` (readiness context for backend-erp's closeout); a node whose playbook no longer exists yields `{"code": "PLAYBOOK_NOT_FOUND"}` instead of crashing |
 | `ProvisioningGateError(errors)` | Raised by a live `create_run` (so by `create_or_get_run` too). Every producer goes through it: `/provision`, lifecycle, the cancel cascade, ZTP and the workflow engine's mode A. Callers map it to 409 / `ENQUEUE_FAILED` / a FAILED workflow step. Rollback, revert and rollback-retry children are not created by `create_run` and stay exempt |
@@ -323,6 +325,13 @@ means the worker's claim skips that child until the device frees.
 any write, so every producer (the workflow engine included) is gated here.
 backend-erp's routers still check first (`enforce_gates_for`) so they can refuse
 before a service-status write; this is the backstop.
+
+### `provisioning_runs.py` additions (6.9.0, worker split R1)
+
+| Function | Behaviour |
+|---|---|
+| `run_captures(db, job)` | Captures of this run's EARLIER children on the same item, in plan order (doc 42 §6.3); was the worker's `_run_captures`. The executor re-gates them before use |
+| `parked_step(run, job)` | The parked step's definition from the run's snapshot, or `{}`; was backend-erp `services/manual_steps.parked_step` |
 
 ### `transport.py` (transport resolution, 2026-08-13; transport axis `tr1_transport_axis`, 2026-09-26)
 
@@ -397,6 +406,10 @@ What the resolver still cannot know is whether a hub's route actually reaches
 successfully either way, and only the driver's connect attempt settles it.
 Callers must surface any returned error code as a step failure. See
 `tests/test_transport_resolver.py` and `tests/test_transport_axis.py`.
+
+#### `company_dials_gateway(db, company_id)` (6.9.0, worker split R1)
+
+Moved from backend-erp's worker: `True` when the tenant's `provisioning_settings.dial_target == 'gateway'`. It is the one predicate shared by `connectivity.enqueue_connectivity_check` (drops the ICMP ping step), the worker's sweep and the API's test-connection `MGMT_HOST_NOT_SET` precondition.
 
 ## `playbook_expr.py` (doc 40 §3.3.3)
 

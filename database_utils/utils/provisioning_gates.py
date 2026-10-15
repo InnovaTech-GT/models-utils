@@ -108,3 +108,14 @@ def run_gate_failures(db: Session, resolved, dry_run: bool) -> List[Dict[str, An
             failures.append(failure | {"item_id": str(node.item_id),
                                        "playbook_id": str(node.playbook_id)})
     return failures
+
+
+def claim_time_gate_blocked(
+    db: Session, company_id, device_type: Optional[DeviceType]
+) -> bool:
+    """Worker-side re-check (§4.6, defense in depth): True if a live
+    (non-dry-run) job's enable gates no longer pass — e.g. the kill switch went
+    up, or the device type opted out, after the job was already QUEUED. Never
+    called for dry_run jobs. Moved from backend-erp
+    utils/provisioning_guards.py (provisioning worker split, R1)."""
+    return enable_gate_reason(db, company_id, device_type) is not None

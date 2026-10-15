@@ -1148,3 +1148,31 @@ def repair_stranded_runs(db: Session, limit: int = 100) -> int:
         except Exception:
             logger.bind(run_id=str(run_id)).exception("repair_stranded_runs: run not repaired")
     return repaired
+
+
+def run_captures(db, job: ProvisioningJob) -> dict:
+    """Captures of this run's EARLIER children on the same item, in plan
+    order (doc 42 §6.3). The executor re-gates them before use. Moved from
+    backend-erp provisioning/worker.py `_run_captures` (provisioning worker
+    split, R1): the worker and the manual-step confirm both read it."""
+    merged: dict = {}
+    earlier = (
+        db.query(ProvisioningJob)
+        .filter(ProvisioningJob.run_id == job.run_id,
+                ProvisioningJob.inventory_item_id == job.inventory_item_id,
+                ProvisioningJob.run_position < (job.run_position or 0))
+        .order_by(ProvisioningJob.run_position)
+        .all()
+    )
+    for sibling in earlier:
+        merged.update((sibling.log or {}).get("captures") or {})
+    return merged
+
+
+def parked_step(run: ProvisioningRun, job: ProvisioningJob) -> dict:
+    """The parked step's definition (from the run's snapshot), or {}. Moved
+    from backend-erp services/manual_steps.py (provisioning worker split,
+    R1)."""
+    steps = job_steps(definition_for(run, job.playbook_id) or {}, job.phase)
+    i = job.pending_step_index
+    return steps[i] if i is not None and 0 <= i < len(steps) else {}

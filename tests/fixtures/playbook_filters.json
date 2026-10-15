@@ -1,0 +1,267 @@
+[
+  {
+    "template": "{{x}}",
+    "variables": {
+      "x": "abc"
+    },
+    "expected": "abc"
+  },
+  {
+    "template": "{{x | upper}}",
+    "variables": {
+      "x": "abc"
+    },
+    "expected": "ABC"
+  },
+  {
+    "template": "{{x | lower}}",
+    "variables": {
+      "x": "ABC"
+    },
+    "expected": "abc"
+  },
+  {
+    "template": "{{x | trim}}",
+    "variables": {
+      "x": "  ab  "
+    },
+    "expected": "ab"
+  },
+  {
+    "template": "{{x | alnum}}",
+    "variables": {
+      "x": "a b-c_d!"
+    },
+    "expected": "ab-c_d"
+  },
+  {
+    "template": "{{x | replace:\"a\",\"b\"}}",
+    "variables": {
+      "x": "banana"
+    },
+    "expected": "bbnbnb"
+  },
+  {
+    "template": "{{x | truncate:3}}",
+    "variables": {
+      "x": "abcdef"
+    },
+    "expected": "abc"
+  },
+  {
+    "template": "{{x | pad_left:5,\"0\"}}",
+    "variables": {
+      "x": "42"
+    },
+    "expected": "00042"
+  },
+  {
+    "template": "{{x | pad_left:2}}",
+    "variables": {
+      "x": "abcdef"
+    },
+    "expected": "abcdef"
+  },
+  {
+    "template": "{{x | mac:colon}}",
+    "variables": {
+      "x": "aabbccddeeff"
+    },
+    "expected": "AA:BB:CC:DD:EE:FF"
+  },
+  {
+    "template": "{{x | mac:dash}}",
+    "variables": {
+      "x": "aa:bb:cc:dd:ee:ff"
+    },
+    "expected": "AA-BB-CC-DD-EE-FF"
+  },
+  {
+    "template": "{{x | mac:dot}}",
+    "variables": {
+      "x": "AA-BB-CC-DD-EE-FF"
+    },
+    "expected": "aabb.ccdd.eeff"
+  },
+  {
+    "template": "{{x | mac:bare}}",
+    "variables": {
+      "x": "aabb.ccdd.eeff"
+    },
+    "expected": "AABBCCDDEEFF"
+  },
+  {
+    "template": "{{x | trim | replace:\" \",\"_\" | upper}}",
+    "variables": {
+      "x": "  a b  "
+    },
+    "expected": "A_B"
+  },
+  {
+    "template": "{{x|upper}}",
+    "variables": {
+      "x": "a"
+    },
+    "expected": "A"
+  },
+  {
+    "template": "{{ x | upper }}",
+    "variables": {
+      "x": "a"
+    },
+    "expected": "A"
+  },
+  {
+    "template": "{{x}}",
+    "variables": {
+      "x": 110
+    },
+    "expected": "110"
+  },
+  {
+    "template": "{{x | upper}}",
+    "variables": {
+      "x": true
+    },
+    "expected": "TRUE"
+  },
+  {
+    "template": "{{x}}",
+    "variables": {
+      "x": true
+    },
+    "expected": "True"
+  },
+  {
+    "template": "{{x}}",
+    "variables": {
+      "x": false
+    },
+    "expected": "False"
+  },
+  {
+    "template": "{{x}}",
+    "variables": {
+      "x": 0
+    },
+    "expected": "0"
+  },
+  {
+    "template": "{{x | default:\"guest\"}}",
+    "variables": {},
+    "expected": "guest"
+  },
+  {
+    "template": "{{x | default:\"guest\" | upper}}",
+    "variables": {},
+    "expected": "GUEST"
+  },
+  {
+    "template": "{{x | upper | default:\"X\"}}",
+    "variables": {},
+    "expected": "X"
+  },
+  {
+    "template": "{{x | default:\"g\"}}",
+    "variables": {
+      "x": "   "
+    },
+    "expected": "g"
+  },
+  {
+    "template": "{{x | default:\"g\"}}",
+    "variables": {
+      "x": "ada"
+    },
+    "expected": "ada"
+  },
+  {
+    "template": "{{x | upper}}",
+    "variables": {},
+    "expected": "{{x | upper}}",
+    "problems": [
+      "x"
+    ]
+  },
+  {
+    "template": "{{ not a token }}",
+    "variables": {},
+    "expected": "{{ not a token }}"
+  },
+  {
+    "template": "{{x | uppr}}",
+    "variables": {
+      "x": "a"
+    },
+    "expected": "{{x | uppr}}",
+    "error": true
+  },
+  {
+    "template": "{{x | truncate}}",
+    "variables": {
+      "x": "a"
+    },
+    "expected": "{{x | truncate}}",
+    "error": true
+  },
+  {
+    "template": "{{x | mac:dash}}",
+    "variables": {
+      "x": "ABC123"
+    },
+    "expected": "{{x | mac:dash}}",
+    "error": true
+  },
+  {
+    "template": "{{input.wifi_password | upper}}",
+    "variables": {
+      "input.wifi_password": "h"
+    },
+    "expected": "{{input.wifi_password | upper}}",
+    "error": true
+  },
+  {
+    "template": "{{secret.wifi_key}}",
+    "variables": {
+      "secret.wifi_key": "Abc234xyz"
+    },
+    "expected": "Abc234xyz"
+  },
+  {
+    "template": "{{secret.wifi_key | upper}}",
+    "variables": {
+      "secret.wifi_key": "Abc234xyz"
+    },
+    "expected": "{{secret.wifi_key | upper}}",
+    "error": true
+  },
+  {
+    "template": "{{ secret.wifi_key | default:\"x\" }}",
+    "variables": {},
+    "expected": "{{ secret.wifi_key | default:\"x\" }}",
+    "error": true
+  },
+  {
+    "template": "{{capture.rx_power | trim}} dBm",
+    "variables": {
+      "capture.rx_power": " -21.37 "
+    },
+    "expected": "-21.37 dBm"
+  },
+  {
+    "template": "set acs_url {{acs.url}} user {{acs.cr_username}}",
+    "variables": {
+      "acs.url": "https://acs.example.com/",
+      "acs.cr_username": "cr-gpon00611709"
+    },
+    "expected": "set acs_url https://acs.example.com/ user cr-gpon00611709"
+  },
+  {
+    "template": "{{acs.inform_password | upper}}",
+    "variables": {
+      "acs.inform_password": "h"
+    },
+    "expected": "{{acs.inform_password | upper}}",
+    "error": true
+  }
+]
