@@ -838,6 +838,46 @@ class CollectionVisit(Base):
     creator = relationship("User", foreign_keys=[created_by])
 
 
+class CollectionArea(Base):
+    """A collector's area: a polygon drawn in the back-office (Configuración ->
+    Áreas de cobro) with at most one collector. The collector ETL gives a client
+    to the collector of the area that contains it, and by proximity when no area
+    does. Revision ca1_collection_areas.
+
+    `polygon` is one ring of [latitude, longitude] pairs, at least 3, not closed
+    (the last point is not a repeat of the first); schemas.collection_area
+    validates it. No PostGIS: point-in-polygon runs in the ETL.
+    """
+    __tablename__ = "collection_area"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    name = Column(String(80), nullable=False)
+    # "#RRGGBB"; the format CHECK (ck_collection_area_color) lives in ca1 only:
+    # SQLite create_all in the consumers cannot parse the PG regex operator.
+    color = Column(String(7), nullable=False)
+    polygon = Column(JSON, nullable=False)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
+    # NULL = an area without a collector yet. SET NULL so deleting a user
+    # leaves the area in place for another collector.
+    collector_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    company = relationship("Company")
+    collector = relationship("User", foreign_keys=[collector_id])
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_collection_area_company_name"),
+        # One area per collector.
+        Index(
+            "uq_collection_area_collector", "collector_id", unique=True,
+            postgresql_where=text("collector_id IS NOT NULL"),
+            sqlite_where=text("collector_id IS NOT NULL"),
+        ),
+    )
+
+
 class CashSession(Base):
     __tablename__ = "cash_session"
 

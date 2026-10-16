@@ -16,7 +16,7 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 |-------|---------|
 | `Tier` (tier) | SaaS subscription plans (features/modules JSON) |
 | `Company` (company) | Multi-tenant ISP company. `mobile_settings` JSON (mi2): `{bank_account, collector_daily_goal, technician_daily_goal}`, validated by `schemas.company.MobileSettings`. `provisioning_zone` (pz1, String(64), NULL = default worker): which provisioning worker serves the tenant, see `utils.provisioning_jobs.company_in_zone` |
-| `User` (user) | Authenticated user (incl. super-admin flag) |
+| `User` (user) | Authenticated user (incl. super-admin flag). `home_latitude` / `home_longitude` (ca1, FLOAT NULL, both or neither by `ck_user_home_location` in the revision): where a collector lives, used by the back-office to suggest collection areas |
 | `Role` (role) | Permission group |
 | `Permission` (permission) | Single access right (resource + action) |
 | `Notification` (notification) | Pending user **invitation** (despite the name) |

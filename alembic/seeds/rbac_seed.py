@@ -100,6 +100,12 @@ PERMISSIONS_DATA = [
         # collectors submit. ADMIN converges via the `*` step; no other
         # built-in role holds it (tenants can add it to custom roles).
         {"name": "cash_sessions.review", "resource": "cash_sessions", "action": "review", "description": "Revisar, aprobar o rechazar cajas de cobradores"},
+
+        # Collection areas (ca1_collection_areas): Configuración -> Áreas de
+        # cobro. ADMIN converges via the `*` step; read also reaches VIEWER
+        # through VIEWER_PERMISSION_FILTER.
+        {"name": "collection_areas.read", "resource": "collection_areas", "action": "read", "description": "Ver las áreas de cobro"},
+        {"name": "collection_areas.update", "resource": "collection_areas", "action": "update", "description": "Crear, editar y eliminar áreas de cobro y la ubicación de la casa de los cobradores"},
 ]
 
 # The four built-in (global) roles. ADMIN/VIEWER are created here;
