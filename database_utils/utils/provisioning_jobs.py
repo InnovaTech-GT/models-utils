@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+import sqlalchemy as sa
 from loguru import logger
+
+from database_utils.models.auth import Company
 
 from database_utils.models.isp import (
     DeviceActionLog,
@@ -173,3 +176,13 @@ def fail_parked(db, job: ProvisioningJob, code: str, *, error: str, display: str
     log.update(steps=steps, inflight_step=None, code=code)
     job.log = log
     finish_job(db, job, ProvisioningJobStatus.FAILED, code, probed=True)
+
+
+def company_in_zone(company_id_col, zone: Optional[str]):
+    """SQL clause: `company_id_col` is a company served by provisioning zone
+    `zone` (pz1, 6.11.0). None or "" is the default zone — companies with
+    `provisioning_zone IS NULL` — so an unzoned worker never touches a zoned
+    tenant and a zoned worker touches only its own. Every worker loop that
+    picks up company-scoped work filters through this."""
+    match = (Company.provisioning_zone == zone) if zone else Company.provisioning_zone.is_(None)
+    return company_id_col.in_(sa.select(Company.id).where(match))

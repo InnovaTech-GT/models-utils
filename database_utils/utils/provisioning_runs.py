@@ -1060,7 +1060,7 @@ def create_or_get_run(
     return run, True
 
 
-def repair_stranded_runs(db: Session, limit: int = 100) -> int:
+def repair_stranded_runs(db: Session, limit: int = 100, where=None) -> int:
     """Backstop: advance in-flight runs that have no in-flight child.
 
     A run strands when its child reached a terminal state but advance_run did
@@ -1078,6 +1078,10 @@ def repair_stranded_runs(db: Session, limit: int = 100) -> int:
     SUCCEEDED; in ROLLBACK it keeps advancing, and
     one with nothing left to advance is closed ROLLBACK_INCOMPLETE. Returns the
     number of runs repaired; the caller commits.
+
+    `where` (6.11.0): an extra clause on the run rows, e.g. the worker's
+    `company_in_zone(ProvisioningRun.company_id, zone)` so a zoned worker only
+    repairs its own tenants' runs. None = every run.
     """
     has_live_child = sa.exists().where(
         ProvisioningJob.run_id == ProvisioningRun.id,
@@ -1089,6 +1093,7 @@ def repair_stranded_runs(db: Session, limit: int = 100) -> int:
             ProvisioningRun.status.in_(IN_FLIGHT),
             ProvisioningRun.updated_at < now_gt() - STRANDED_RUN_GRACE,
             ~has_live_child,
+            *([where] if where is not None else []),
         )
         .order_by(ProvisioningRun.updated_at)
         .limit(limit)
