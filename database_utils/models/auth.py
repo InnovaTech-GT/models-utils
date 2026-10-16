@@ -80,6 +80,12 @@ class Company(Base):
     #  collector_daily_goal: int | null, technician_daily_goal: int | null}.
     # Validated by schemas.company.MobileSettings; NULL = nothing configured.
     mobile_settings = Column(JSON, nullable=True)
+    # pz1: which provisioning worker serves this tenant. NULL = the default
+    # (Railway) worker; a value = only the worker started with that
+    # PROVISIONING_ZONE (e.g. a DigitalOcean droplet inside the tenant's
+    # ZeroTier netns). Set by SQL; read through
+    # utils.provisioning_jobs.company_in_zone.
+    provisioning_zone = Column(String(64), nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")

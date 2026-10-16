@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (110 revisions, head: **`pw1_provisioning_event`**) — plus
+`alembic/versions/` (111 revisions, head: **`pz1_provisioning_zone`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1161,6 +1161,15 @@ index `ix_provisioning_event_pending (id) WHERE processed_at IS NULL`.
 `CREATE ... IF NOT EXISTS`, `lock_timeout 5s`, post-upgrade assert on the
 index. Downgrade drops the table (reversible, but unprocessed events are lost:
 let backend-erp drain first). Guard: `tests/pg/test_pw1_pg.py`.
+
+### `pz1_provisioning_zone` (2026-10-15) — models-utils 6.11.0
+
+On `pw1_provisioning_event`. Additive, metadata-only: `company.provisioning_zone
+VARCHAR(64) NULL`. Per-tenant provisioning worker routing — a worker started
+with `PROVISIONING_ZONE=<z>` serves only companies whose zone is `<z>`; an
+unzoned worker serves only `provisioning_zone IS NULL` (every tenant at
+release). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the column.
+Set by SQL only (no API yet). Guard: `tests/pg/test_pz1_pg.py`.
 
 ## Key rules
 
