@@ -4,9 +4,9 @@ Reuses the seeded plant from the resolver tests: one company's
 CORE-1 -> OLT-1 -> SPL-1 -> SPL-2 -> ONT-1 chain, splitters passive, ACTIVATION
 and SUSPENSION bound to the router/olt/onu device types. The plant's playbooks
 are one legacy `steps` simulator step each, which normalizes to one
-CONFIGURATION entry per device (no probe); every purpose runs leaf -> root
-(CPE first, core last). Engine v2 phases, rollback, revert and
-secrets: tests/test_provisioning_run_v2.py.
+CONFIGURATION entry per device (no probe); ACTIVATION runs root -> leaf
+(core first, CPE last), every other purpose leaf -> root (CPE first, core
+last). Engine v2 phases, rollback, revert and secrets: tests/test_provisioning_run_v2.py.
 """
 
 import uuid
@@ -67,12 +67,12 @@ def test_a_run_creates_only_its_first_child(db, plant):
     jobs = _children(db, run)
     assert len(jobs) == 1, "children are created lazily, one at a time"
     assert jobs[0].run_position == 0
-    assert jobs[0].inventory_item_id == plant.cpe.id
+    assert jobs[0].inventory_item_id == plant.core.id
 
 
-def test_the_plan_is_leaf_to_root_and_excludes_passives(db, plant):
+def test_the_plan_is_root_to_leaf_and_excludes_passives(db, plant):
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
-    assert [p["category_key"] for p in run.plan] == ["onu", "olt", "router"]
+    assert [p["category_key"] for p in run.plan] == ["router", "olt", "onu"]
     assert [p["category_key"] for p in run.path] == [
         "ONU", "SPLITTER", "SPLITTER", "OLT", "ROUTER"]
 
@@ -86,7 +86,7 @@ def test_the_path_snapshot_keeps_the_passives_visible(db, plant):
 def test_each_child_gets_shared_plus_its_own_device_frame(db, plant):
     run = create_run(db, plant.service, PURPOSE_ACTIVATION)
     first = _children(db, run)[0]
-    assert first.variables["device.category"] == "onu"
+    assert first.variables["device.category"] == "router"
     assert first.variables["path.olt.serial"] == "OLT-1"
     assert first.variables["cpe.serial"] == "ONT-1"
 
