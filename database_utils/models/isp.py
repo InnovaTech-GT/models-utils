@@ -94,7 +94,8 @@ CANONICAL_PLAYBOOK_PURPOSES = (
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
 
 # Engine v2 (doc 42 §5): purposes that take a service DOWN. Devices run
-# leaf -> root (CPE first, core last) for every purpose; this set only gates
+# root -> leaf for ACTIVATION and leaf -> root (CPE first, core last) for
+# every other purpose (provisioning_runs.order_for_purpose); this set only gates
 # the CPE probe and the CPE_NETWORK_PRECONDITION playbook warning.
 TEARDOWN_PURPOSES = frozenset({PURPOSE_SUSPENSION, PURPOSE_DEPROVISION})
 
@@ -1347,7 +1348,7 @@ class ProvisioningRun(Base):
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
-    # phase-major, leaf -> root (CPE first, core last, every purpose),
+    # phase-major, in order_for_purpose (ACTIVATION root -> leaf, others leaf -> root),
     # ROLLBACK entries appended on failure:
     # [{item_id, playbook_id, playbook_version, category_key, device_label,
     #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
@@ -1505,7 +1506,7 @@ class ProvisioningJob(Base):
         Uuid, ForeignKey("provisioning_run.id", ondelete="CASCADE"),
         nullable=True, index=True,
     )
-    # 0-based index into ProvisioningRun.plan, i.e. leaf -> root order.
+    # 0-based index into ProvisioningRun.plan, i.e. execution order.
     run_position = Column(Integer, nullable=True)
 
     company = relationship("Company", back_populates="provisioning_jobs")
