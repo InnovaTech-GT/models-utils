@@ -688,12 +688,11 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 - **Canonical graph order is leaf → root** (doc 35 §3.1): the subscriber's own
   device first, the core last. It is the order the traversal produces
   (`resolve_path`, `ResolvedProvisioning.steps`, `run.path`) and the execution
-  order of every purpose **except ACTIVATION**. On deprovision the subscriber's
-  device is wiped while it is still reachable, where core-first would kill the
-  data path and strand the CPE half-configured.
-- **ACTIVATION executes root → leaf** (founder 2026-10-17, 6.11.1): core router,
+  order of SUSPENSION, REACTIVATION and custom purposes.
+- **ACTIVATION and DEPROVISION execute root → leaf** (founder 2026-10-17, 6.11.1; DEPROVISION 2026-10-19, 6.11.2): core router,
   then OLT, then CPE, in every phase, because the CPE's last steps (OMCI, telnet
-  or ACS) need the service already enabled on the router and the OLT. A run's
+  or ACS) need the service already enabled on the router and the OLT; a
+  deprovision cuts the PPPoE session first (CSR's order). A run's
   `plan` is in execution order; `path` stays leaf → root.
 - **One catalog, one identity.** Graph nodes are `InventoryItem` rows and their
   roles come from `device_category`; there is no second node table and no second

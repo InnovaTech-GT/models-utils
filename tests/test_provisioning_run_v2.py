@@ -169,7 +169,7 @@ def _nodes(*positions):
     (PURPOSE_REACTIVATION, [0, 3, 4]),
     ("CUSTOM_THING", [0, 3, 4]),
     (PURPOSE_SUSPENSION, [0, 3, 4]),
-    (PURPOSE_DEPROVISION, [0, 3, 4]),
+    (PURPOSE_DEPROVISION, [4, 3, 0]),
 ])
 def test_order_for_purpose(purpose, expected):
     assert [n.position for n in order_for_purpose(_nodes(0, 3, 4), purpose)] == expected
