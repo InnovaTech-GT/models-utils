@@ -253,7 +253,7 @@ the definition now holds the phases at the top level (the founder's layout):
 |---|---|
 | `variables`, `computed` | unchanged (`input.*`, `computed.*`) |
 | `session` | `PlaybookSession`, ssh/telnet only: `enable` (`command` "enable", `password_prompt` "ssword", `enabled_prompt` "#" — the password is a `CLI_ENABLE` credential), `config_command` (required by a `config_mode` step), `exit_command` "exit", `error_patterns` (None = platform default in backend-erp; a match = `COMMAND_REJECTED`), `busy_patterns` (a match = `DEVICE_BUSY`) |
-| `secrets` | `[PlaybookSecret{key, length 8..63 (12)}]`, generated once per RUN, read as `{{secret.<key>}}` |
+| `secrets` | `[PlaybookSecret{key, length 8..63 (12), visible (false)}]`, generated once per RUN, read as `{{secret.<key>}}`; a `visible` secret may be published as a plain (non-sensitive) output, so the office reads it on the run later (a customer Wi-Fi password, 6.11.3); it is still encrypted on the run and masked in logs |
 | `preconditions` / `configuration` / `verification` / `rollback` | `[PlaybookStep]`; `configuration` ≥ 1 step; names unique across all four; `__session__` reserved |
 | `outputs` | `[PlaybookOutput{key, label, value, unit?, audience ⊆ {technician, office}, shareable, sensitive}]`, ≤ 16 |
 
@@ -280,7 +280,7 @@ chars, no lookaround, backreference or named group, compiled with tokens as a
 literal; escaped text such as `\(?=` or `\\1` is not mistaken for a
 construct; a leading `(?i)`/`(?m)`/`(?s)` is fine — backend-erp's `re2.compile`
 is the authority), `SECRET_UNDECLARED`, `OUTPUT_SECRET_MIXED` (a secret output
-is exactly `{{secret.<key>}}`; it is always `sensitive`, refused as false),
+is exactly `{{secret.<key>}}`; it is always `sensitive`, refused as false, unless the secret is `visible`),
 `OUTPUT_SHARE_AUDIENCE` (`shareable` needs `technician`), and the `computed`
 checks across every phase, validation/threshold strings and output values.
 No `extra="forbid"` (the editor round-trips unmodelled keys).

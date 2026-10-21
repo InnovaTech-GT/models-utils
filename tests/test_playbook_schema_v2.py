@@ -342,6 +342,19 @@ def test_a_secret_output_is_always_sensitive():
     _err(_wifi(sensitive=False), "sensitive")
 
 
+def test_a_visible_secret_may_be_a_plain_output():
+    d = _wifi(sensitive=False)
+    d["secrets"][0]["visible"] = True
+    out = PlaybookDefinition.model_validate(d).outputs[0]
+    assert out.sensitive is False
+    d2 = _wifi()  # visible, sensitive left unset: plain by default
+    d2["secrets"][0]["visible"] = True
+    assert PlaybookDefinition.model_validate(d2).outputs[0].sensitive is False
+    d3 = _wifi(sensitive=True)  # and it may still be made sensitive
+    d3["secrets"][0]["visible"] = True
+    assert PlaybookDefinition.model_validate(d3).outputs[0].sensitive is True
+
+
 def test_secret_must_be_declared():
     d = _wifi()
     d["secrets"] = []
