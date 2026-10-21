@@ -113,6 +113,8 @@ from .workflow import (
     ExecutionStatus,
 )
 
+from .whatsapp_bot import WhatsAppBotConfig
+
 # Import all models here so Alembic can detect them
 __all__ = [
     # Auth
@@ -222,4 +224,6 @@ __all__ = [
     "TriggerEventType",
     "StepActionType",
     "ExecutionStatus",
+    # WhatsApp bot (wb1)
+    "WhatsAppBotConfig",
 ]
