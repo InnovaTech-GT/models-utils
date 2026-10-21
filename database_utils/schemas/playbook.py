@@ -580,6 +580,10 @@ class PlaybookSecret(BaseModel):
     read as {{secret.<key>}}. The alphabet is fixed (SECRET_ALPHABET)."""
     key: str
     length: int = 12
+    # A visible secret may be published as a plain (non-sensitive) output, so
+    # the office can read it on the run later (a customer Wi-Fi password).
+    # It is still generated per run, encrypted on the run and masked in logs.
+    visible: bool = False
 
     @field_validator("key")
     @classmethod
@@ -636,9 +640,8 @@ class PlaybookOutput(BaseModel):
                 raise ValueError(
                     f"OUTPUT_SECRET_MIXED: {where}: a secret output is exactly "
                     "{{secret.<key>}}, with no other text or filter")
-            if "sensitive" in self.model_fields_set and not self.sensitive:
-                raise ValueError(f"{where}: a secret output is always sensitive")
-            self.sensitive = True
+            # Sensitivity is settled by PlaybookDefinition, which knows whether
+            # the secret is `visible`; a non-visible one is always sensitive.
         return self
 
 
@@ -1024,6 +1027,15 @@ class PlaybookDefinition(BaseModel):
             if ref not in secret_keys:
                 raise ValueError(f"SECRET_UNDECLARED: {{{{secret.{ref}}}}} is not declared "
                                  "in 'secrets'")
+        visible = {f"secret.{s.key}" for s in self.secrets if s.visible}  # output_secret_ref form
+        for o in self.outputs:
+            ref = output_secret_ref(o.value)
+            if ref is None or ref in visible:
+                continue
+            if "sensitive" in o.model_fields_set and not o.sensitive:
+                raise ValueError(f"output '{o.key}': a secret output is always sensitive "
+                                 "unless the secret is visible")
+            o.sensitive = True
 
         if len(self.outputs) > MAX_OUTPUTS:
             raise ValueError(f"at most {MAX_OUTPUTS} outputs per playbook")
