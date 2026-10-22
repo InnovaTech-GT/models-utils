@@ -648,9 +648,9 @@ def _refusals(db: Session, client_service: Any, purpose: str,
               path_nodes: Dict[str, ResolvedNode],
               ambiguous_roles: Dict[str, List[str]]) -> List[Dict[str, Any]]:
     """Every error that would otherwise surface mid-run, after earlier devices
-    were already configured (doc 40 §3.3.2). Runs go leaf -> root on frozen
-    frames, so a missing OLT port would fail the OLT step after the ONU step
-    ran; refusing here means nothing touches a device first."""
+    were already configured (doc 40 §3.3.2). Runs walk the path in order on
+    frozen frames, so a missing OLT port would fail the OLT step after another
+    device's step ran; refusing here means nothing touches a device first."""
     explain = _Explainer(path_nodes, ambiguous_roles)
     errors: List[Dict[str, Any]] = []
     baseline = (_last_activation_frames(db, client_service)

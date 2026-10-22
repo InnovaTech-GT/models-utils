@@ -351,7 +351,7 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — one entry per child to run. **Engine v2 (doc 42 §6.1)**: phase-major (every device's PRECONDITIONS, CONFIGURATION, VERIFICATION, leaf → root — CPE, OLT, core — for every purpose): `[{item_id, playbook_id, playbook_version, category_key, device_label, phase, steps: [{name, label, skip?}], probe?, ran_steps?}]`; ROLLBACK entries are **appended** when the run rolls back (the forward plan is a stable prefix). Pre-v2 runs have entries without `phase`, leaf → root. `path` entries carry `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` (doc 40) |
+| `plan` | JSON NOT NULL — one entry per child to run. **Engine v2 (doc 42 §6.1)**: phase-major (every device's PRECONDITIONS, CONFIGURATION, VERIFICATION, in `order_for_purpose` — ACTIVATION root → leaf (core, OLT, CPE), every other purpose leaf → root (CPE, OLT, core)): `[{item_id, playbook_id, playbook_version, category_key, device_label, phase, steps: [{name, label, skip?}], probe?, ran_steps?}]`; ROLLBACK entries are **appended** when the run rolls back (the forward plan is a stable prefix). Pre-v2 runs have entries without `phase`, leaf → root. `path` entries carry `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` (doc 40) |
 | `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id: normalized definition}, "rollback": {cause_code, cause_error, no_rollback}}`, resolved **once** at run creation (`rollback` only once the run rolls back). Later children are built from this rather than re-resolved, so neither a re-parent nor a playbook edit landing mid-run can change what the remaining steps — or the rollback — do. Not exposed by the API |
 | `phase` | VARCHAR(16) NULL, CHECK `ck_provisioning_run_phase` (`pe1`) — the phase of the entry being executed; NULL = a legacy (pre-v2) run |
 | `error_code` / `error` | VARCHAR(40) / TEXT NULL (`pe1`) — the outcome: `PRECONDITION_FAILED`, `CONFIGURATION_FAILED`, `VERIFICATION_FAILED`, `CANCELLED`, `STRANDED_RUN_EXPIRED`, `ROLLBACK_INCOMPLETE`, `REVERTED` and the human detail. Written only by `provisioning_runs` |
@@ -685,13 +685,15 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
   `provisioning_settings.cwmp_credential_id` / `cwmp_pending_credential_id` name it
   explicitly, because there is exactly one per tenant and the accept-both rotation
   window needs the pair stated rather than inferred.
-- **Canonical graph order is leaf → root, everywhere** (doc 35 §3.1): the
-  subscriber's own device first, the core last, for every purpose, in the
-  executor and in the UI alike. It is the order the traversal produces (no
-  re-sort, no second convention), and failure containment is better in both
-  directions — on activation a failed CPE step aborts before the OLT is touched;
-  on deprovision the subscriber's device is wiped while it is still reachable,
-  where core-first would kill the data path and strand the CPE half-configured.
+- **Canonical graph order is leaf → root** (doc 35 §3.1): the subscriber's own
+  device first, the core last. It is the order the traversal produces
+  (`resolve_path`, `ResolvedProvisioning.steps`, `run.path`) and the execution
+  order of SUSPENSION, REACTIVATION and custom purposes.
+- **ACTIVATION and DEPROVISION execute root → leaf** (founder 2026-10-17, 6.11.1; DEPROVISION 2026-10-19, 6.11.2): core router,
+  then OLT, then CPE, in every phase, because the CPE's last steps (OMCI, telnet
+  or ACS) need the service already enabled on the router and the OLT; a
+  deprovision cuts the PPPoE session first (CSR's order). A run's
+  `plan` is in execution order; `path` stays leaf → root.
 - **One catalog, one identity.** Graph nodes are `InventoryItem` rows and their
   roles come from `device_category`; there is no second node table and no second
   type catalog. That duality is what killed the previous graph

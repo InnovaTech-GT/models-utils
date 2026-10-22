@@ -77,7 +77,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   but it is wrong for a metro-ethernet core, and a carrier with a protected ring
   will notice. Adding a second parent is not a column change: it invalidates
   "the path" as a single ordered list, which the resolver, the run `plan`, the
-  `path.<category>` namespace and the leaf→root execution order all assume.
+  `path.<category>` namespace and the run execution order all assume.
 - **No automatic chain → graph backfill.** `ng2_topology_drop` **raises** rather
   than repairing when it finds a `client_service` with a `topology_id` and no
   `cpe_item_id`. A chain names device *types*; a graph names device *instances*

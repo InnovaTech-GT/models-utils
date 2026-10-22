@@ -67,6 +67,8 @@ class TestFilters:
         ("{{x | alnum}}", "a b-c_d!'\"\n", "ab-c_d"),
         ('{{x | replace:"a","b"}}', "banana", "bbnbnb"),
         ("{{x | truncate:3}}", "abcdef", "abc"),
+        ("{{x | last:4}}", "GPON51356BA1", "6BA1"),
+        ("{{x | last:20}}", "abc", "abc"),
         ('{{x | pad_left:5,"0"}}', "42", "00042"),
         ("{{x | pad_left:3}}", "4", "  4"),
     ])

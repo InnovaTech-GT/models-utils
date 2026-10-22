@@ -111,6 +111,11 @@ def _f_truncate(s: str, n: str) -> str:
     return s[: _int_arg("truncate", n, 1, 512)]
 
 
+def _f_last(s: str, n: str) -> str:
+    """The last N characters (`{{cpe.serial | last:4}}` -> "6BA1")."""
+    return s[-_int_arg("last", n, 1, 512):]
+
+
 def _f_pad_left(s: str, width: str, fill: str = " ") -> str:
     if len(fill) != 1:
         raise TemplateError("'pad_left' fill must be exactly one character")
@@ -169,6 +174,7 @@ FILTERS: Dict[str, FilterSpec] = {
     "alnum": FilterSpec(_f_alnum, 0, 0, "alnum"),
     "replace": FilterSpec(_f_replace, 2, 2, 'replace:"old","new"'),
     "truncate": FilterSpec(_f_truncate, 1, 1, "truncate:32"),
+    "last": FilterSpec(_f_last, 1, 1, "last:4"),
     "pad_left": FilterSpec(_f_pad_left, 1, 2, 'pad_left:3,"0"'),
     "mac": FilterSpec(_f_mac, 1, 1, "mac:colon|dash|dot|bare"),
     # `default` never reaches _apply — it is handled in the render loop because
