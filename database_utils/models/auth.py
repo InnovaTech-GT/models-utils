@@ -173,6 +173,11 @@ class User(Base):
     # ponytail: plain URL, no file table — promote to an uploaded_file FK the
     # day avatar uploads actually ship.
     photo_url = Column(String, nullable=True)
+    # ca1: where a collector lives, the start point the back-office uses to
+    # suggest each collector's area. Both or neither: ck_user_home_location
+    # lives in the revision only (SQLite create_all in consumers).
+    home_latitude = Column(Float, nullable=True)
+    home_longitude = Column(Float, nullable=True)
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
