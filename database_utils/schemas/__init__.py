@@ -29,6 +29,8 @@ from .provisioning_settings import *
 from .device_action_log import *
 # uplink-mobile integration (rs1/tc1/uf1/pi1)
 from .mobile_integration import *
+# ca1: collection areas (back-office Configuración -> Áreas de cobro)
+from .collection_area import *
 
 # Rebuild models with forward references to resolve circular dependencies
 from .order import OrderOut

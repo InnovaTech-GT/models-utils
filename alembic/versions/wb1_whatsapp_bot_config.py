@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy.sql import text
 
 revision: str = "wb1_whatsapp_bot_config"
-down_revision: Union[str, Sequence[str], None] = "pz1_provisioning_zone"
+down_revision: Union[str, Sequence[str], None] = "ca1_collection_areas"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

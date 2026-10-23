@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (112 revisions, head: **`wb1_whatsapp_bot_config`**) — plus
+`alembic/versions/` (113 revisions, head: **`wb1_whatsapp_bot_config`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1171,9 +1171,9 @@ unzoned worker serves only `provisioning_zone IS NULL` (every tenant at
 release). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the column.
 Set by SQL only (no API yet). Guard: `tests/pg/test_pz1_pg.py`.
 
-### `wb1_whatsapp_bot_config` (2026-10-21) — models-utils 6.12.0
+### `wb1_whatsapp_bot_config` (2026-10-21) — models-utils 6.12.1
 
-On `pz1_provisioning_zone`. Additive. Creates `whatsapp_bot_config`, the
+On `ca1_collection_areas`. Additive. Creates `whatsapp_bot_config`, the
 per-company menu of the WhatsApp bot (Nova): `id UUID PK`, `created_at`/
 `updated_at TIMESTAMPTZ NOT NULL`, `company_id UUID NOT NULL` → `company`
 ON DELETE CASCADE, `enabled BOOLEAN NOT NULL DEFAULT true`, `welcome_text
@@ -1209,3 +1209,17 @@ saved menus are lost). Guard: `tests/pg/test_wb1_pg.py`.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+### `ca1_collection_areas` (2026-10-16) — models-utils 6.12.0
+
+On `pz1_provisioning_zone`. Additive. New table `collection_area` (company
+CASCADE, `collector_id` FK user SET NULL, `uq_collection_area_company_name`,
+partial unique index `uq_collection_area_collector` WHERE `collector_id IS NOT
+NULL`, `ck_collection_area_color` regex `#RRGGBB`, `ck_collection_area_polygon`
+JSON array of at least 3). `user` + `home_latitude` / `home_longitude` (DOUBLE
+PRECISION NULL) and `ck_user_home_location` (both or neither). Permissions
+`collection_areas.read` / `collection_areas.update` inserted and granted to the
+global ADMIN role (the seed lists them too). The CHECKs live in the revision
+only (SQLite `create_all` in the consumers). `lock_timeout 5s`, `IF [NOT]
+EXISTS`, post-upgrade asserts. Downgrade drops the table, the columns and the
+grants. Guard: `tests/pg/test_ca1_pg.py`.
