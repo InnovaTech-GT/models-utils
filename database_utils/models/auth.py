@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Index, Table, Text, JSON, Uuid,
-    CheckConstraint, UniqueConstraint,
+    CheckConstraint, UniqueConstraint, text,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -80,6 +80,12 @@ class Company(Base):
     #  collector_daily_goal: int | null, technician_daily_goal: int | null}.
     # Validated by schemas.company.MobileSettings; NULL = nothing configured.
     mobile_settings = Column(JSON, nullable=True)
+    # pz1: which provisioning worker serves this tenant. NULL = the default
+    # (Railway) worker; a value = only the worker started with that
+    # PROVISIONING_ZONE (e.g. a DigitalOcean droplet inside the tenant's
+    # ZeroTier netns). Set by SQL; read through
+    # utils.provisioning_jobs.company_in_zone.
+    provisioning_zone = Column(String(64), nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")
@@ -167,6 +173,11 @@ class User(Base):
     # ponytail: plain URL, no file table — promote to an uploaded_file FK the
     # day avatar uploads actually ship.
     photo_url = Column(String, nullable=True)
+    # ca1: where a collector lives, the start point the back-office uses to
+    # suggest each collector's area. Both or neither: ck_user_home_location
+    # lives in the revision only (SQLite create_all in consumers).
+    home_latitude = Column(Float, nullable=True)
+    home_longitude = Column(Float, nullable=True)
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
@@ -207,10 +218,29 @@ class Notification(Base):
 
 
 # mi2: the field apps' notification feed. Not `notification` — that table
-# holds user invitations. Produced lazily by backend-erp when the feed is read
-# (dedupe_key makes each event insert at most once per user).
-USER_NOTIFICATION_KINDS = ("TASK_ASSIGNED", "TASK_OVERDUE", "PAYMENTS_OVERDUE")
-_USER_NOTIFICATION_KIND_CHECK = "kind IN ('TASK_ASSIGNED','TASK_OVERDUE','PAYMENTS_OVERDUE')"
+# holds user invitations. The three legacy kinds are produced lazily by
+# backend-erp when the feed is read; the ZTP_* kinds (zt1, doc 43 §6.8) are
+# written eagerly by the run-event consumer; ZTP_MANUAL_STEP (zm1, doc 42d §9)
+# by the worker's manual park, technicians only. dedupe_key makes each event insert
+# at most once per user.
+USER_NOTIFICATION_KINDS = (
+    "TASK_ASSIGNED", "TASK_OVERDUE", "PAYMENTS_OVERDUE",
+    "ZTP_SUCCEEDED", "ZTP_FAILED", "ZTP_NEEDS_ATTENTION", "ZTP_ROLLBACK_INCOMPLETE",
+    "ZTP_MANUAL_STEP",
+)
+_USER_NOTIFICATION_KIND_CHECK = (
+    "kind IN ('TASK_ASSIGNED','TASK_OVERDUE','PAYMENTS_OVERDUE',"
+    "'ZTP_SUCCEEDED','ZTP_FAILED','ZTP_NEEDS_ATTENTION','ZTP_ROLLBACK_INCOMPLETE',"
+    "'ZTP_MANUAL_STEP')"
+)
+# zt1: user_notification doubles as the push outbox (doc 43 §6.9). NULL = no
+# push; the worker's sender moves PENDING to one of the others. No CHECK.
+PUSH_STATES = ("PENDING", "SENT", "NO_TOKEN", "FAILED", "EXPIRED")
+_PUSH_PENDING_WHERE = "push_state = 'PENDING'"
+PUSH_PLATFORMS = ("android", "ios")
+_PUSH_PLATFORM_CHECK = "platform IN ('android','ios')"
+PUSH_APPS = ("tecnicos",)
+_PUSH_APP_CHECK = "app IN ('tecnicos')"
 
 
 class UserNotification(Base):
@@ -224,6 +254,8 @@ class UserNotification(Base):
     dedupe_key = Column(String(160), nullable=False)
     payload = Column(JSON, nullable=True)
     read_at = Column(DateTime(timezone=True), nullable=True)
+    # zt1: one of PUSH_STATES, or NULL for a row that is never pushed.
+    push_state = Column(String(12), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
@@ -232,6 +264,30 @@ class UserNotification(Base):
         CheckConstraint(_USER_NOTIFICATION_KIND_CHECK, name="ck_user_notification_kind"),
         UniqueConstraint("user_id", "dedupe_key", name="uq_user_notification_dedupe"),
         Index("ix_user_notification_feed", "user_id", "read_at", created_at.desc()),
+        Index("ix_user_notification_push_pending", "created_at",
+              postgresql_where=text(_PUSH_PENDING_WHERE)),
+    )
+
+
+class UserPushToken(Base):
+    """zt1 (doc 43 §4): one Expo push token per device. `token` is unique, so a
+    phone that signs in as another user moves its token to that user (upsert)."""
+    __tablename__ = "user_push_token"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    token = Column(String(255), nullable=False, unique=True)
+    platform = Column(String(8), nullable=False)
+    app = Column(String(16), nullable=False)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint(_PUSH_PLATFORM_CHECK, name="ck_user_push_token_platform"),
+        CheckConstraint(_PUSH_APP_CHECK, name="ck_user_push_token_app"),
     )
 
 

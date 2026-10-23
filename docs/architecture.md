@@ -43,7 +43,8 @@ The library has **no entry point of its own**. It runs in exactly two ways:
    - locally via the repo-root compose `migrate` service, which builds this
      repo's `Dockerfile` (python:3.12-slim, `pip install .`,
      CMD `alembic upgrade head`);
-   - in production via GitHub Actions on push to `main`.
+   - on Railway via GitHub Actions: push to `develop` migrates the
+     `development` DB, push to `main` migrates `production`.
    After upgrading, `alembic/env.py` runs `_run_seeds(connection)` (RBAC, tier,
    and ISP seeds — all idempotent). The Dockerfile exists solely for the compose
    one-shot; production service images never build it.

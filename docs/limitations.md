@@ -77,7 +77,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   but it is wrong for a metro-ethernet core, and a carrier with a protected ring
   will notice. Adding a second parent is not a column change: it invalidates
   "the path" as a single ordered list, which the resolver, the run `plan`, the
-  `path.<category>` namespace and the leaf→root execution order all assume.
+  `path.<category>` namespace and the run execution order all assume.
 - **No automatic chain → graph backfill.** `ng2_topology_drop` **raises** rather
   than repairing when it finds a `client_service` with a `topology_id` and no
   `cpe_item_id`. A chain names device *types*; a graph names device *instances*
@@ -103,14 +103,79 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   (splitters, splice closures) already is an `InventoryItem` and works fine; if
   untracked structural nodes are ever needed the answer is a device category for
   them, not a second table.
-- **Pre-existing and deliberately untouched:**
-  `workflow_engine._execute_enqueue_provisioning_path` (like the
-  `_execute_enqueue_provisioning` it replaced) **still never calls
-  `enforce_provisioning_gates`**, so automation-triggered runs bypass the
-  dry-run gate and the tenant kill switch — those gates live in backend-erp and
-  are only invoked by its routers. Cycle 10 moved this code but did not fix it:
-  fixing it here would change automation behaviour mid-cycle, silently. Filed
-  (doc 33 "Known gap", doc 35 §10), not smuggled in.
+- **Closed in 6.4.0 (doc 43 §5.6):** the workflow engine's
+  `ENQUEUE_PROVISIONING` used to bypass the kill switch, the device-type opt-out
+  and the dry-run gate. The gates now live in `utils/provisioning_gates.py`; a
+  live `create_run` refuses with `ProvisioningGateError` (mode A turns it into a
+  FAILED step) and mode B checks `gate_failure` before its insert. A legacy
+  automation that reaches a playbook not dry-run at its current version now
+  fails visibly instead of running.
+- **The system-playbook dry-run exemption is matched by name.** `playbook`
+  has no `is_system` flag, so `gate_failure` exempts any playbook whose name is
+  in `SYSTEM_PLAYBOOK_NAMES` — including a tenant's own playbook created or
+  renamed to one (e.g. `huawei_onu_activate` on a tenant never seeded with it).
+  Carried over verbatim from backend-erp; it matters more now that this is the
+  only gate for every run producer. Fix: base the exemption on something a
+  tenant cannot set (an `is_system` column, or the seed's creator), and have
+  backend-erp's playbook create/rename reject names in `SYSTEM_PLAYBOOK_NAMES`.
+
+## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
+
+- **Stranded runs are repaired by polling, not by the settle.** If `advance_run`
+  fails inside the worker's settle (it runs in a savepoint so the job's outcome
+  still commits), the run sits with no in-flight child until the reaper calls
+  `repair_stranded_runs` (> 30 s quiet). A run quiet for more than
+  `STRANDED_RUN_MAX_AGE` (1 h) is not advanced forward from a plan resolved
+  long ago: in PRECONDITIONS it is closed FAILED (`STRANDED_RUN_EXPIRED`), in
+  CONFIGURATION/VERIFICATION it enters ROLLBACK (engine v2, doc 42 §8.4). The
+  one exception is a run whose final forward entry already succeeded: nothing
+  is left to configure, so it is finished SUCCEEDED instead of rolled back.
+- **No run-level cancel.** Cancelling a RUNNING child is per job; a run cannot be
+  cancelled as a unit. A failed or cancelled child is never retried on its own
+  (backend-erp `RUN_CHILD_NOT_RETRYABLE`): re-provision opens a new run.
+- **The device lock is taken at claim, from the child's `inventory_item_id`.**
+  A playbook step that targets a different device is not locked (backend-erp
+  logs `TARGET_NOT_LOCKED`, warn-only); deriving the lock from step targets is
+  tracked separately (R15).
+- **`IN_FLIGHT` is hand-synced** with the predicates of
+  `uq_provisioning_run_company_idem` / `uq_provisioning_job_company_idem` /
+  `uq_provisioning_job_device_lock` (QUEUED, RUNNING, PENDING_INFORM, PENDING_MANUAL since `zm1`;
+  `tests/test_manual_steps.py` pins all three); if they
+  drift, `create_or_get_run` and the index disagree. SQLite builds both indexes
+  **without** their predicate, so a test that re-opens a run on the same key
+  must recreate them partial (`tests/test_provisioning_run_v2.py` does).
+
+## Engine v2 (6.3.0, doc 42) — shipped limitations
+
+- **Run events go through the `provisioning_event` outbox** (6.10.0;
+  the in-process `RUN_CLOSED_LISTENERS` list is gone). `close_run` only writes
+  the row; nothing happens until backend-erp's drainer runs, so settlement
+  lags by up to one poll interval, and with the backend down events pile up
+  (a stale WARNING fires after 5 minutes). Delivery is at-least-once, so the
+  backend handlers must stay idempotent. The table has no retention of its
+  own here; backend-erp deletes processed rows after 30 days.
+- **Stored legacy definitions are normalized on read**, not rewritten: the
+  legacy shape, the read-only `steps` mirror and `_connectivity_definition`'s
+  legacy shape all go in a later `pe2` cleanup.
+- **The shared-device `wait_until` ceiling (120 s) needs the binding**, so the
+  schema enforces only the 600 s cap; `shared_device_wait_errors()` is called by
+  backend-erp's router.
+- **No run-level deadline** (doc 42 Q9): a stranded forward run rolls back only
+  after `STRANDED_RUN_MAX_AGE` (1 h).
+- **Rollback children have no claim priority** over forward work, and a
+  `NO_ROLLBACK_DEFINED` device always ends a rollback `ROLLBACK_INCOMPLETE`
+  (an empty rollback is a save-time warning, not an error, doc 42 Q13).
+- **Secrets need the KEK in every process that opens such a run**
+  (`CREDENTIALS_KEKS` / `CREDENTIALS_ACTIVE_KEK_ID`); plans without `secrets`
+  never touch crypto.
+
+## Port labels (doc 40 C8) — transitional
+
+- `inventory_item.parent_port` / `uplink_port` are **unmapped but still in the
+  DB** (`pt2_unmap_port_labels`, 5.0.0, develop only). The column drop
+  `pt3_drop_port_labels` (C8b) must not run against a database until every
+  backend deployed on it runs C8a — on prod that means after the v1.0.1
+  promotion.
 
 ## Migrations
 
@@ -122,6 +187,9 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   named device-type chains: the chains carried per-topology playbook bindings and
   pinned positions the graph does not encode. Restore from a backup taken before
   the release.
+- **`ld1_legacy_drop` and `sh1_service_history_repair` are one-way** — both
+  `downgrade()`s raise `NotImplementedError`. Prod's pre-v1.0.0 dump
+  (`backups/prod-pre-v1.0.0-20261006T033428Z.dump`) is the rollback path.
 - **Two vestigial topology surfaces survive.**
   `ServicePlanBase`/`ServicePlanUpdate.default_topology_id` and
   `workflow_fields.py`'s `client_service.topology_id` (`fk_to: "topology"`)
@@ -130,13 +198,36 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   that can never match — but they are drift, and they should be removed in a
   follow-up.
 
+## Provisioning worker split (R1 6.9.0, R2 6.10.0)
+
+- **R2 removed the R1 seams.** `finish_job` has no `extra_follow_ons` and
+  `stamp_connectivity` has no `promote`; both emit/stamp only. The install_state
+  recompute and the INSTALLED promotion now depend on backend-erp draining the
+  `JOB_FINISHED` event, so with no backend running they do not happen. A
+  backend-erp pin older than 6.10.0 that still passes `extra_follow_ons` or
+  registers a `RUN_CLOSED_LISTENERS` listener fails at import or call time:
+  repin backend-erp (and the worker) to the same SHA. See
+  [playbook-language.md](playbook-language.md).
+- **`fail_parked` emits `JOB_FINISHED` like every other terminal transition**,
+  so an «Abortar» that needs install_state immediately must recompute it
+  itself before committing (backend-erp's `guided_steps` does).
+- **`google-re2` and `httpx` are not in `install_requires`.** A consumer that
+  calls `_prepare_checks` / `dry_run_playbook` with a regex, or calls
+  `nbi_client()`, gets an `ImportError` unless it pins them. backend-erp
+  already does, and auth-erp never calls them.
+- **Renderer changes now need a models-utils release.** That is the price of
+  one renderer for preview and execution. The shared filter fixture
+  `tests/fixtures/playbook_filters.json` now has three hash-locked copies
+  (here, backend-erp and frontend-erp) until backend-erp's copy of the test
+  moves in P1.2.
+
 ## CI / packaging
 
 - **ruff is advisory only** in CI (`continue-on-error: true`) — lint failures
   do not block merges.
 - `setup.cfg` still carries the placeholder `author_email = you@example.com`.
-- `CHANGELOG.md` has a documented gap: 0.7.0 → 1.10.0 releases were not
-  recorded per-version (see the note at the top of that file).
+- `CHANGELOG.md` has gaps: 0.7.0 → 1.11.1 and most 1.x releases between 1.11.1
+  and 1.33.0 were not recorded per-version.
 - **Naming mismatch** (repo `models-utils`, package `database-utils`, module
   `database_utils`) is historical and now documented, but still a recurring
   source of confusion.
@@ -144,7 +235,7 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
 ## Platform-level accepted debt (ADR-009)
 
 - Real device drivers (ssh / telnet / snmp / tr069) are tracked TODOs. They
-  will land in backend-erp's provisioning worker; the **resolution logic**
+  will land in the provisioning worker; the **resolution logic**
   (graph path → per-node playbook → variable frames) lives here. The network
   config layer design (platform docs 21/23 — cloud-side drivers, shared
   GenieACS, netmiko) is design-only and not implemented in this repo.

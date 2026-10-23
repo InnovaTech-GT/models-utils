@@ -2,7 +2,7 @@
 
 ## Description
 
-Shared utility modules in `database_utils/utils/` (24 modules) plus the
+Shared utility modules in `database_utils/utils/` (30 modules) plus the
 supporting `dependencies/` and `middleware/` packages. The two largest —
 the workflow engine and provisioning resolution — have their own page:
 [workflow-engine.md](workflow-engine.md).
@@ -20,8 +20,11 @@ library, never the reverse).
 | `workflow_engine.py` (58 KB) | Trigger matching + async DAG execution (`check_workflow_triggers`, `execute_workflow`, `execute_step`) — see [workflow-engine.md](workflow-engine.md) |
 | `network_graph.py` | The **only** place the company plant tree is walked (Cycle 10, doc 35 §3) — see below |
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
-| `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5) — see below |
+| `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5; **engine v2**, doc 42: phase-major plan, whole-run rollback, `close_run` emitting `RUN_CLOSED` (outbox, 6.10.0), revert, rollback retry, per-run secrets) — see below |
+| `provisioning_gates.py` | The provisioning gates, enforced where every run is created (doc 43 §5.6) — see below |
+| `acs_bootstrap.py` | The `acs.*` playbook namespace (doc 42 §9.7): ACS URL, tenant inform password, the CPE's registration ensure — see below |
 | `playbook_expr.py` | Declared integer arithmetic for a playbook's `computed` block (doc 40 §3.3.3, ADR-006 amendment) and the shared `is_secret_name`/`_SECRET_HINTS` (moved from backend-erp's renderer, which re-exports them) — see below |
+| `playbook_template.py`, `playbook_render.py`, `provisioning_codes.py`, `playbook_drivers.py`, `genieacs_nbi.py`, `connectivity.py`, `provisioning_jobs.py`, `provisioning_events.py` | **6.9.0, provisioning worker split R1** (+ **6.10.0 R2**: `provisioning_events.emit_event` and the outbox kinds; `finish_job` emits `JOB_FINISHED`): the playbook language, the job terminal transition (`finish_job`, `fail_parked`), connectivity-job construction and the read-side GenieACS NBI helpers, moved verbatim from backend-erp so the API and the worker share them — see [playbook-language.md](playbook-language.md) |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
@@ -108,15 +111,18 @@ the service's CPE and walks to the root:
    path raises `RESOLUTION_FAILED` with `MISSING_SERVICE_PARAM` errors.
 7. **Resolution-time refusal (doc 40 §3.3.2).** For every step node, the
    playbook's `computed` block is evaluated (`playbook_expr.evaluate_all`) and
-   every resolver-owned token the executor renders *before* a step runs
-   (templates, http/tr069 `request`, `target_item_id`, preconditions — not
-   `rollback`/`on_failure`) must have a value. For any purpose other than
+   every resolver-owned token the executor renders must have a value — in
+   **every phase, rollback included** (engine v2, doc 42 §9.4: a run must not
+   start if its undo cannot render): templates, http/tr069 `request`,
+   `target_item_id`, step guards, validation strings, capture regexes and
+   thresholds, and every output value. `capture.*` / `secret.*` are outside
+   `RESOLVER_NAMESPACES` and skipped (checked at save time instead). For any purpose other than
    ACTIVATION, every port fact the step reads must also match the last live
    activation. Everything found is raised once as `RESOLUTION_FAILED` with the
    whole list (see below). This applies to **every** purpose.
 
-Runs execute leaf → root on frames frozen at creation, so before step 7 a
-missing OLT port failed the OLT step *after* the ONU step had already run; now
+Runs execute on frames frozen at creation, so before step 7 a missing OLT port
+failed the OLT step *after* another device had already been configured; now
 nothing touches a device first.
 
 Step 6 preserves the fatality posture exactly: ACTIVATION fails visibly (a
@@ -191,7 +197,9 @@ but no link) simply has no keys. `out_port_name` is the template (factory) name
 
 Namespaces checked are the resolver's own: `device`, `cpe`, `path`,
 `service_plan`, `client`, `service`, `computed`. A token whose body has a
-`| default:` filter (regex `\|\s*default\s*:`, not a substring test) is skipped;
+`| default:` filter (regex `\|\s*default\s*:`, not a substring test, run after
+quoted filter arguments are stripped so `replace:"|default:","x"` does not count
+— 4.5.2, review F2) is skipped;
 `input.*` keeps the renderer's required/default rule; bare legacy tokens are
 skipped. A **malformed** construct — a token-shaped body whose head does not
 parse (`{{path.ROUTER.serial}}`, `{{ not a token }}`) or a residual `{{`
@@ -252,24 +260,78 @@ access by the back door (ADR-006).
 > `test_device_variable_pattern_matches_the_new_namespaces` exists solely to
 > catch that omission.
 
+### `provisioning_gates.py` (6.4.0, doc 43 §5.6)
+
+The blast-radius gates, moved down from backend-erp `utils/provisioning_guards.py`
+so the workflow engine can apply them too (backend-erp keeps its public names and
+409 bodies and delegates here). Dry runs bypass every gate.
+
+| Name | Behaviour |
+|---|---|
+| `SYSTEM_PLAYBOOK_NAMES` / `CORE_CONNECTIVITY_PLAYBOOK_NAMES` | SaaS-verified playbooks, exempt from the dry-run gate (matched by name) |
+| `kill_switch_enabled()` | env `PROVISIONING_KILL_SWITCH` in `1`/`true`/`yes` |
+| `enable_gate_reason(db, company_id, device_type)` | `"kill_switch"`, `"device_type_disabled"` (`device_type.provisioning_enabled` false) or None. backend-erp's worker claim re-check uses it |
+| `claim_time_gate_blocked(db, company_id, device_type)` | 6.9.0, moved from backend-erp `utils/provisioning_guards.py`: `enable_gate_reason(...) is not None`, the worker's claim-time re-check (never for dry runs) |
+| `gate_failure(db, company_id, playbook, device_type, dry_run)` | None, or exactly today's 409 body: `{"code": "PROVISIONING_DISABLED", "reason"}` or `{"code": "DRY_RUN_REQUIRED", "playbook_version", "last_dry_run_version"}` (no `playbook_id`) |
+| `run_gate_failures(db, resolved, dry_run)` | One `gate_failure` per configured node of the resolved path, each + `item_id` / `playbook_id` (readiness context for backend-erp's closeout); a node whose playbook no longer exists yields `{"code": "PLAYBOOK_NOT_FOUND"}` instead of crashing |
+| `ProvisioningGateError(errors)` | Raised by a live `create_run` (so by `create_or_get_run` too). Every producer goes through it: `/provision`, lifecycle, the cancel cascade, ZTP and the workflow engine's mode A. Callers map it to 409 / `ENQUEUE_FAILED` / a FAILED workflow step. Rollback, revert and rollback-retry children are not created by `create_run` and stay exempt |
+
 ### `provisioning_runs.py`
 
 | Function | Behaviour |
 |---|---|
-| `run_idempotency_key(client_service_id, purpose, dry_run)` | `path-{service_id}-{purpose_lower}[-dry]` — deliberately mirrors the shape backend-erp's manual endpoint has always used, so a run and a legacy standalone job never collide in the same namespace |
-| `find_in_flight_run(db, company_id, key)` | Dedupe lookup over `IN_FLIGHT = (QUEUED, RUNNING, PENDING_INFORM)`. That tuple **must** mirror the predicate on `uq_provisioning_run_company_idem`; if they disagree, the dedupe check and the unique index disagree and one of them starts raising `IntegrityError` |
-| `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None)` | Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), snapshots `path`/`plan`/`frames`, opens the run, and queues **only its first child**. Resolution happens exactly once per run. Plan entries are `{item_id, playbook_id, playbook_version, category_key}` — `playbook_version` lets backend-erp's worker fail a child with `PLAYBOOK_CHANGED_DURING_RUN` before any device I/O when the playbook was edited mid-run |
-| `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. A standalone job (`run_id` NULL) is a **no-op** — ACS reboots and connectivity probes must keep behaving exactly as they did. Any non-SUCCEEDED status stops the run and the run takes that status (continuing to the OLT after the CPE step failed would leave the network configured for a subscriber whose own device is not). On success it queues the next child; when the plan is exhausted the run goes SUCCEEDED, stamps `finished_at`, and — for a non-dry-run ACTIVATION only — clears `client_service.path_changed_at` |
+| `run_idempotency_key(client_service_id, purpose, dry_run=False)` | **The single shared run key** (provisioning-concurrency fix): `deprovision-{service_id}` for DEPROVISION (the bare string the retired `service-removal` template composes, so a still-active copy dedupes against the native run), otherwise `path-provision-{service_id}-{purpose_lower}`; `-dry` appended for a dry run. `/provision`, backend-erp's lifecycle hooks and the workflow engine's default all use it, so they dedupe against each other |
+| `find_in_flight_run(db, company_id, key)` | Dedupe lookup over `IN_FLIGHT = (QUEUED, RUNNING, PENDING_INFORM, PENDING_MANUAL)` (`PENDING_MANUAL` since `zm1`, doc 42d; the workflow engine's job dedupe reads the same tuple). That tuple **must** mirror the predicate on `uq_provisioning_run_company_idem`; if they disagree, the dedupe check and the unique index disagree and one of them starts raising `IntegrityError` |
+| `order_for_purpose(steps, purpose)` | Engine v2 (doc 42 §5). **ACTIVATION** runs root → leaf — core router → OLT → CPE (founder 2026-10-17: the service must exist on the router and OLT before the CPE's last steps, by OMCI, telnet or ACS, can work); it returns `steps` reversed. **DEPROVISION** also runs root → leaf (founder 2026-10-19: cut the PPPoE session before the OLT and the ACS; `TOP_DOWN_PURPOSES`). Every other purpose (REACTIVATION, SUSPENSION, custom) runs leaf → root — CPE → OLT → core router (founder 2026-10-12) — and returns `steps` as-is, the same order as `resolve_path`, `ResolvedProvisioning.steps` and `run.path`. Whole-run rollback runs the reverse of the configuration order (ACTIVATION: CPE first, core last) |
+| `create_run(db, client_service, purpose, dry_run, triggered_by, ..., resolution=None, mode="AUTOMATIC", guided_timeout_seconds=1800)` | **Guided runs (6.8.0, doc 50):** stores `mode` (`ProvisioningRunMode`) and `guided_timeout_seconds` on the run (`None` timeout = the default, matching `ClientServiceProvisionIn`); an unknown mode or a timeout outside `GUIDED_TIMEOUT_MIN`..`GUIDED_TIMEOUT_MAX` (300..14400, default `GUIDED_TIMEOUT_DEFAULT` 1800 — module constants) raises `ValueError` first, before resolution or any write; `create_or_get_run` forwards both through `**kw` (a deduped in-flight run keeps its own mode). Resolves (or accepts an already-resolved `ResolvedProvisioning`, which the manual endpoint passes so it can 422 with the error list before touching anything), opens the run, and queues **only its first child**. Resolution happens exactly once per run. **Engine v2:** loads each bound playbook and snapshots its **normalized** definition in `frames["definitions"][playbook_id]` (children execute the snapshot, never the live row); builds a **phase-major** `plan` — every device's PRECONDITIONS, then CONFIGURATION, then VERIFICATION, each in `order_for_purpose`, one entry per (device, phase) with steps: `{item_id, playbook_id, playbook_version, category_key, device_label, phase, steps: [{name, label, kind?}], probe?}` (`kind: "manual"` on a `driver: manual` step, doc 42d). `probe: true` marks the implicit preflight session step `__session__` (doc 42 §6.4: a device whose configuration/verification uses ssh/telnet, that is not the CPE in build order, and whose preconditions do not already start with ssh/telnet). Raises `ResolutionError` `OUTPUT_KEY_CONFLICT` (two devices publish one output key) / `SECRET_SPEC_CONFLICT` (one secret key, two specs) — **from `create_run`, even when `resolution` was passed** (the checks need the snapshotted definitions), so a caller that resolved first must still map a `ResolutionError` from `create_run`/`create_or_get_run` to 422. A **non-dry** plan that declares `secrets` generates each once (`secrets.choice` over `SECRET_ALPHABET`) and stores them envelope-encrypted (`crypto.encrypt_secret(json, company_id, run.id)` → `secrets_ciphertext`/`secrets_dek_wrapped`/`secrets_kek_id`) **before** any row is inserted; a missing KEK raises `SECRETS_KEY_UNAVAILABLE`. When a snapshotted definition reads `{{acs.*}}` it also runs `acs_values` (below): `ACS_NOT_CONFIGURED` / `ACS_SERIAL_CLAIMED` / `ACS_VALUE_UNSAFE`, and a non-dry run **ensures the CPE's `acs_device_registration`** (no CR credentials are minted) before any child exists; the values themselves are discarded, never stored. A **non-dry** run whose path fails a provisioning gate raises `ProvisioningGateError` (doc 43 §5.6, `provisioning_gates.py` below) right after resolution, before anything is written. A **dry run** also plans every device's ROLLBACK (reverse configuration order) and generates nothing. Each child gets `phase` and `max_attempts = PHASE_MAX_ATTEMPTS[phase] (3, ROLLBACK 5) × len(job_steps)` |
+| `preflight_run(db, client_service, resolved, purpose, dry_run=False)` | `create_run`'s plan-wide refusals with **no write** (`SECRET_SPEC_CONFLICT`, `OUTPUT_KEY_CONFLICT`, `SECRETS_KEY_UNAVAILABLE` for a non-dry plan with `secrets`, and the `acs.*` checks below). backend-erp's lifecycle pre-flight calls it so those codes are a 422 **before** the service status is written |
+| `create_or_get_run(db, client_service, purpose, dry_run, idempotency_key=None, **create_run_kwargs) -> (run, created)` | `create_run` deduped on the run key (`idempotency_key` or `run_idempotency_key(...)`): an in-flight run with that key comes back with `created=False`. The INSERT runs in a **SAVEPOINT**, so losing a race to a concurrent producer (`uq_provisioning_run_company_idem`) rolls back only the savepoint and returns the winner — the caller's session stays usable. Any other `IntegrityError` (no winner found) and every other error propagate. **Re-run (doc 42 §7.7, founder Q10):** both idempotency indexes are partial over the in-flight statuses, so once a run is terminal the same key opens a **new** run (fresh resolution, snapshot, secrets, empty outputs); a run still in ROLLBACK is in flight and is returned instead |
+| `advance_run(db, job) -> ProvisioningJob \| None` | Called when a job reaches a terminal state. Locks the run row (`SELECT … FOR UPDATE`, `populate_existing`; lock order everywhere is job row, then run row) and is a **no-op** when the run is already terminal, when `job` is still in flight, or when a later child already exists. A standalone job (`run_id` NULL) is a no-op. Then (doc 42 §6.3) it merges `job.log.outputs` into `run.outputs` (last writer per `(item_id, key)`, on every terminal child, success or not) and applies the table: **PRECONDITIONS** failed → FAILED/`PRECONDITION_FAILED` with `error = "<device> · <step label>: <display>"`, cancelled → CANCELLED/`CANCELLED`, **never a rollback**; **CONFIGURATION/VERIFICATION** failed or cancelled → `error_code` `CONFIGURATION_FAILED`/`VERIFICATION_FAILED`/`CANCELLED`, and the outcome follows the **rollback set** (devices whose CONFIGURATION child has a non-empty `ran_steps`): empty → FAILED (or CANCELLED), devices untouched; only `NO_ROLLBACK_DEFINED` devices and no entry → FAILED/`ROLLBACK_INCOMPLETE`; otherwise ROLLBACK entries are appended and the first is queued (`phase = ROLLBACK`); **ROLLBACK** any outcome → next rollback entry (rollback continues past failures); after the last one, ROLLED_BACK when the **latest ROLLBACK child per item** SUCCEEDED and no device is `NO_ROLLBACK_DEFINED`, else FAILED/`ROLLBACK_INCOMPLETE` (`error` = the original cause + a JSON list of failed steps, one `device_action_log` row `rollback_incomplete` per failed device). Forward success → next entry; the last → SUCCEEDED (+ `path_changed_at` cleared for ACTIVATION). A **dry run** never branches: SUCCEEDED only if every child succeeded, and then stamps `last_dry_run_version` on each plan playbook **only if its live version still equals the planned one**. A plan entry with no `phase` (a run opened before engine v2) keeps the pre-v2 rule: any non-success stops the run with that status |
+| `close_run(db, run, status, error_code=None, error=None)` | **The only writer of a terminal run status** (doc 42 §6.5): sets `status`, `finished_at` and, when given, `error_code`/`error`; for a **non-dry** run then emits one `RUN_CLOSED` `provisioning_event` (payload `{status, error_code}`, 6.10.0) in the same transaction. backend-erp's event consumer classifies `RUN_SUCCEEDED` / `RUN_FAILED` / `RUN_NEEDS_ATTENTION` / `RUN_ROLLBACK_INCOMPLETE` for SP2 from it. (`RUN_CLOSED_LISTENERS`, the in-process list this replaced, is gone.) |
+| `ran_steps(job) -> [name]` | Configuration steps that may have changed the device (doc 42 §7.3), from **any step-log entry of the name** (doc 42 §8.2.3: a step that failed at stage `command` and was retried counts as ran whatever its final outcome): an entry SUCCEEDED or FAILED at stage `command` (or an unknown stage) means it ran; SKIPPED and FAILED at stage `connect`/`render` entries sent nothing; `log.interrupted_step` (the name backend-erp's `_finish` keeps after a crash) ran; `__session__` never counts |
+| `append_rollback(db, run, items=None) -> [entry]` | The one builder of ROLLBACK entries (doc 42 §7.6): per CONFIGURATION child, reverse `run_position`, with a non-empty `ran_steps`, one entry `{…, phase: "ROLLBACK", steps: [{name, label, skip?}], ran_steps}` from the snapshot's `rollback` (a step whose `undoes` did not run is pre-marked `skip: true`; a device whose every step would be skipped gets no entry). A device that changed something (not only simulator/ping) but has no `rollback` is recorded `NO_ROLLBACK_DEFINED` in `frames["rollback"]`. `plan` is reassigned (the forward plan stays a stable prefix). `items` limits it to those item ids |
+| `revert_run(db, run) -> ProvisioningJob \| None` | "Revertir" (doc 42 §7.6): `RunNotRevertible` (409 `RUN_NOT_REVERTIBLE`, `.reason`) unless the run is non-dry, SUCCEEDED, v2 (`phase` set), an **ACTIVATION** (reverting a SUSPENSION/DEPROVISION/REACTIVATION would flip the device while `ClientService.status` stays put; change the service status instead), with no other in-flight run on the service and no later non-dry run. Then `error_code = REVERTED`, RUNNING, phase ROLLBACK, `append_rollback`, first entry queued — or closed at once (ROLLED_BACK, or ROLLBACK_INCOMPLETE for a `NO_ROLLBACK_DEFINED` device) when nothing needs undoing |
+| `retry_rollback(db, run) -> ProvisioningJob \| None` | "Reintentar reversión": only a non-dry v2 FAILED/`ROLLBACK_INCOMPLETE` run, with the same service guards as `revert_run` — no other in-flight run on the service (any purpose) and no later non-dry run (a §7.7 corrective run that succeeded must not be undone by the old rollback); else `RunNotRevertible`. Re-appends rollback entries for the items whose latest ROLLBACK child did not succeed (or never ran), restores the original cause into `error_code`/`error`, and queues the first; a success ends ROLLED_BACK with that cause. `NO_ROLLBACK_DEFINED` devices are not retried |
+| `revert_refusal(db, run)` / `rollback_retry_refusal(db, run) -> str \| None` | The ONE guard behind `revert_run` / `retry_rollback`: the `RUN_NOT_REVERTIBLE` reason they would raise, or None. Read-only (no lock) — backend-erp's run `actions` (doc 48 §10.3) call them to enable Revertir / Reintentar reversión, so a button can never be enabled for a run the endpoint refuses. `revert_run` / `retry_rollback` re-check them under the run lock |
+| `in_flight_for_service(db, run) -> bool` | Another run (any purpose/mode) for `run`'s service is still in flight — part of the guards above, also used by backend-erp's Reintentar action |
+| `decrypt_run_secrets(run) -> {key: value}` | Decrypts the run's generated secrets (`{}` when none). Never log or persist the result |
+| `repair_stranded_runs(db, limit=100) -> int` | Backstop, called by the worker's reaper: an in-flight run quiet for > 30 s (`STRANDED_RUN_GRACE`) with **no in-flight child**, taken `FOR UPDATE SKIP LOCKED`. Per run, in its own savepoint, it re-reads the last child: still in flight → skip; none → queue child 0 (an empty plan goes straight to SUCCEEDED); terminal → `advance_run`. Quiet longer than `STRANDED_RUN_MAX_AGE` (1 h, from the last child's `finished_at`, else the run's `updated_at`) it is **phase-aware** (doc 42 §8.4): PRECONDITIONS, a legacy or a dry run → closed FAILED/`STRANDED_RUN_EXPIRED`; CONFIGURATION/VERIFICATION → **enters ROLLBACK** with `STRANDED_RUN_EXPIRED` (the safe direction), **except** when its last child is the final forward plan entry and succeeded (only the closing advance was lost) → `advance_run` closes it SUCCEEDED; ROLLBACK → keeps advancing (closed `ROLLBACK_INCOMPLETE` if it has no child). Returns the number repaired; the caller commits |
+
+Callers (backend-erp, provisioning-concurrency fix): `POST /client-services/{id}/provision`
+and the lifecycle hooks (`services/client_service_lifecycle.enqueue_lifecycle_run`)
+both open runs through `create_or_get_run` with `run_idempotency_key`
+(`/provision` answers `created=False` with 409 `PROVISIONING_ALREADY_QUEUED` +
+`run_id`; the lifecycle hook returns the winner's id); the workflow engine's
+ENQUEUE_PROVISIONING does too. `POST /provisioning/jobs/{id}/cancel` expires the
+CAS-cancelled child before `advance_run`, because `advance_run` no-ops while the
+job still looks in flight; `POST /provisioning/jobs/{id}/retry` refuses a run
+child (409 `RUN_CHILD_NOT_RETRYABLE`): `advance_run` never resurrects a terminal
+run, so a re-queued child would execute outside it. The real-Postgres races
+(claim, fence, journal, reaper, producers) are covered by backend-erp's
+`tests/pg/test_provisioning_concurrency.py`; this repo's
+`tests/pg/test_provisioning_runs_pg.py` covers the module itself.
 
 Child jobs derive their idempotency key as `{run_key}#{position}` (so each child
-is still individually unique under `uq_provisioning_job_company_idem`), carry
-`device_lock_key = "{company_id}:item:{item_id}"`, and get their `variables` from
-`shared | device[item_id]`.
+is still individually unique under `uq_provisioning_job_company_idem`), are
+inserted with **`device_lock_key` NULL**, and get their `variables` from
+`shared | device[item_id]`. **Producers never lock:** only backend-erp's worker
+claim writes the device lock (never for a dry run). Writing it at INSERT made the
+commit that recorded child N's outcome fail whenever child N+1's device was busy
+with another run or a probe (the 2026-10-06 incident); now a busy device just
+means the worker's claim skips that child until the device frees.
 
-**What this module does not do:** it does not evaluate the provisioning gates
-(kill switch, dry-run gate). Those live in backend-erp and are called by its
-routers before `create_run`, exactly as they are today — and the workflow-engine
-path still does not call them (see [limitations.md](limitations.md)).
+**Gates (6.4.0):** a live `create_run` evaluates the provisioning gates through
+`provisioning_gates.run_gate_failures` and raises `ProvisioningGateError` before
+any write, so every producer (the workflow engine included) is gated here.
+backend-erp's routers still check first (`enforce_gates_for`) so they can refuse
+before a service-status write; this is the backstop.
+
+### `provisioning_runs.py` additions (6.9.0, worker split R1)
+
+| Function | Behaviour |
+|---|---|
+| `run_captures(db, job)` | Captures of this run's EARLIER children on the same item, in plan order (doc 42 §6.3); was the worker's `_run_captures`. The executor re-gates them before use |
+| `parked_step(run, job)` | The parked step's definition from the run's snapshot, or `{}`; was backend-erp `services/manual_steps.parked_step` |
 
 ### `transport.py` (transport resolution, 2026-08-13; transport axis `tr1_transport_axis`, 2026-09-26)
 
@@ -345,6 +407,10 @@ successfully either way, and only the driver's connect attempt settles it.
 Callers must surface any returned error code as a step failure. See
 `tests/test_transport_resolver.py` and `tests/test_transport_axis.py`.
 
+#### `company_dials_gateway(db, company_id)` (6.9.0, worker split R1)
+
+Moved from backend-erp's worker: `True` when the tenant's `provisioning_settings.dial_target == 'gateway'`. It is the one predicate shared by `connectivity.enqueue_connectivity_check` (drops the ICMP ping step), the worker's sweep and the API's test-connection `MGMT_HOST_NOT_SET` precondition.
+
 ## `playbook_expr.py` (doc 40 §3.3.3)
 
 A playbook may declare `computed: [{"key", "expr", "min"?, "max"?}]`
@@ -373,6 +439,9 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
   error. Codes: `COMPUTE_SYNTAX`, `COMPUTE_LIMIT`, `COMPUTE_NAME`,
   `COMPUTE_SECRET`, `COMPUTE_TYPE`, `COMPUTE_OVERFLOW`, `COMPUTE_DIV_ZERO`,
   `COMPUTE_RANGE`.
+  `evaluate_all` never raises on a malformed **stored** block (4.5.2, review F3):
+  a non-list block, or an entry without string `key`/`expr`, is `COMPUTE_SYNTAX`;
+  a non-int `min`/`max` is `COMPUTE_TYPE`.
 - **Pinned by** the hash-locked `tests/fixtures/playbook_expr.json` (copied to
   `frontend-erp/lib/__fixtures__/`): changing it means changing both
   implementations and both hash pins.
@@ -399,3 +468,15 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
 - `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (min), `REFRESH_TOKEN_EXPIRE` (s), `MOBILE_ACCESS_TOKEN_EXPIRE` (min) — `jwt_utils.py`
 - `POSTGRES_*` / `DATABASE_URL` / `DB_URL` — anything touching the DB (via `database.py`)
 - `EMAIL_PROVIDER`, `SMTP_USE_TLS` — email service (see [email-service.md](email-service.md))
+
+
+### `acs_bootstrap.py`
+
+The `acs.*` namespace (doc 42 §9.7, doc 42c §5): values an OLT step pushes to the CPE over OMCI that no playbook author may type. `acs` is **not** in `RESOLVER_NAMESPACES`; backend-erp's worker loads the values at claim and merges them **in memory** (never `job.variables`, `frames` or logs).
+
+| Name | Behaviour |
+|---|---|
+| `ACS_KEYS` | `url`, `inform_password`, `cr_username`, `cr_password` (the two passwords are secret-named: masked, filters refused). Only `url`/`inform_password` come from here; `cr_username`/`cr_password` are random per child, generated by backend-erp's worker in memory and discarded (founder round 4: the ACS cannot reach a CPE's connection-request URL, ACS tasks ride the 60 s periodic inform; the pair is pushed only because the OLT syntax / LAN hardening wants one) |
+| `ACS_TOKEN`, `reads_acs(defs)` | `\{\{\s*acs\.` — does any definition / step list read the namespace |
+| `acs_url(settings)` | `provisioning_settings.acs_base_url` when set, else env `GENIEACS_CWMP_PUBLIC_URL` (Backend **and** ProvisionWorker carry it) |
+| `acs_values(db, company_id, serial, *, item_id=None, ensure=False) -> {key: value}` | Raises `ResolutionError` `ACS_NOT_CONFIGURED` (no URL, no/unreadable inform credential, no CPE serial), `ACS_SERIAL_CLAIMED` (the normalized serial is registered to another tenant **or quarantined** — the same rule as `POST /acs/registrations`' 409), `ACS_VALUE_UNSAFE` (a value outside `[A-Za-z0-9_.:/+-]{1,128}`). Returns `{url, inform_password}`. `ensure=True` creates/claims the tenant's registration (tags the device for the ACS) and stamps `inventory_item_id`; `ensure=False` writes nothing |

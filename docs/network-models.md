@@ -26,11 +26,15 @@ pre-baked chain.
 |-------|-------|-----------|---------|
 | `DeviceCredential` | `device_credential` | name, kind (CHECK: CREDENTIAL_KINDS), username, `secret_ciphertext`/`dek_wrapped`/`kek_id`, fingerprint, binding FKs (inventory_item/device_type) | Envelope-encrypted per-tenant device secret (canon C1/C19). Secret never round-trips — Out schema exposes only `has_secret` + fingerprint. `tr1` dropped the third binding FK, `network_access_id`, with the table it pointed at: resolution is now inventory_item > device_type > **both NULL = the company default** |
 | `AcsDeviceRegistration` | `acs_device_registration` | serial_number, oui, company_id (**nullable** = QUARANTINED), genieacs_device_id, first/last_inform_at, cwmp_cr_* connection-request creds, `created_by_user_id` (FK user SET NULL, fg1 — author of a single/bulk pre-registration; NULL for bootstrap/quarantine rows) + `created_by` relationship | Serial/OUI→tenant mapping — the tenant-stamping keystone (canon C13); global `(oui, serial)` unique so two tenants can't claim one CPE — plus the partial UNIQUE `uq_acs_registration_serial_no_oui` on `(serial_number) WHERE oui IS NULL` (`ac1`), because the two-column UNIQUE does NOT cover NULL-oui rows |
-| `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval, **`dial_target`** (`device`\|`gateway`, NOT NULL default `device`), **`proxy_kind`** (`none`\|`socks5`, NOT NULL default `none`), **`proxy_address`**, **`gateway_host`**, **`acs_base_url`** (read-only), **`acs_auth_required`** (Boolean NOT NULL default false — the Capa 3 gate), **`cwmp_credential_id`** / **`cwmp_pending_credential_id`** (FK device_credential SET NULL) — all eight from `tr1_transport_axis` | Per-tenant provisioning gate **and** transport/ACS configuration — a per-tenant singleton (canon C6 + C9). Absence of a row = provisioning DISABLED (fail-safe). `tr1_transport_axis` folded the whole multi-row `network_access` table in here — see the transport-axis section below |
+| `ProvisioningSettings` | `provisioning_settings` | company_id (unique), enabled (default **false**), default_inform_interval, **`dial_target`** (`device`\|`gateway`, NOT NULL default `device`), **`proxy_kind`** (`none`\|`socks5`, NOT NULL default `none`), **`proxy_address`**, **`gateway_host`**, **`acs_base_url`** (read-only), **`acs_auth_required`** (Boolean NOT NULL default false — the Capa 3 gate), **`cwmp_credential_id`** / **`cwmp_pending_credential_id`** (FK device_credential SET NULL) — all eight from `tr1_transport_axis`; no ZTP switch (`zt1`'s `ztp_enabled` was dropped by `zt3_ztp_always_on`: ZTP is always on, guarded by the provisioning gates + env `PROVISIONING_KILL_SWITCH`) | Per-tenant provisioning gate **and** transport/ACS configuration — a per-tenant singleton (canon C6 + C9). Absence of a row = provisioning DISABLED (fail-safe). `tr1_transport_axis` folded the whole multi-row `network_access` table in here — see the transport-axis section below |
 | `DeviceActionLog` | `device_action_log` | actor_kind, actor_user_id, device_kind, device_identity, action, before_data/after_data (secret-redacted JSON), provisioning_job_id | Append-only device audit trail (canon C14). No `updated_at`; immutability enforced by a Postgres `BEFORE UPDATE OR DELETE` trigger (nc1b) |
 
 ## `ProvisioningJob` extensions (nc1a)
 
+- `status` gains **`PENDING_MANUAL`** in `zm1` (doc 42d): a run child parked on a
+  `driver: manual` step until a person confirms it (lease released, CPE lock kept,
+  deadline in `scheduled_for`); job only, the run stays RUNNING. It joins the three
+  in-flight partial indexes.
 - `status` gains **`PENDING_INFORM`** (`ProvisioningJobStatus`): the job parks when a
   TR-069 connection-request task returns 202; the worker slot is released and a poller
   settles it once the inform arrives. Added via `ALTER TYPE … ADD VALUE` in an
@@ -40,7 +44,13 @@ pre-baked chain.
 - `pending_step_index` (int) — the parked step to settle on inform.
 - `pending_task_ids` (JSON) — GenieACS NBI task ids being polled.
 - `heartbeat_at` (datetime) — the lease reaper re-queues stale RUNNING jobs.
-- `device_lock_key` (str) — per-device serialization key.
+- `device_lock_key` (str) — per-device serialization key. Since the
+  provisioning-concurrency fix it is written **only by the worker's claim**
+  (never for dry runs) and cleared on every terminal transition; producers
+  insert it NULL.
+- `claim_token` (UUID, revision `pc1_provisioning_claim_token`) — fence token,
+  set per claim, NULL when not executing; every worker write after the claim is
+  conditional on `(id, status, claim_token)`.
 - **Indexes**: the idempotency partial-unique index now includes PENDING_INFORM in the
   in-flight set; a new `uq_provisioning_job_device_lock` partial-unique index enforces
   at most one live job per `device_lock_key` (canon C11).
@@ -117,7 +127,7 @@ length differed — which in a real plant it always does.
 
 Two revisions, deliberately split so a reviewer can read "what appears" and "what
 disappears" independently. The chain is
-`lc2_retire_susp_react` → **`ng1_network_graph`** → **`ng2_topology_drop`** (head).
+`lc2_retire_susp_react` → **`ng1_network_graph`** → **`ng2_topology_drop`** (the Cycle-10 head at the time).
 
 ### The tree lives on `inventory_item` (ng1, doc 35 §2.1)
 
@@ -157,11 +167,14 @@ Two free-text labels describe the `parent_id` edge itself:
 
 `uq_inventory_item_parent_port` — partial unique index on `(parent_id,
 parent_port)` WHERE `parent_port IS NOT NULL`: a parent port feeds one child.
-Both describe the current link, so backend-erp's reparent and detach clear them;
-attach leaves them NULL; `PATCH /network/nodes/{id}/link` sets them.
-Doc 40 supersedes them with real ports and links (below): once a node is linked
-the API derives both labels from the link's port names, and the columns are
-dropped later (C8b).
+**Unmapped since `pt2_unmap_port_labels` (doc 40 §4.2 C8a, 5.0.0).** Doc 40
+supersedes them with real ports and links (below): the model no longer maps the
+two columns or the index, backend-erp stopped reading and writing them
+(`PATCH /network/nodes/{id}/link` is gone) and derives `NetworkNodeOut.parent_port`
+/ `uplink_port` from the link only. `pt2` drops the index (a C8a backend no
+longer clears a re-parented item's label, so the index would turn a move next
+to a same-labelled sibling into a unique violation); the DB keeps the two
+columns until `pt3_drop_port_labels` (C8b) drops them.
 
 ### Port-level topology (`pt1_port_topology`, doc 40 §3.1)
 
@@ -338,8 +351,14 @@ and **each configured device gets its own child job**.
 | `dry_run` | BOOLEAN NOT NULL DEFAULT false |
 | `status` | the **existing** `provisioningjobstatus` PG enum reused via `PGEnum(..., create_type=False)` (a plain `sa.Enum` would try to `CREATE TYPE` and fail with DuplicateObject). Derived from the children |
 | `path` | JSON NOT NULL — the whole resolved path **including passive nodes**, snapshotted at creation, so the run detail view shows what the path *was* when it ran, not what it is now |
-| `plan` | JSON NOT NULL — the ordered subset that will actually be configured, leaf → root: `[{item_id, playbook_id, playbook_version, category_key}]` (`playbook_version` since doc 40; the worker refuses a child whose playbook was edited mid-run). `path` entries likewise gain `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` — JSON, so no revision |
-| `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}}`, resolved **once** at run creation. Later children are built from this rather than re-resolved, so a re-parent landing mid-run cannot silently redirect the remaining steps to devices the operator never saw |
+| `plan` | JSON NOT NULL — one entry per child to run. **Engine v2 (doc 42 §6.1)**: phase-major (every device's PRECONDITIONS, CONFIGURATION, VERIFICATION, in `order_for_purpose` — ACTIVATION root → leaf (core, OLT, CPE), every other purpose leaf → root (CPE, OLT, core)): `[{item_id, playbook_id, playbook_version, category_key, device_label, phase, steps: [{name, label, skip?}], probe?, ran_steps?}]`; ROLLBACK entries are **appended** when the run rolls back (the forward plan is a stable prefix). Pre-v2 runs have entries without `phase`, leaf → root. `path` entries carry `label`, `path_role`, `out_slot`/`out_port`/`out_port_name` and `playbook_version` (doc 40) |
+| `frames` | JSON NOT NULL — `{"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id: normalized definition}, "rollback": {cause_code, cause_error, no_rollback}}`, resolved **once** at run creation (`rollback` only once the run rolls back). Later children are built from this rather than re-resolved, so neither a re-parent nor a playbook edit landing mid-run can change what the remaining steps — or the rollback — do. Not exposed by the API |
+| `phase` | VARCHAR(16) NULL, CHECK `ck_provisioning_run_phase` (`pe1`) — the phase of the entry being executed; NULL = a legacy (pre-v2) run |
+| `error_code` / `error` | VARCHAR(40) / TEXT NULL (`pe1`) — the outcome: `PRECONDITION_FAILED`, `CONFIGURATION_FAILED`, `VERIFICATION_FAILED`, `CANCELLED`, `STRANDED_RUN_EXPIRED`, `ROLLBACK_INCOMPLETE`, `REVERTED` and the human detail. Written only by `provisioning_runs` |
+| `outputs` | JSON NULL (`pe1`) — `[{key, label, value, unit, audience, secret, sensitive, shareable, ok, item_id, position, category_key, ref?}]`, last writer per `(item_id, key)`; a secret output stores `value` NULL + `ref` |
+| `secrets_ciphertext` / `secrets_dek_wrapped` / `secrets_kek_id` | BYTEA / BYTEA / VARCHAR NULL (`pe1`) — the run's generated secrets (`{key: value}` JSON), envelope-encrypted like `DeviceCredential` with AAD `company_id:run.id`; NULL when the plan declares none |
+| `mode` | VARCHAR(16) NOT NULL DEFAULT `'AUTOMATIC'` (`gr1`, doc 50) — `ProvisioningRunMode` value: `AUTOMATIC` runs steps back to back, `GUIDED` parks before every non-rollback step (job `PENDING_MANUAL` + `log.pending_kind="guided"`) until an admin continues or aborts. A dry run never pauses whatever is stored |
+| `guided_timeout_seconds` | INTEGER NOT NULL DEFAULT 1800 (`gr1`) — each guided pause's deadline (300–14400, validated by `create_run`); expiry fails the step `GUIDED_TIMEOUT` and rolls back |
 | `idempotency_key` | VARCHAR NULL |
 | `triggered_by` / `triggered_by_user_id` | `provisioningtrigger` enum (also reused) + FK user SET NULL |
 | `company_id` / `client_service_id` | FK company CASCADE / FK client_service CASCADE, both indexed |
@@ -357,17 +376,23 @@ in flight dedupes instead of opening a second one.
   `ix_provisioning_job_run_id`. **NULL for every job that is not part of a
   service-path run** — explicit-playbook jobs, ACS reboot/factory-reset, core
   connectivity probes. Nothing about those changes.
-- `run_position` — INTEGER NULL, the 0-based index into `ProvisioningRun.plan`,
-  i.e. leaf → root order.
+- `run_position` — INTEGER NULL, the 0-based index into `ProvisioningRun.plan`.
+- `phase` — VARCHAR(16) NULL, CHECK `ck_provisioning_job_phase` (`pe1`): the
+  phase its plan entry executes; NULL for standalone and legacy jobs. There is
+  **no new `ProvisioningJobStatus` value** for engine v2.
 
 Children are created **lazily, one at a time**, so at most one child of a run is
 QUEUED or RUNNING at once. That needed no new `ProvisioningJobStatus` value (a
 "BLOCKED" state would have had to be understood by every status consumer across
-three services) and no change to the worker's claim query — it still picks the
-oldest QUEUED job, it simply never sees a child that does not exist yet. What
-this buys: the per-device lock is finally correct (each child locks exactly the
-device it configures), retry and cancel become per-device, and `PENDING_INFORM`
-applies to the CPE child alone instead of stalling the whole path. The mechanics
+three services). Children are inserted with `device_lock_key` NULL; the worker's
+claim takes the device lock, skips a child whose device is held, and keeps runs
+on one service in FIFO order (provisioning-concurrency fix). What this buys: the
+per-device lock is finally correct (each child locks exactly the device it
+configures, at claim time), cancel becomes per-device (backend-erp's cancel
+releases the child's lock and stops its run via `advance_run` in one commit;
+a child is never retried on its own, `RUN_CHILD_NOT_RETRYABLE`, because its
+terminal status already stopped the run), and `PENDING_INFORM` applies to the
+CPE child alone instead of stalling the whole path. The mechanics
 live in `utils/provisioning_runs.py` — see [utilities.md](utilities.md).
 
 ### `ng2_topology_drop` — guard, rewrite, then drop
@@ -613,7 +638,15 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
 `ALTER TYPE … ADD VALUE` autocommit dance:
 
 - `CREDENTIAL_KINDS`: SSH, TELNET, SNMP_COMMUNITY, TR069_CONNECTION_REQUEST, HTTP_BASIC,
-  HTTP_BEARER, WIREGUARD, AGENT
+  HTTP_BEARER, WIREGUARD, AGENT, **CLI_ENABLE** (`pe1`, doc 42 §9.3: the enable /
+  privileged-mode password of a CLI device, bound like any kind — item > type >
+  company default, `username` ignored; required by a playbook with
+  `session.enable`, e.g. the CSR AN5516). `pe1` re-creates
+  `ck_device_credential_kind` from its own copy of `_CREDENTIAL_KIND_CHECK`,
+  pinned byte-identical by `tests/test_pe1_playbook_phases.py`
+- `PROVISIONING_PHASES`: PRECONDITIONS, CONFIGURATION, VERIFICATION, ROLLBACK
+  (`ck_provisioning_run_phase` / `ck_provisioning_job_phase`, NULL allowed) ·
+  `TEARDOWN_PURPOSES`: SUSPENSION, DEPROVISION (`pe1`, doc 42)
 - `DIAL_TARGETS`: device, gateway · `PROXY_KINDS`: none, socks5 — the transport axis
   (`tr1_transport_axis`, 2026-09-26; matching `ck_provisioning_settings_dial_target` /
   `_proxy_kind`, pinned by `tests/test_transport_axis.py`). They REPLACE
@@ -652,13 +685,15 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
   `provisioning_settings.cwmp_credential_id` / `cwmp_pending_credential_id` name it
   explicitly, because there is exactly one per tenant and the accept-both rotation
   window needs the pair stated rather than inferred.
-- **Canonical graph order is leaf → root, everywhere** (doc 35 §3.1): the
-  subscriber's own device first, the core last, for every purpose, in the
-  executor and in the UI alike. It is the order the traversal produces (no
-  re-sort, no second convention), and failure containment is better in both
-  directions — on activation a failed CPE step aborts before the OLT is touched;
-  on deprovision the subscriber's device is wiped while it is still reachable,
-  where core-first would kill the data path and strand the CPE half-configured.
+- **Canonical graph order is leaf → root** (doc 35 §3.1): the subscriber's own
+  device first, the core last. It is the order the traversal produces
+  (`resolve_path`, `ResolvedProvisioning.steps`, `run.path`) and the execution
+  order of SUSPENSION, REACTIVATION and custom purposes.
+- **ACTIVATION and DEPROVISION execute root → leaf** (founder 2026-10-17, 6.11.1; DEPROVISION 2026-10-19, 6.11.2): core router,
+  then OLT, then CPE, in every phase, because the CPE's last steps (OMCI, telnet
+  or ACS) need the service already enabled on the router and the OLT; a
+  deprovision cuts the PPPoE session first (CSR's order). A run's
+  `plan` is in execution order; `path` stays leaf → root.
 - **One catalog, one identity.** Graph nodes are `InventoryItem` rows and their
   roles come from `device_category`; there is no second node table and no second
   type catalog. That duality is what killed the previous graph

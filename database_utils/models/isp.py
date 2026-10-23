@@ -15,10 +15,11 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
   the worker via SELECT ... FOR UPDATE SKIP LOCKED.
 """
 from sqlalchemy import (
-    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text,
+    Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text, Text,
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
     SmallInteger, ForeignKeyConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
 
 from database_utils.database import Base
@@ -91,6 +92,25 @@ CANONICAL_PLAYBOOK_PURPOSES = (
     PURPOSE_ACTIVATION, PURPOSE_SUSPENSION, PURPOSE_REACTIVATION, PURPOSE_DEPROVISION
 )
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
+
+# Engine v2 (doc 42 §5): purposes that take a service DOWN. Devices run
+# leaf -> root (CPE first, core last) for every purpose; this set only gates
+# the CPE probe and the CPE_NETWORK_PRECONDITION playbook warning.
+TEARDOWN_PURPOSES = frozenset({PURPOSE_SUSPENSION, PURPOSE_DEPROVISION})
+
+# Engine v2 (doc 42 §6, revision pe1): the phase of a run and of each run
+# child. NULL on both = a legacy run / a standalone job.
+PHASE_PRECONDITIONS = 'PRECONDITIONS'
+PHASE_CONFIGURATION = 'CONFIGURATION'
+PHASE_VERIFICATION = 'VERIFICATION'
+PHASE_ROLLBACK = 'ROLLBACK'
+PROVISIONING_PHASES = (
+    PHASE_PRECONDITIONS, PHASE_CONFIGURATION, PHASE_VERIFICATION, PHASE_ROLLBACK
+)
+# Shared byte-for-byte with the hand-written pe1 migration.
+_PROVISIONING_PHASE_CHECK = (
+    "phase IS NULL OR phase IN ('PRECONDITIONS','CONFIGURATION','VERIFICATION','ROLLBACK')"
+)
 
 # Service-lifecycle cycle: the status machine behind the per-purpose
 # lifecycle actions (activate / suspend / reactivate / cancel). Lives HERE, not
@@ -232,6 +252,20 @@ class ProvisioningJobStatus(str, enum.Enum):
     # the inform arrives. Added to the PG enum via ALTER TYPE ADD VALUE in an
     # autocommit block (nc1a) — see the migration docstring.
     PENDING_INFORM = "PENDING_INFORM"
+    # doc 42d (revision zm1): a run child parked on a `driver: manual` step
+    # until the technician (or the office) confirms it. Job only — the run
+    # stays RUNNING. Same park mechanics as PENDING_INFORM: lease and fence
+    # released, device lock kept, deadline in scheduled_for.
+    PENDING_MANUAL = "PENDING_MANUAL"
+
+
+class ProvisioningRunMode(str, enum.Enum):
+    """doc 50 (revision gr1): how a run advances. AUTOMATIC runs every step
+    back to back; GUIDED parks before each non-rollback step (job
+    PENDING_MANUAL + log.pending_kind="guided") until an admin continues or
+    aborts. Stored as a plain String(16) on provisioning_run.mode — no PG enum."""
+    AUTOMATIC = "AUTOMATIC"
+    GUIDED = "GUIDED"
 
 
 class ProvisioningTrigger(str, enum.Enum):
@@ -254,6 +288,10 @@ class ProvisioningTrigger(str, enum.Enum):
 CREDENTIAL_KINDS = (
     "SSH", "TELNET", "SNMP_COMMUNITY", "TR069_CONNECTION_REQUEST",
     "HTTP_BASIC", "HTTP_BEARER", "WIREGUARD", "AGENT",
+    # pe1 (doc 42 §9.3): the enable (privileged-mode) password of a CLI device,
+    # bound like any other kind (item > type > company default). `username`
+    # is ignored. Required by a playbook whose `session.enable` is set.
+    "CLI_ENABLE",
 )
 
 # tr1_transport_axis: the transport is TWO orthogonal per-tenant choices, not one
@@ -278,7 +316,9 @@ ACS_STALE_AFTER_SECONDS = 900
 
 # SQL fragments reused by both the model CheckConstraints below and the
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
-_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT')"
+# pe1_playbook_phases re-created ck_device_credential_kind with CLI_ENABLE; its
+# own copy of this literal is pinned byte-identical by tests/test_pe1_playbook_phases.py.
+_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT','CLI_ENABLE')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
@@ -808,6 +848,12 @@ class InventoryItem(Base):
     # Cycle 2). NULL stays NULL in the backfill — doc 16 §2.5.3.
     cost_cents = Column(BigInteger, nullable=True)
     notes = Column(String, nullable=True)
+    # ri1 (doc 47): when the unit (last) entered stock — FIFO key for ONT
+    # auto-assignment (SP4, doc 45). Defaults to now; the receiver may backdate
+    # it. Re-stamped when a used unit comes back to stock (REMOVED). The
+    # server_default covers raw-SQL inserts (tests/pg fixtures, scripts).
+    received_at = Column(DateTime(timezone=True), nullable=False,
+                         default=now_gt, server_default=text("now()"))
     # --- Cycle 7 management surface (doc 25 §2.3, revision nc2a_core_config) ---
     # How the CLI drivers reach a CORE-tier device. mgmt_port NULL -> driver
     # default (22 ssh / 23 telnet); cli_protocol is a CHECK-constrained string
@@ -879,13 +925,10 @@ class InventoryItem(Base):
     network_attached = Column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    # Link ports (revision lp1_link_ports). Free-text labels describing the
-    # parent_id edge: `parent_port` is the port ON THE PARENT this item plugs
-    # into ("PON 16", "OUT 3"); `uplink_port` is this item's own port facing
-    # the parent ("GE1"). Both describe the current link, so reparent/detach
-    # clear them.
-    parent_port = Column(String(64), nullable=True)
-    uplink_port = Column(String(64), nullable=True)
+    # The lp1 free-text labels (`parent_port`, `uplink_port` and the
+    # uq_inventory_item_parent_port index) are unmapped since pt2 (doc 40
+    # §4.2 C8a): the ports of an edge are network_link + inventory_item_port.
+    # The DB keeps them until pt3_drop_port_labels (C8b).
     # mi2: where the item physically is (plant: MUFA / NAP geolocated by the
     # technician in the field). WGS84 degrees; precision in metres.
     latitude = Column(Float, nullable=True)
@@ -964,13 +1007,6 @@ class InventoryItem(Base):
         Index(
             "ix_inventory_item_company_attached", "company_id",
             postgresql_where=text("network_attached"),
-        ),
-        # lp1: a parent port feeds exactly one child.
-        Index(
-            "uq_inventory_item_parent_port",
-            "parent_id", "parent_port",
-            unique=True,
-            postgresql_where=text("parent_port IS NOT NULL"),
         ),
         # Figma redesign PR 8 (08-inventario §2.3).
         CheckConstraint(
@@ -1276,11 +1312,15 @@ class ProvisioningRun(Base):
     job. Children are created LAZILY, one at a time, in `plan` order: at most
     one child of a run is QUEUED or RUNNING at once. That needs no new
     ProvisioningJobStatus value (a "BLOCKED" state would touch every status
-    consumer in three services) and no change to the worker's claim query.
+    consumer in three services). The worker's claim query skips a child whose
+    device is held and keeps runs on one service in FIFO order.
 
     Three things this buys that the old single-job chain could not:
       - the per-device lock is finally correct — each child locks exactly the
-        device it configures
+        device it configures. The lock is written ONLY by the worker's claim
+        (provisioning-concurrency fix): children are created with
+        device_lock_key NULL, so creating or advancing a run can never fail on
+        another job's lock (the 2026-10-06 incident)
       - retry and cancel become per-device
       - PENDING_INFORM applies to the CPE child alone instead of stalling the
         whole path
@@ -1306,10 +1346,15 @@ class ProvisioningRun(Base):
     #           label, path_role, out_slot, out_port, out_port_name,
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
-    # The ordered subset that will actually be configured, leaf -> root:
-    # [{item_id, playbook_id, playbook_version, category_key}]
+    # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
+    # phase-major, leaf -> root (CPE first, core last, every purpose),
+    # ROLLBACK entries appended on failure:
+    # [{item_id, playbook_id, playbook_version, category_key, device_label,
+    #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
+    # Pre-v2 runs: [{item_id, playbook_id, playbook_version, category_key}], leaf -> root.
     plan = Column(JSON, nullable=False)
-    # {"shared": {...}, "device": {item_id: {...}}} — resolved ONCE at run
+    # {"shared": {...}, "device": {item_id: {...}}, "definitions": {playbook_id:
+    # normalized definition}, "rollback"?: {...}} — resolved ONCE at run
     # creation. advance_run builds later children from this rather than
     # re-resolving, so a re-parent landing mid-run cannot silently redirect the
     # remaining steps to a different set of devices than the ones the operator
@@ -1320,6 +1365,33 @@ class ProvisioningRun(Base):
         Enum(ProvisioningTrigger), nullable=False,
         default=ProvisioningTrigger.USER, server_default='USER',
     )
+    # --- engine v2 (doc 42 §6.2, revision pe1) ---
+    # The phase of the entry being executed (PROVISIONING_PHASES). NULL = a
+    # legacy run, advanced by the pre-v2 rule.
+    phase = Column(String(16), nullable=True)
+    # --- guided runs (doc 50, revision gr1) ---
+    # ProvisioningRunMode value. GUIDED pauses before every non-rollback step;
+    # a dry run never pauses whatever is stored here.
+    mode = Column(String(16), nullable=False, default="AUTOMATIC", server_default="AUTOMATIC")
+    # Deadline of each guided pause, seconds (300-14400, validated by
+    # create_run). Expiry fails the step with GUIDED_TIMEOUT + normal rollback.
+    guided_timeout_seconds = Column(Integer, nullable=False, default=1800, server_default="1800")
+    # The outcome code (PRECONDITION_FAILED, CONFIGURATION_FAILED,
+    # VERIFICATION_FAILED, CANCELLED, STRANDED_RUN_EXPIRED, ROLLBACK_INCOMPLETE,
+    # REVERTED) and its human detail. Written only by close_run / the rollback
+    # entry points in utils/provisioning_runs.py.
+    error_code = Column(String(40), nullable=True)
+    error = Column(Text, nullable=True)
+    # [{key, label, value, unit, audience, secret, sensitive, shareable, ok,
+    #   item_id, position, category_key, ref?}] — last writer per (item_id, key).
+    # A secret output stores value NULL + ref "secret.<key>" (doc 42 §10.1).
+    outputs = Column(JSON, nullable=True)
+    # The run's generated secrets ({key: value} JSON), envelope-encrypted with
+    # crypto.encrypt_secret(plaintext, company_id, run.id). NULL when the plan
+    # declares none (doc 42 §10.2).
+    secrets_ciphertext = Column(LargeBinary, nullable=True)
+    secrets_dek_wrapped = Column(LargeBinary, nullable=True)
+    secrets_kek_id = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1346,12 +1418,13 @@ class ProvisioningRun(Base):
             unique=True,
             postgresql_where=text(
                 "idempotency_key IS NOT NULL AND status IN "
-                "('QUEUED','RUNNING','PENDING_INFORM')"
+                "('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         Index("ix_provisioning_run_service", "client_service_id", "created_at"),
         # ng2: the company-wide run list (PR 9) is company_id = ? ORDER BY created_at.
         Index("ix_provisioning_run_company_created", "company_id", "created_at"),
+        CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_run_phase"),
     )
 
 
@@ -1393,7 +1466,17 @@ class ProvisioningJob(Base):
     heartbeat_at = Column(DateTime(timezone=True), nullable=True)
     # canon C11: per-device serialization key. The DB partial unique index below
     # is the serialization authority; in-process locks are a local optimization.
+    # Written ONLY by the worker's claim (never for dry runs) and cleared on
+    # every terminal transition; producers (create_run, advance_run, the API,
+    # the workflow engine) always insert it NULL.
     device_lock_key = Column(String, nullable=True)
+    # Revision pc1: fence token, set per claim, NULL when not executing. Every
+    # worker write after the claim is conditional on (id, status, claim_token),
+    # so a reaped or superseded executor writes nothing.
+    claim_token = Column(Uuid, nullable=True)
+    # Engine v2 (doc 42 §6.1, revision pe1): the phase this run child executes
+    # (its plan entry's). NULL for standalone and legacy jobs.
+    phase = Column(String(16), nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -1449,20 +1532,55 @@ class ProvisioningJob(Base):
             "company_id", "idempotency_key",
             unique=True,
             postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "idempotency_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
         # Cycle 5 Phase 1 (canon C11, revision nc1a): per-device serialization
         # authority — at most one live job per device_lock_key across the
-        # in-flight set (QUEUED/RUNNING/PENDING_INFORM).
+        # in-flight set (QUEUED/RUNNING/PENDING_INFORM/PENDING_MANUAL; zm1).
         Index(
             "uq_provisioning_job_device_lock",
             "device_lock_key",
             unique=True,
             postgresql_where=text(
-                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM')"
+                "device_lock_key IS NOT NULL AND status IN ('QUEUED','RUNNING','PENDING_INFORM','PENDING_MANUAL')"
             ),
         ),
+        CheckConstraint(_PROVISIONING_PHASE_CHECK, name="ck_provisioning_job_phase"),
+    )
+
+
+class ProvisioningEvent(Base):
+    """Transactional outbox (provisioning worker split R2, Alembic
+    pw1_provisioning_event). The worker and models-utils state-machine code
+    insert one row in the same transaction as the state change
+    (`utils/provisioning_events.emit_event`); backend-erp's single drainer
+    (advisory lock, `id` order) runs the business follow-on and stamps
+    `processed_at`, or bumps `attempts` / `last_error`. `run_id` / `job_id`
+    are plain UUIDs, not FKs: an event outlives a deleted run or job.
+    `kind` is an open string set (`provisioning_events.KINDS`), no CHECK."""
+    __tablename__ = "provisioning_event"
+
+    # bigserial on Postgres; SQLite only autoincrements an INTEGER PK.
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    kind = Column(String(32), nullable=False)
+    run_id = Column(Uuid, nullable=True)
+    job_id = Column(Uuid, nullable=True)
+    payload = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt,
+                        server_default=text("now()"))
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        # The drainer's scan: WHERE processed_at IS NULL ORDER BY id.
+        Index("ix_provisioning_event_pending", "id",
+              postgresql_where=text("processed_at IS NULL"),
+              sqlite_where=text("processed_at IS NULL")),
     )
 
 

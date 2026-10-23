@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger, Text,
-    Table, Index, CheckConstraint, UniqueConstraint
+    Index, CheckConstraint, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -119,24 +119,26 @@ class ServiceAvailability(str, enum.Enum):
 # services_total/services_installed counts in backend-erp.
 
 
-# Association table for many-to-many relationship between Task and User (assignees)
+# Many-to-many link between Task and User (assignees), mapped as a model like the rest.
 # tk2_task_links: the Figma edit form assigns a technician AND a collector to
 # the same task, so the pair (task, user) needs a role. PK stays
 # (task_id, user_id) — one user holds one role on a task. Legacy rows are NULL
 # and are read as technicians.
 TASK_ASSIGNEE_ROLES = ("TECHNICIAN", "COLLECTOR")
 
-task_assignee = Table(
-    'task_assignee',
-    Base.metadata,
-    Column('task_id', Uuid, ForeignKey('task.id', ondelete='CASCADE'), primary_key=True),
-    Column('user_id', Uuid, ForeignKey('user.id', ondelete='CASCADE'), primary_key=True),
-    Column('role', String(20), nullable=True),
-    CheckConstraint(
-        "role IS NULL OR role IN ('TECHNICIAN','COLLECTOR')",
-        name="ck_task_assignee_role",
-    ),
-)
+class TaskAssignee(Base):
+    """One user on one task, with the role they hold there (see above)."""
+    __tablename__ = "task_assignee"
+    __table_args__ = (
+        CheckConstraint(
+            "role IS NULL OR role IN ('TECHNICIAN','COLLECTOR')",
+            name="ck_task_assignee_role",
+        ),
+    )
+
+    task_id = Column(Uuid, ForeignKey("task.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Uuid, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True)
+    role = Column(String(20), nullable=True)
 
 
 class Client(Base):
@@ -508,6 +510,13 @@ class Task(Base):
     # NULL = not routed. Not the board order: that is `position`, which
     # move/reorder renumber. ix_task_company_scheduled_date covers the reads.
     route_sequence = Column(Integer, nullable=True)
+    # tl1_task_location (doc 46): the task's own reference point (where the
+    # technician drives to). NULL = derived (client, then device for
+    # non-INSTALL, then the planned parent) — see backend-erp
+    # utils/tasks.reference_point. Both or neither: ck_task_location lives in
+    # the revision only (SQLite create_all in consumers).
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     # mi2_mobile_field_ops: field-job timestamps (set when the status becomes
     # IN_PROGRESS / DONE) and the technician's per-step progress, keyed by the
     # app's step id: {"pickupOnu": {"done": true, "at": "...", ...}, ...}.
@@ -533,6 +542,11 @@ class Task(Base):
     device_category_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), nullable=True)
     inventory_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
     parent_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("inventory_item.id", ondelete="SET NULL"), nullable=True)
+    # oa1_task_onu_auto_assigned (doc 45): True when inventory_item_id was
+    # chosen by the server (custody-first / warehouse FIFO). Auto picks are
+    # re-evaluated when the technician changes; manual picks (office, mobile
+    # create, field swap) never are.
+    onu_auto_assigned = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     address = Column(String, nullable=True)
 
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -541,7 +555,7 @@ class Task(Base):
     # Relationships
     company = relationship("Company", back_populates="tasks")
     creator = relationship("User", foreign_keys=[created_by])
-    assignees = relationship("User", secondary=task_assignee)
+    assignees = relationship("User", secondary="task_assignee")
     closeout = relationship("TaskCloseout", back_populates="task", uselist=False, cascade="all, delete-orphan")
     client = relationship("Client", foreign_keys=[client_id])
     client_service = relationship("ClientService", foreign_keys=[client_service_id])
@@ -822,6 +836,46 @@ class CollectionVisit(Base):
     payment = relationship("Payment")
     signature_file = relationship("UploadedFile", foreign_keys=[signature_file_id])
     creator = relationship("User", foreign_keys=[created_by])
+
+
+class CollectionArea(Base):
+    """A collector's area: a polygon drawn in the back-office (Configuración ->
+    Áreas de cobro) with at most one collector. The collector ETL gives a client
+    to the collector of the area that contains it, and by proximity when no area
+    does. Revision ca1_collection_areas.
+
+    `polygon` is one ring of [latitude, longitude] pairs, at least 3, not closed
+    (the last point is not a repeat of the first); schemas.collection_area
+    validates it. No PostGIS: point-in-polygon runs in the ETL.
+    """
+    __tablename__ = "collection_area"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    name = Column(String(80), nullable=False)
+    # "#RRGGBB"; the format CHECK (ck_collection_area_color) lives in ca1 only:
+    # SQLite create_all in the consumers cannot parse the PG regex operator.
+    color = Column(String(7), nullable=False)
+    polygon = Column(JSON, nullable=False)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
+    # NULL = an area without a collector yet. SET NULL so deleting a user
+    # leaves the area in place for another collector.
+    collector_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    company = relationship("Company")
+    collector = relationship("User", foreign_keys=[collector_id])
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_collection_area_company_name"),
+        # One area per collector.
+        Index(
+            "uq_collection_area_collector", "collector_id", unique=True,
+            postgresql_where=text("collector_id IS NOT NULL"),
+            sqlite_where=text("collector_id IS NOT NULL"),
+        ),
+    )
 
 
 class CashSession(Base):

@@ -3,8 +3,8 @@
 ## Description
 
 SQLAlchemy ORM models for the business automation engine
-(`database_utils/models/workflow.py`): templates, workflows, triggers, the step
-DAG, and execution history. Engine semantics are documented separately in
+(`database_utils/models/workflow.py`): workflows, triggers, the step DAG, and
+execution history (the `WorkflowTemplate` catalog was dropped by `ld1_legacy_drop`). Engine semantics are documented separately in
 [workflow-engine.md](workflow-engine.md).
 
 ## Goal

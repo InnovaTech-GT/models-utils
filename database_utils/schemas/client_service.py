@@ -9,7 +9,7 @@ The ba1 adopted_* fields follow the same rule: Out-only, never on any
 Create/Update schema.
 """
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from uuid import UUID
 from datetime import datetime
 
@@ -146,8 +146,14 @@ class ClientServiceProvisionIn(BaseModel):
     """Cycle 3 E1 (doc 20a D-E1.3): POST /client-services/{id}/provision body.
     Optional — no body (or omitting purpose) defaults to ACTIVATION, so
     pre-Cycle-3 callers are unaffected. `purpose` selects the topology's
-    purpose-map entry (see database_utils.utils.provisioning_resolution)."""
+    purpose-map entry (see database_utils.utils.provisioning_resolution).
+
+    doc 50: `mode="GUIDED"` pauses before every step until an admin continues;
+    `guided_timeout_seconds` is each pause's deadline (None = the run default,
+    1800). Bounds mirror GUIDED_TIMEOUT_MIN/MAX in utils/provisioning_runs."""
     purpose: str = PURPOSE_ACTIVATION
+    mode: Literal["AUTOMATIC", "GUIDED"] = "AUTOMATIC"
+    guided_timeout_seconds: Optional[int] = Field(default=None, ge=300, le=14400)
 
     @field_validator('purpose')
     @classmethod

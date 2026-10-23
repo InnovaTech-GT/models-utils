@@ -3,8 +3,13 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (head: **`vw1_viewer_no_credential_read`**) — plus the idempotent seed
-scripts that run after every upgrade.
+`alembic/versions/` (112 revisions, head: **`ca1_collection_areas`**) — plus
+the idempotent seed scripts that run after every upgrade.
+
+Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
+v1.0.0) at `vw1_viewer_no_credential_read`; **Railway development** = `develop`
+`cad3ab4` at `pc1_provisioning_claim_token` (`pt2_unmap_port_labels` and `pc1`
+are not yet on prod).
 
 ## Goal
 
@@ -32,12 +37,15 @@ PostgreSQL database across local development and production.
 
 ## Workflow
 
-1. Modify the model in `database_utils/models/` (on a feature branch from `main`)
+1. Modify the model in `database_utils/models/` (on a feature branch from `main`,
+   or from `develop` when it builds on unreleased cycles)
 2. `alembic revision --autogenerate -m "description"` (needs a reachable DB env)
 3. Review the generated revision for correctness
-4. Commit; compose into `develop` (erp-release), pin backends to the SHA
+4. Commit; merge into `develop` (erp-release) and push — GitHub Actions applies
+   it to the Railway `development` DB; wait for that run before pushing the
+   backends pinned to the SHA
 5. Local `migrate` service applies it on `docker compose up`; GitHub Actions
-   applies it to prod on merge to `main`
+   applies it to prod on the `develop` → `main` merge
 
 Full release mechanics: [deployment-production.md](deployment-production.md).
 
@@ -320,7 +328,7 @@ in [network-models.md](network-models.md).
   `create_all`, which parses neither plpgsql nor the PG regex operator `~`
   (precedent: `ck_topology_playbook_purpose_format`, `nc1b`).
 
-- **`ng2_topology_drop`** (**head**) — the destructive half, three phases in this
+- **`ng2_topology_drop`** — the destructive half, three phases in this
   order and no other, and **irreversible**: `downgrade()` raises
   `NotImplementedError` because a graph cannot be turned back into a set of named
   chains (they carried per-topology playbook bindings and pinned positions the
@@ -588,7 +596,7 @@ proving both data steps (a proxy-less `vpn` row clamped to `direct` by `vpn1`,
 an `olt` row rewritten to `outbound` by `na1` and back again on downgrade).
 Guardrails: `tests/test_vpn_transport_constants.py`.
 
-### `ld1_legacy_drop` (2026-10-02, head) - DESTRUCTIVE, models-utils 4.0.0
+### `ld1_legacy_drop` (2026-10-02) - DESTRUCTIVE, models-utils 4.0.0
 
 Drops `product`, `recurring_order`, `recurring_order_item`, `task_state`,
 `workflow_template` and the FK columns `order.recurring_order_id`,
@@ -660,7 +668,7 @@ CHECK `ck_client_payment_day_range` (NULL or 1..31). `ClientBase`/`ClientOut`/
 `ClientCreate` carry `payment_day`, `ClientUpdate` too (`ge=1, le=31`).
 No backfill. `downgrade()` drops the check and the column.
 
-### `pt1_port_topology` (2026-10-04, head) — models-utils 4.4.0
+### `pt1_port_topology` (2026-10-04) — models-utils 4.4.0
 
 Additive and inert, on `sh1_service_history_repair`; hand-written (lock_timeout,
 `IF NOT EXISTS`, existence-guarded `ADD CONSTRAINT`, post-upgrade assertions).
@@ -892,7 +900,8 @@ the index and both columns — loses only the port labels. See
 ## Four built-in roles (rr1_four_builtin_roles)
 
 On `ci1_category_icons`. Product decision 2026-10-02: the global roles collapse
-to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`),
+to **ADMIN** (wildcard), **VIEWER** (every `read` permission + `web.access`;
+`device_credentials.read` was taken away again by `vw1`),
 **COLLECTOR** and **TECHNICIAN** (mobile-only, grants unchanged). Tenant custom
 roles are untouched. The revision:
 
@@ -941,29 +950,6 @@ client to one service; `c1b_backfill` priced lines from the current product).
   services, 163 orders moved, 184 lines fixed, 49 start dates shifted, 0 services
   with new billing gaps; re-running the logic is a no-op.
 
-## Key rules
-
-- **Not all migrations are reversible**: `c1e_install_actions` uses
-  `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
-  `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
-  raises from `downgrade()` by design. `tr1_transport_axis`'s `downgrade()` runs
-  and restores every value, but is not a true inverse (synthesised
-  `network_access.name`, `mgmt_subnets` unrecoverable — see its section above).
-  `nat1_gateway_transport`'s `downgrade()` was conditionally reversible on a
-  `network_access` row still being in a NAT mode; that table no longer exists
-  past `tr1`, so the condition is vacuous. Check each revision's `downgrade()`
-  before assuming rollback is possible
-- Additive changes (new columns/tables): safe to apply before consuming
-  service code ships
-- Destructive changes (removing/renaming): apply AFTER all consuming service
-  code is in production
-- Parallel schema features use separate branches/revisions — never combine
-  unrelated schema changes
-
-## Environment Variables
-
-- `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
-
 ### `cc1_client_code` (2026-10-05)
 
 Additive, on `pt1_port_topology`. `client.code` VARCHAR(16) NOT NULL: a short
@@ -983,3 +969,242 @@ Data-only, on `cc1_client_code`. Deletes the global VIEWER role's
 decision D2 of the v1.0.0 release plan. `rbac_seed.VIEWER_PERMISSION_FILTER`
 excludes it in the same commit, otherwise the post-upgrade seed would re-grant
 it. Downgrade re-grants it.
+
+
+### `pt2_unmap_port_labels` (2026-10-06)
+
+On `vw1_viewer_no_credential_read` (doc 40 §4.2 C8a). The model stops mapping
+`inventory_item.parent_port` / `uplink_port` and
+`uq_inventory_item_parent_port`. The DB keeps both columns, so a backend still
+on the old models keeps working during the rollout, but the revision drops the
+index (`DROP INDEX IF EXISTS`, `lock_timeout`, post-upgrade assert): a C8a
+backend no longer clears a re-parented item's label, so moving an item whose
+legacy label ("PON 1") a new sibling already carries would otherwise be a
+unique violation (a 500 on attach, reparent, the tecnicos connect step and the
+xlsx re-parent). No data is lost; an old backend still checks label uniqueness
+in code (`set_link_ports`). `downgrade()` recreates the index (IF NOT EXISTS)
+and fails if two siblings came to share a label meanwhile; rolling an old
+backend back does not need it. `tests/pg/test_port_labels_pg.py` covers the
+re-parent and the round trip. The column drop is `pt3_drop_port_labels` (C8b),
+which ships only after every backend deployed against the database runs C8a
+(doc 40 DI-13).
+
+### `pc1_provisioning_claim_token` (2026-10-06)
+
+Additive, metadata-only, on `pt2_unmap_port_labels`.
+`ALTER TABLE provisioning_job ADD COLUMN IF NOT EXISTS claim_token UUID NULL`
+(under `lock_timeout = 5s`: the live worker polls the table every second). The
+provisioning worker's per-claim fence token (release-v1.0.0
+provisioning-concurrency fix). No index, no backfill; the three partial unique
+indexes (`uq_provisioning_job_device_lock`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_run_company_idem`) are untouched. Downgrade drops the column.
+
+### `ta1_task_assignee_model` (2026-10-07)
+
+On `pc1_provisioning_claim_token`. `task_assignee` is mapped as the
+`TaskAssignee` model instead of a bare `Table`, with the same columns, primary
+key and `ck_task_assignee_role`, so no DDL. The revision only asserts that the
+live table has `task_id`, `user_id`, `role` and the CHECK, and its downgrade
+does nothing. It exists so the model change travels the migrate path (the CI
+guard and the prod migrate workflow filter on `alembic/versions/**`) and a
+drifted database fails at migrate time.
+
+### `ri1_inventory_received_at` (2026-10-08, doc 47 SP6)
+
+Additive, on `ta1_task_assignee_model` (ZTP program chain, doc 42a §4). Under
+`lock_timeout = 5s`: adds `inventory_item.received_at TIMESTAMPTZ` nullable,
+**backfills `received_at = created_at`** (the best guess for existing stock;
+the office corrects it via xlsx), then sets `NOT NULL` + `server_default now()`
+and asserts no NULL is left. The server default is kept (unlike `created_at`)
+because raw-SQL inserts exist (`tests/pg` fixtures, scripts). No index: SP4's
+FIFO pick filters `(company_id, status)`. Downgrade drops the column.
+
+### `tl1_task_location` (2026-10-08)
+
+Additive, on `ri1_inventory_received_at` (ZTP program chain, doc 42a §4;
+this branch carries SP6's `ri1` so the chain stays single-headed). Doc 46 (pre-dispatch) §4.2.1. Under `lock_timeout = 5s`:
+`task.latitude` / `task.longitude` (DOUBLE PRECISION, nullable,
+`ADD COLUMN IF NOT EXISTS`) and `ck_task_location` (guarded by a
+`pg_constraint` lookup): both NULL, or both set and in range (lat -90..90,
+lng -180..180). The CHECK spells out `IS NOT NULL` on both sides because a half
+pair makes `BETWEEN` NULL and a NULL CHECK passes. The task's own reference
+point; NULL = derived in backend-erp (`utils/tasks.reference_point`: client,
+then device for non-INSTALL, then the planned parent). No index, no backfill.
+Post-upgrade assert on both columns + the CHECK. Downgrade drops the CHECK and
+both columns. `tests/pg/test_task_location_pg.py` covers the CHECK and
+down/up.
+
+### `oa1_task_onu_auto_assigned` (2026-10-08, doc 45 SP4)
+
+On `tl1_task_location` (ZTP program chain, doc 42a §4: `… → tl1 → oa1 → pe1 →
+zt1`). Under `lock_timeout = 5s`: `task.onu_auto_assigned BOOLEAN NOT NULL
+DEFAULT false` (`ADD COLUMN IF NOT EXISTS`). Then a **one-off data backfill**
+that runs automatically on dev and prod migrate: every `IN_STOCK` ONU
+(`device_category.key = 'ONU'`) referenced by an open (`status <> 'DONE'`)
+`INSTALL` task becomes `RESERVED`, with one `RESERVED` `equipment_event`
+(`technician_id` = that task's lowest-`user_id` TECHNICIAN-or-NULL assignee, or
+NULL; `event_metadata = {"task_id", "auto": false, "backfill": true}`). Candidate units are locked `FOR NO KEY UPDATE` before the insert/update, so a concurrent status change by the still-serving old backend is never overwritten. A unit
+held by two open tasks is reserved once, for the oldest task (rollout lists
+the duplicates for the office). Links stay manual (`onu_auto_assigned =
+false`). Idempotent (a reserved unit is no longer `IN_STOCK`); post-upgrade
+asserts the column only — no data assert, because the old backend keeps
+serving during migrate and may release a held unit after the backfill; rollout
+step 5 (doc 45 §6.5) lists any stragglers. Downgrade drops the column
+only — the backfilled reservations are correct data and stay.
+`tests/pg/test_onu_auto_assigned_pg.py` covers the backfill and down/up.
+
+### `pe1_playbook_phases` (2026-10-08, ZTP SP1, doc 42 §12)
+
+On `oa1_task_onu_auto_assigned` (program chain, doc 42a §4: `… → tl1 → oa1 →
+pe1 → zt1 → zm1`; re-pointed from `tl1_task_location` at compose, 6.6.0). Additive and metadata-only, under `lock_timeout = 5s`,
+`IF [NOT] EXISTS`: `provisioning_run` gains `phase` VARCHAR(16), `error_code`
+VARCHAR(40), `error` TEXT, `outputs` JSON, `secrets_ciphertext` /
+`secrets_dek_wrapped` BYTEA, `secrets_kek_id` VARCHAR; `provisioning_job` gains
+`phase` VARCHAR(16); both get `ck_<table>_phase` (`phase IS NULL OR phase IN
+(...)`). `ck_device_credential_kind` is dropped and re-created with
+`CLI_ENABLE` from the revision's own literal (pinned byte-identical to the
+model's by `tests/test_pe1_playbook_phases.py`). No backfill, no index. Stored
+legacy playbook definitions are **not** rewritten: they are normalized on read
+and converted on their next save (doc 42 §14.1). Downgrade refuses while any
+`CLI_ENABLE` credential exists, then restores the old CHECK and drops the
+columns. `tests/pg/test_pe1_pg.py` covers the CHECKs, the refusal and the round
+trip.
+
+### `zt1_ztp_trigger` (2026-10-08, ZTP SP2, doc 43 §4)
+
+On `pe1_playbook_phases` (program chain `… → pe1 → zt1 → zt2`). Additive, under
+`lock_timeout = 5s`, `IF [NOT] EXISTS`: `provisioning_settings.ztp_enabled`
+BOOLEAN NOT NULL DEFAULT false (metadata-only; a NEW column, not the dead
+`enabled`, which some tenants still hold true); `ck_user_notification_kind`
+dropped and re-created with `ZTP_SUCCEEDED`, `ZTP_FAILED`,
+`ZTP_NEEDS_ATTENTION`, `ZTP_ROLLBACK_INCOMPLETE`; `user_notification.push_state`
+VARCHAR(12) NULL (the push outbox, no CHECK) with the partial index
+`ix_user_notification_push_pending (created_at) WHERE push_state = 'PENDING'`;
+new table `user_push_token` (token VARCHAR(255) UNIQUE, `platform` CHECK
+android/ios, `app` CHECK tecnicos, company/user FKs CASCADE, index on
+`user_id`). The literals are pinned to the models by
+`tests/test_zt1_ztp_trigger.py`. Downgrade drops the table, the index and
+`push_state`, **deletes every `ZTP_*` row** (the old CHECK rejects them),
+restores the old CHECK and drops `ztp_enabled` (the column is gone at head since
+`zt3_ztp_always_on`). `tests/pg/test_zt1_pg.py` covers the CHECKs, the index, the token constraints and the round
+trip.
+
+### `zm1_manual_step` (2026-10-09, manual playbook steps, doc 42d §7)
+
+On `zt1_ztp_trigger` (the planned `zt2` re-points to `zm1`). Additive.
+`ALTER TYPE provisioningjobstatus ADD VALUE IF NOT EXISTS 'PENDING_MANUAL'` in an
+autocommit block (the `nc1a` recipe: the value must commit before a predicate
+uses it); then, under `lock_timeout = 5s`, `uq_provisioning_job_company_idem`,
+`uq_provisioning_job_device_lock` and `uq_provisioning_run_company_idem` are
+dropped and re-created with `status IN ('QUEUED','RUNNING','PENDING_INFORM',
+'PENDING_MANUAL')` (a parked manual child keeps its CPE lock and dedupe key),
+and `ck_user_notification_kind` gains `ZTP_MANUAL_STEP`. The literals are pinned
+to the models and to `IN_FLIGHT` by `tests/test_manual_steps.py`. Downgrade
+**refuses while any job is `PENDING_MANUAL`** (`RuntimeError`; cancel or let
+them expire first), then restores the old predicates, deletes the
+`ZTP_MANUAL_STEP` rows and restores the old CHECK. The enum value stays (PG
+cannot drop one without rebuilding the type). `tests/pg/test_zm1_pg.py` covers
+the lock, the key, the kind and the refusal.
+
+### `zt3_ztp_always_on` (2026-10-09, ZTP always on, founder decision)
+
+On `zm1_manual_step`. **Destructive** (one column): `ALTER TABLE
+provisioning_settings DROP COLUMN IF EXISTS ztp_enabled` under `lock_timeout =
+5s`. ZTP is always on for every tenant: the INSTALL closeout always starts the
+ACTIVATION run, and the safety mechanisms are the provisioning gates
+(`DRY_RUN_REQUIRED`, …) and the env `PROVISIONING_KILL_SWITCH`, never a column.
+Safe to drop because `zt1` only ever reached Railway development, not prod.
+**Order (reverses the usual push-order rule for this cycle):** a backend-erp
+still pinned to a models-utils that maps `ztp_enabled` SELECTs the column on
+every `ProvisioningSettings` load and 500s (UndefinedColumn) once it is gone,
+while code that no longer maps it works fine against a DB that still has it
+(the column has `DEFAULT false`, so inserts that omit it succeed). So: (1) push
+backend-erp `develop` repinned to this revision's SHA (with its `ztp_enabled`
+reads removed) and wait for Backend + ProvisionWorker to deploy; (2) only then
+merge and push models-utils `develop` so `migrate.yml` drops the column. Hand
+this to erp-release as a stated exception. Downgrade re-adds it `BOOLEAN NOT NULL
+DEFAULT false` (metadata-only; every tenant off, the zt1 shape).
+`tests/pg/test_zt3_pg.py` covers the idempotent round trip.
+
+### `pd2_payment_day_backfill` (2026-10-09)
+
+On `zt3_ztp_always_on`. Data only, no DDL.
+Fills `client.payment_day` (added empty by `pd1_client_payment_day`) for every
+client where it is NULL: the day of month, in Guatemala time, that appears on
+the most dates of the client's PAYMENT ledger rows (`payment.order_id` →
+`order.client_id`). Several payments on the same date count once, payments
+reversed by a REFUND are skipped, and a tie goes to the day of the most recent
+tied date. A client with no usable payment gets 15 (`DEFAULT_DAY`). A value
+already set is never touched, so a re-run is a no-op; the upgrade prints both
+counts and asserts no NULL is left. Downgrade is a no-op (nothing records which
+values it wrote). Feeds the collector route ETL in dispatch-etls.
+
+### `gr1_guided_runs` (2026-10-14) — models-utils 6.8.0
+
+On `pd2_payment_day_backfill`. Additive (guided provisioning runs, doc 50):
+`provisioning_run.mode VARCHAR(16) NOT NULL DEFAULT 'AUTOMATIC'` and
+`provisioning_run.guided_timeout_seconds INTEGER NOT NULL DEFAULT 1800`, so
+every existing run reads AUTOMATIC / 1800 and code that never writes them keeps
+working. No PG enum and no CHECK: `ProvisioningRunMode` and the 300–14400 range
+are enforced by `create_run`. `ADD COLUMN IF NOT EXISTS`, `lock_timeout 5s`,
+post-upgrade assert; downgrade drops both columns (reversible).
+
+### `pw1_provisioning_event` (2026-10-15) — models-utils 6.10.0
+
+On `gr1_guided_runs`. Additive. Creates the provisioning outbox
+`provisioning_event` (provisioning worker split R2): `id BIGSERIAL PK`,
+`company_id UUID NOT NULL` → `company` ON DELETE CASCADE, `kind VARCHAR(32)`,
+`run_id`/`job_id UUID NULL` (no FK, so an event outlives its run or job),
+`payload JSONB`, `created_at TIMESTAMPTZ DEFAULT now()`, `processed_at`,
+`attempts INTEGER DEFAULT 0`, `last_error TEXT`, plus the drainer's partial
+index `ix_provisioning_event_pending (id) WHERE processed_at IS NULL`.
+`CREATE ... IF NOT EXISTS`, `lock_timeout 5s`, post-upgrade assert on the
+index. Downgrade drops the table (reversible, but unprocessed events are lost:
+let backend-erp drain first). Guard: `tests/pg/test_pw1_pg.py`.
+
+### `pz1_provisioning_zone` (2026-10-15) — models-utils 6.11.0
+
+On `pw1_provisioning_event`. Additive, metadata-only: `company.provisioning_zone
+VARCHAR(64) NULL`. Per-tenant provisioning worker routing — a worker started
+with `PROVISIONING_ZONE=<z>` serves only companies whose zone is `<z>`; an
+unzoned worker serves only `provisioning_zone IS NULL` (every tenant at
+release). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the column.
+Set by SQL only (no API yet). Guard: `tests/pg/test_pz1_pg.py`.
+
+## Key rules
+
+- **Not all migrations are reversible**: `c1e_install_actions` uses
+  `ALTER TYPE ... ADD VALUE`, which has no downgrade (so do `pm1`, `tj1` and
+  `iv1_insights_v2`, which keep their labels on downgrade), and `ng2_topology_drop`
+  raises from `downgrade()` by design, as do `ld1_legacy_drop` and the one-way
+  data repair `sh1_service_history_repair`. `tr1_transport_axis`'s `downgrade()` runs
+  and restores every value, but is not a true inverse (synthesised
+  `network_access.name`, `mgmt_subnets` unrecoverable — see its section above).
+  `nat1_gateway_transport`'s `downgrade()` was conditionally reversible on a
+  `network_access` row still being in a NAT mode; that table no longer exists
+  past `tr1`, so the condition is vacuous. Check each revision's `downgrade()`
+  before assuming rollback is possible
+- Additive changes (new columns/tables): safe to apply before consuming
+  service code ships
+- Destructive changes (removing/renaming): apply AFTER all consuming service
+  code is in production
+- Parallel schema features use separate branches/revisions — never combine
+  unrelated schema changes
+
+## Environment Variables
+
+- `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+### `ca1_collection_areas` (2026-10-16) — models-utils 6.12.0
+
+On `pz1_provisioning_zone`. Additive. New table `collection_area` (company
+CASCADE, `collector_id` FK user SET NULL, `uq_collection_area_company_name`,
+partial unique index `uq_collection_area_collector` WHERE `collector_id IS NOT
+NULL`, `ck_collection_area_color` regex `#RRGGBB`, `ck_collection_area_polygon`
+JSON array of at least 3). `user` + `home_latitude` / `home_longitude` (DOUBLE
+PRECISION NULL) and `ck_user_home_location` (both or neither). Permissions
+`collection_areas.read` / `collection_areas.update` inserted and granted to the
+global ADMIN role (the seed lists them too). The CHECKs live in the revision
+only (SQLite `create_all` in the consumers). `lock_timeout 5s`, `IF [NOT]
+EXISTS`, post-upgrade asserts. Downgrade drops the table, the columns and the
+grants. Guard: `tests/pg/test_ca1_pg.py`.

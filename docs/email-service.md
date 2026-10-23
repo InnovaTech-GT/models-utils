@@ -87,4 +87,5 @@ package.
 ## Tests
 
 Email schemas, service, templates (both locales + fallback), SMTP behavior,
-and model tokens are covered by ~20 tests in `tests/`.
+and model tokens are covered by 24 tests in `tests/` (`test_email_*`,
+`test_smtp_email_service.py`, `test_models_email_tokens.py`).

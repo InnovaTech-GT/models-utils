@@ -90,15 +90,22 @@ mode B would enqueue nothing and look like a healthy no-op forever.
 `_execute_enqueue_provisioning_path` opens a **`ProvisioningRun`, not a single
 job** — a path spans several devices and therefore several playbooks. It queues
 the run's first child; the worker advances the rest via
-`provisioning_runs.advance_run`. The step result is
-`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`.
+`provisioning_runs.advance_run`. The run is opened with
+`provisioning_runs.create_or_get_run`: the default key (no `idempotency_key` in
+the config) is the shared `run_idempotency_key`, the same one `/provision` and
+backend-erp's lifecycle hooks use, and the INSERT runs in a SAVEPOINT, so a race
+lost to a concurrent producer returns the winner and the WorkflowExecution still
+commits. The step result is
+`{"enqueued": true, "run_id": ..., "purpose": ..., "devices": len(run.plan)}`, or
+`{"enqueued": false, "deduped": true, "run_id": ..., "idempotency_key": ...}` when
+a run with that key was already in flight.
 
 Order of operations is **skip rule → idempotency dedupe → resolve → open run**.
 The idempotency key never depends on resolution output, so a re-fire while a run
 is already in flight must dedupe even if the graph drifted in between; resolving
 first would turn a harmless dedupe into a spurious FAILED execution. The dedupe
 uses `find_in_flight_run`, whose in-flight set (QUEUED / RUNNING /
-`PENDING_INFORM`) mirrors `uq_provisioning_run_company_idem`.
+`PENDING_INFORM` / `PENDING_MANUAL`) mirrors `uq_provisioning_run_company_idem`.
 
 `CPE_NOT_SET` / `CPE_NOT_ATTACHED` / `PLAYBOOK_NOT_BOUND` / `PLAYBOOK_INACTIVE`
 all **fail the step visibly** (founder hard requirement: resolution failures are
@@ -111,16 +118,27 @@ Automation-authored `variables` are namespaced through `input_key()` before bein
 merged, so a step declaring `variables: {serial: ...}` cannot shadow the
 resolver's `device.serial`.
 
+**Gates (6.4.0, doc 43 §5.6).** `create_run` (non-dry) applies the provisioning
+gates to every configured node (`utils/provisioning_gates.py`: env kill switch,
+`device_type.provisioning_enabled`, dry-run gate with the system-playbook
+exemption) and raises `ProvisioningGateError`; mode A turns it into
+`ValueError("Provisioning gates blocked service …: <reasons>")`, so the step
+FAILS visibly and no run or job is inserted, exactly like a resolution error.
+
 ### Mode B — explicit playbook (pre-Cycle-3 shape, unchanged)
 
 `playbook_id` + `variables` + optional target ids. It enqueues one standalone
 `ProvisioningJob` with `run_id` NULL, runs no path resolution, and namespaces
 every author variable under `input.*`. Its idempotency pre-check
-(`_find_queued_or_running_provisioning_job`) treats QUEUED, RUNNING **and
-`PENDING_INFORM`** as in-flight (Cycle 7 fix, doc 25 §6.3) — matching nc1a's
+(`_find_queued_or_running_provisioning_job`) treats QUEUED, RUNNING,
+**`PENDING_INFORM` and `PENDING_MANUAL`** as in-flight (Cycle 7 fix, doc 25 §6.3;
+`zm1`, doc 42d — it reads `provisioning_runs.IN_FLIGHT`) — matching the
 partial-unique-index predicate, so a re-enqueue while a job is parked dedupes
 instead of tripping the index. `use_service_path` and `playbook_id` together are
-rejected as mutually exclusive.
+rejected as mutually exclusive. Since 6.4.0 (doc 43 §5.6) the always-live job
+is gated before its insert: `gate_failure(playbook, <the target item's device
+type, if any>, dry_run=False)`; a refusal raises `ValueError("Provisioning gates
+blocked playbook …")` and the step FAILS.
 
 ## Provisioning resolution (`provisioning_resolution.py`)
 
@@ -148,8 +166,9 @@ only resolves `service_plan_id` items.
 
 ## Tests
 
-`tests/` is 38 files / **375 tests**, all on in-memory SQLite
-(`pytest.ini`: `asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`).
+`tests/` is 84 files / **1018 tests**: 962 on in-memory SQLite (`pytest.ini`:
+`asyncio_mode = auto`; CI needs only placeholder `POSTGRES_*`) and 56 in `tests/pg`
+(`-m pg`, skipped unless `PG_TEST_URL` points at a DB at `alembic upgrade head`).
 
 `tests/conftest.py` holds the shared `db` and `plant` fixtures. `plant` builds a
 **real** in-memory SQLite network graph — `CORE-1 (router) → OLT-1 (olt) →

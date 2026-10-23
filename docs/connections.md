@@ -23,7 +23,7 @@ tokens, backend-erp validates them via `jwt_utils`).
 
 | Consumer | How | What it uses |
 |---|---|---|
-| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint) |
+| `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint); **6.9.0**: the shared playbook language, `finish_job`/`fail_parked`, connectivity-job construction and the GenieACS NBI read helpers ([playbook-language.md](playbook-language.md)), imported by both the API and the provisioning worker; **6.10.0**: the `provisioning_event` outbox: the worker writes it (via `close_run`, `finish_job`, `emit_event`), the API drains it and runs the business follow-ons |
 | `auth-erp` | same SHA-pinned dependency | Auth models/schemas, `jwt_utils`, **email service + templates**, invitation/verification/reset tokens, SaaS billing models |
 | `cron-erp` | pip dependency | `RecurrenceEnum` / client_service billing (legacy `RecurringOrder` dropped by `ld1_legacy_drop`) |
 | `frontend-erp` | none (indirect) | Consumes JSON shaped by these Pydantic schemas via backend proxies |
@@ -39,8 +39,11 @@ composed `develop` HEAD. See [deployment-production.md](deployment-production.md
 | Variable(s) | Where | Purpose |
 |---|---|---|
 | `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` | `database.py`, `alembic/env.py` | DB connection (first match wins; import fails if none set) |
-| `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` | `utils/jwt_utils.py` | JWT signing/validation; fails fast if `SECRET_KEY` unset when `ENVIRONMENT=production`, dev fallback otherwise |
-| `EMAIL_PROVIDER`, `SMTP_USE_TLS` (+ SMTP host/credentials supplied by consumers) | `services/email_service.py` | Email provider selection and transport |
+| `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; prod sets 2592000), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60) | `utils/jwt_utils.py` | JWT signing/validation; fails fast if `SECRET_KEY` unset when `ENVIRONMENT=production`, dev fallback otherwise |
+| `CREDENTIALS_KEKS`, `CREDENTIALS_ACTIVE_KEK_ID` | `utils/crypto.py` | AES-256-GCM envelope encryption of device credentials (KEK ring + active KEK) |
+| `GENIEACS_NBI_URL`, `GENIEACS_NBI_USER`, `GENIEACS_NBI_PASSWORD`, `GENIEACS_NBI_TIMEOUT_SECONDS` (default 10, read at import) | `utils/genieacs_nbi.py` (6.9.0) | GenieACS NBI base URL, optional basic auth and client timeout; read only when a consumer calls `nbi_client()` |
+| `PROVISIONING_KILL_SWITCH` | `utils/provisioning_gates.py` | Global live-provisioning kill switch (`1`/`true`/`yes`) |
+| `EMAIL_PROVIDER` (default `mock`), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, `SMTP_USE_TLS` | `dependencies/email.py` → `services/email_service.py` | Email provider selection and SMTP transport |
 
 The package does **not** read `AUTH_URL`/`CRM_URL` and does **not** use Redis —
 those belong to the services.

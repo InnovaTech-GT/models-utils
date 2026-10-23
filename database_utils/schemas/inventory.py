@@ -2,7 +2,7 @@
 import re
 
 from pydantic import BaseModel, ConfigDict, StrictInt, field_validator, model_validator, Field
-from typing import Optional, List, Dict, Any, NamedTuple
+from typing import Optional, List, Dict, Any, Literal, NamedTuple
 from uuid import UUID
 from datetime import datetime
 
@@ -20,6 +20,7 @@ from database_utils.models.isp import (
     PORT_NAME_PATTERN,
 )
 from database_utils.utils.playbook_expr import is_secret_name
+from database_utils.utils.timezone_utils import make_aware_gt
 
 
 def _normalize_cli_protocol(v: Optional[str]) -> Optional[str]:
@@ -450,6 +451,10 @@ class InventoryItemOut(InventoryItemBase):
     client_service_id: Optional[UUID] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    # ri1 (doc 47): FIFO key. Read-only here on purpose — never on Base/Create
+    # (an explicit None would be written as NULL) nor Update (xlsx is the only
+    # edit path).
+    received_at: datetime
     device_type: Optional[DeviceTypeOut] = None
     warehouse: Optional[WarehouseOut] = None
     # --- Figma redesign PR 8 (08-inventario §2.3/§3.2) ---
@@ -485,6 +490,49 @@ class InventoryItemOut(InventoryItemBase):
     gps_precision_m: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Inventory intake (doc 47, POST /inventory/receive) ---
+
+class InventoryReceiveIn(BaseModel):
+    """One receive request: header fields apply to every serial. The web sends
+    one serial per request; pastes are chunked by 100."""
+    device_type_id: UUID
+    warehouse_id: UUID
+    serials: List[str] = Field(min_length=1, max_length=100)
+    condition: InventoryItemCondition = InventoryItemCondition.NEW
+    # Backdate; None = now. A naive value is America/Guatemala.
+    received_at: Optional[datetime] = None
+    purchase_date: Optional[datetime] = None
+    cost_cents: Optional[int] = Field(default=None, ge=0)  # per unit
+    supplier: Optional[str] = Field(default=None, max_length=120)
+    reference: Optional[str] = Field(default=None, max_length=120)  # invoice / PO no.
+    notes: Optional[str] = None
+    # Client-generated, groups one session; idempotency key for replays.
+    receipt_id: Optional[UUID] = None
+
+    @field_validator("received_at")
+    @classmethod
+    def _aware_received_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return make_aware_gt(v) if v is not None else v
+
+
+class InventoryReceiveRow(BaseModel):
+    serial_number: str  # as stored (whitespace stripped, case preserved)
+    result: Literal["CREATED", "DUPLICATE", "INVALID"]
+    code: Optional[str] = None     # INVALID: SERIAL_EMPTY | SERIAL_TOO_LONG
+    warning: Optional[str] = None  # CREATED only: SERIAL_PATTERN_MISMATCH (never blocks)
+    # CREATED: the unit; DUPLICATE: the existing unit.
+    item: Optional[InventoryItemOut] = None
+
+
+class InventoryReceiveOut(BaseModel):
+    receipt_id: UUID
+    created: int
+    warnings: int  # subset of created
+    duplicates: int
+    invalid: int
+    rows: List[InventoryReceiveRow]
 
 
 # --- EquipmentEvent ---

@@ -1,0 +1,599 @@
+{
+  "cases": [
+    {
+      "name": "v2 input is returned unchanged",
+      "input": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "rb",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "rb",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      }
+    },
+    {
+      "name": "v2 keeps unknown keys and other phases",
+      "input": {
+        "variables": [],
+        "session": {
+          "exit_command": "exit"
+        },
+        "preconditions": [
+          {
+            "name": "pre",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "verification": [
+          {
+            "name": "ver",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [],
+        "outputs": [],
+        "secrets": [
+          {
+            "key": "wifi_key",
+            "length": 12
+          }
+        ],
+        "x_custom": 1
+      },
+      "output": {
+        "variables": [],
+        "session": {
+          "exit_command": "exit"
+        },
+        "preconditions": [
+          {
+            "name": "pre",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "verification": [
+          {
+            "name": "ver",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [],
+        "outputs": [],
+        "secrets": [
+          {
+            "key": "wifi_key",
+            "length": 12
+          }
+        ],
+        "x_custom": 1
+      }
+    },
+    {
+      "name": "legacy steps become configuration",
+      "input": {
+        "variables": [],
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          },
+          {
+            "name": "b",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "variables": [],
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          },
+          {
+            "name": "b",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "on_failure becomes undoes-gated rollback in reverse",
+      "input": {
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x",
+            "on_failure": [
+              {
+                "name": "undo-a",
+                "driver": "simulator",
+                "template": "x"
+              }
+            ]
+          },
+          {
+            "name": "b",
+            "driver": "simulator",
+            "template": "x",
+            "on_failure": [
+              {
+                "name": "undo-b1",
+                "driver": "simulator",
+                "template": "x"
+              },
+              {
+                "name": "undo-b2",
+                "driver": "simulator",
+                "template": "x"
+              }
+            ]
+          },
+          {
+            "name": "c",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "legacy",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          },
+          {
+            "name": "b",
+            "driver": "simulator",
+            "template": "x"
+          },
+          {
+            "name": "c",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "undo-b1",
+            "driver": "simulator",
+            "template": "x",
+            "undoes": "b"
+          },
+          {
+            "name": "undo-b2",
+            "driver": "simulator",
+            "template": "x",
+            "undoes": "b"
+          },
+          {
+            "name": "undo-a",
+            "driver": "simulator",
+            "template": "x",
+            "undoes": "a"
+          }
+        ],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "legacy rollback is kept without undoes",
+      "input": {
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "r",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "r",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "rollback names are made unique across phases",
+      "input": {
+        "steps": [
+          {
+            "name": "s",
+            "driver": "simulator",
+            "template": "x",
+            "on_failure": [
+              {
+                "name": "s",
+                "driver": "simulator",
+                "template": "x"
+              },
+              {
+                "name": "s",
+                "driver": "simulator",
+                "template": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "s",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "s (rollback)",
+            "driver": "simulator",
+            "template": "x",
+            "undoes": "s"
+          },
+          {
+            "name": "s (rollback 2)",
+            "driver": "simulator",
+            "template": "x",
+            "undoes": "s"
+          }
+        ],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "legacy rollback name colliding with a step is renamed",
+      "input": {
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [
+          {
+            "name": "a (rollback)",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "step precondition guard is kept",
+      "input": {
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x",
+            "precondition": {
+              "template": "show",
+              "validation": {
+                "expect_contains": "ok"
+              },
+              "when_met": "skip"
+            }
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x",
+            "precondition": {
+              "template": "show",
+              "validation": {
+                "expect_contains": "ok"
+              },
+              "when_met": "skip"
+            }
+          }
+        ],
+        "rollback": [],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "connectivity definition shape normalizes",
+      "input": {
+        "variables": [],
+        "steps": [
+          {
+            "name": "probe",
+            "driver": "ping",
+            "template": "{{device.mgmt_host}}",
+            "timeout_seconds": 10
+          }
+        ]
+      },
+      "output": {
+        "variables": [],
+        "configuration": [
+          {
+            "name": "probe",
+            "driver": "ping",
+            "template": "{{device.mgmt_host}}",
+            "timeout_seconds": 10
+          }
+        ],
+        "rollback": [],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "steps mirror equal to configuration is dropped",
+      "input": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "steps": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": []
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": []
+      }
+    },
+    {
+      "name": "empty steps next to configuration is v2",
+      "input": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "steps": []
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty configuration is v2 (left for the server to refuse)",
+      "input": {
+        "configuration": [],
+        "steps": []
+      },
+      "output": {
+        "configuration": []
+      }
+    },
+    {
+      "name": "no steps and no configuration is returned unchanged",
+      "input": {
+        "variables": []
+      },
+      "output": {
+        "variables": []
+      }
+    },
+    {
+      "name": "edited steps next to configuration are refused",
+      "input": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "steps": [
+          {
+            "name": "edited",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "error": "LEGACY_STEPS_CONFLICT"
+    },
+    {
+      "name": "non-list on_failure is truthy but yields no rollback",
+      "input": {
+        "steps": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x",
+            "on_failure": {
+              "name": "u",
+              "driver": "simulator",
+              "template": "x"
+            }
+          }
+        ],
+        "rollback": [
+          {
+            "name": "r",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ]
+      },
+      "output": {
+        "configuration": [
+          {
+            "name": "a",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "rollback": [],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "non-list legacy steps yield an empty configuration",
+      "input": {
+        "steps": "x"
+      },
+      "output": {
+        "configuration": [],
+        "rollback": [],
+        "preconditions": [],
+        "verification": [],
+        "outputs": [],
+        "secrets": []
+      }
+    },
+    {
+      "name": "non-list steps next to configuration are refused",
+      "input": {
+        "configuration": [
+          {
+            "name": "cfg",
+            "driver": "simulator",
+            "template": "x"
+          }
+        ],
+        "steps": "x"
+      },
+      "error": "LEGACY_STEPS_CONFLICT"
+    }
+  ]
+}
