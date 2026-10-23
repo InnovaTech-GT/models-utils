@@ -159,6 +159,8 @@ MANUAL_MAX_CHECK_LABEL = 120
 MAX_REGEX_LENGTH = 256
 MAX_CAPTURES_PER_STEP = 8
 MAX_CAPTURES_PER_PLAYBOOK = 32
+# An `all` capture keeps at most this many matches (doc 42 §4.3).
+MAX_CAPTURE_ITEMS = 50
 MAX_OUTPUTS = 16
 MAX_LABEL = 80
 MAX_HINT = 200
@@ -167,7 +169,7 @@ WAIT_MAX_SECONDS = 600
 # device it is capped lower (doc 42 §8.1). Checked by the playbook router,
 # which knows the bound device type's category: shared_device_wait_errors().
 SHARED_DEVICE_WAIT_MAX_SECONDS = 120
-OUTPUT_AUDIENCES = frozenset({"technician", "office"})
+OUTPUT_AUDIENCES = frozenset({"technician", "office", "customer"})
 # Generated secrets: letters and digits without 0 O 1 l I (doc 42 §10.2).
 SECRET_ALPHABET = "".join(
     c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -260,6 +262,9 @@ class PlaybookCapture(BaseModel):
     min: Threshold = None     # number: inclusive; a literal or ONE token
     max: Threshold = None
     equals: Optional[str] = None   # text: exact (literal or one token)
+    # Keep every match, joined by newline, instead of the first one. Text
+    # only, no threshold, and no match is an empty list, not CAPTURE_NOT_FOUND.
+    all: bool = False
 
     @field_validator("key")
     @classmethod
@@ -283,6 +288,11 @@ class PlaybookCapture(BaseModel):
         if self.type not in ("number", "text"):
             raise ValueError(f"{where}: type must be 'number' or 'text'")
         number = self.type == "number"
+        if self.all:
+            if number:
+                raise ValueError(f"{where}: an 'all' capture must be text")
+            if self.min is not None or self.max is not None or self.equals is not None:
+                raise ValueError(f"{where}: an 'all' capture takes no threshold")
         if number and self.equals is not None:
             raise ValueError(f"{where}: 'equals' is for text captures")
         if not number and (self.min is not None or self.max is not None):
@@ -634,6 +644,9 @@ class PlaybookOutput(BaseModel):
         if self.shareable and "technician" not in self.audience:
             raise ValueError(
                 f"OUTPUT_SHARE_AUDIENCE: {where}: shareable needs 'technician' in audience")
+        if self.sensitive and "customer" in self.audience:
+            raise ValueError(
+                f"OUTPUT_CUSTOMER_SENSITIVE: {where}: a customer output cannot be sensitive")
         bodies = [m.group("body") for m in playbook_expr.TOKEN_SHAPE.finditer(self.value)]
         if any(_SECRET_REF.match(b) for b in bodies):
             if not _SECRET_ONLY.match(self.value):
@@ -992,6 +1005,7 @@ class PlaybookDefinition(BaseModel):
 
     def _validate_captures_and_secrets(self, phases) -> None:
         declared: set = set()
+        multi: set = set()   # `all` capture keys
         total = 0
         for key, steps in phases:
             if key == "rollback":
@@ -1010,6 +1024,8 @@ class PlaybookDefinition(BaseModel):
                     if c.key in declared:
                         raise ValueError(f"capture key '{c.key}' is declared twice")
                     declared.add(c.key)
+                    if c.all:
+                        multi.add(c.key)
                 total += len(s.capture)
         if total > MAX_CAPTURES_PER_PLAYBOOK:
             raise ValueError(f"at most {MAX_CAPTURES_PER_PLAYBOOK} captures per playbook")
@@ -1018,6 +1034,17 @@ class PlaybookDefinition(BaseModel):
         for ref in _refs(playbook_expr.strings(late), _CAPTURE_REF):
             if ref not in declared:
                 raise ValueError(f"CAPTURE_UNDECLARED: {{{{capture.{ref}}}}} is never captured")
+
+        # An `all` capture is multi-line, so it may never reach a device
+        # command (doc 42 4.3): an output may read it, a step may not.
+        for key, steps in phases:
+            for s in steps:
+                for ref in _refs(playbook_expr.strings(s.model_dump()), _CAPTURE_REF):
+                    if ref in multi:
+                        raise ValueError(
+                            f"CAPTURE_ALL_IN_STEP: step '{s.name}' reads "
+                            f"{{{{capture.{ref}}}}}, an 'all' capture: its value is "
+                            "multi-line and may be read by an output only")
 
         secret_keys = [s.key for s in self.secrets]
         if len(secret_keys) != len(set(secret_keys)):
@@ -1036,6 +1063,13 @@ class PlaybookDefinition(BaseModel):
                 raise ValueError(f"output '{o.key}': a secret output is always sensitive "
                                  "unless the secret is visible")
             o.sensitive = True
+
+        for o in self.outputs:
+            if o.sensitive and "customer" in o.audience:
+                raise ValueError(
+                    f"OUTPUT_CUSTOMER_SENSITIVE: output '{o.key}': a customer output "
+                    "cannot be sensitive; declare the secret visible or drop "
+                    "'customer' from its audience")
 
         if len(self.outputs) > MAX_OUTPUTS:
             raise ValueError(f"at most {MAX_OUTPUTS} outputs per playbook")

@@ -16,7 +16,8 @@ Sections:
   * render     — `_render_step` and the unrendered-token guard, the rendered
                  `expect_*` / capture checks (`_prepare_checks`), the default
                  CLI target (`_render_target_item`).
-  * captures   — the charset gate (`_gate_capture`), `merge_captures`.
+  * captures   — the charset gate (`_gate_capture`, `gate_capture_items`),
+                 `merge_captures`.
   * manual     — the technician card (`_render_manual`, `is_secret_field`).
   * redaction  — literal secret scrubbing (`redact_secrets`, canon C14/C19).
   * guided     — the guided-run pause rule and step preview (doc 50 §4.1).
@@ -32,6 +33,7 @@ from database_utils.models.isp import ProvisioningRunMode
 from database_utils.schemas.playbook import (
     CLI_DRIVERS,
     MANUAL_DRIVER,
+    MAX_CAPTURE_ITEMS,
     PHASE_KEYS,
     SESSION_PROBE_STEP,
     job_steps,
@@ -223,6 +225,22 @@ def _gate_capture(value: Any, kind: str) -> Optional[str]:
     return text if _CAPTURE_CHARSET.fullmatch(text) else None
 
 
+def gate_capture_items(values: Iterable[Any],
+                       limit: int = MAX_CAPTURE_ITEMS) -> Optional[str]:
+    """An `all` capture (doc 42 §4.3): gate EVERY item with the single-value
+    charset, then join with newlines. One refused item refuses the lot, so a
+    half-list never reaches the reader. The joined value carries newlines and
+    is therefore readable from an output only, never from a later command —
+    PlaybookDefinition refuses CAPTURE_ALL_IN_STEP at save time."""
+    out: List[str] = []
+    for item in list(values)[:limit]:
+        gated = _gate_capture(item, "text")
+        if gated is None:
+            return None
+        out.append(gated)
+    return "\n".join(out)
+
+
 def _placeholders(definition: dict) -> Dict[str, str]:
     """Dry run (doc 42 §9.5): «capture.k» / «secret.k» / «acs.k» — no braces, so the
     leftover guard passes; nothing is generated or encrypted."""
@@ -246,9 +264,15 @@ def merge_captures(resolved: Dict[str, Any], captures: Optional[Dict[str, Any]],
     kinds = {c.get("key"): c.get("type") or "text"
              for key in PHASE_KEYS.values() for s in definition.get(key) or []
              for c in s.get("capture") or []}
+    multi = {c.get("key")
+             for key in PHASE_KEYS.values() for s in definition.get(key) or []
+             for c in s.get("capture") or [] if c.get("all")}
     kept = {}
     for key, value in (captures or {}).items():
-        gated = _gate_capture(value, kinds.get(key, "text"))
+        if key in multi:
+            gated = gate_capture_items(str(value).split("\n")) if value else ""
+        else:
+            gated = _gate_capture(value, kinds.get(key, "text"))
         if gated is not None:
             resolved[f"capture.{key}"] = gated
             kept[key] = gated

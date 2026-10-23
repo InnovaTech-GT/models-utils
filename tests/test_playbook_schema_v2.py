@@ -380,6 +380,29 @@ def test_shareable_needs_the_technician_audience():
     _err(_wifi(audience=["office"]), "OUTPUT_SHARE_AUDIENCE")
 
 
+def test_customer_is_a_valid_audience():
+    cap = [{"key": "rx_power", "regex": "(-?\\d+)", "type": "number"}]
+    base = _v2(verification=[_step("v", capture=cap)])
+    out = {"key": "rx_power", "label": "Potencia", "value": "{{capture.rx_power}}",
+           "audience": ["customer"]}
+    model = PlaybookDefinition.model_validate(base | {"outputs": [out]})
+    assert model.outputs[0].audience == ["customer"]
+
+
+def test_a_customer_output_may_not_be_sensitive():
+    _err(_wifi(audience=["technician", "customer"], sensitive=True),
+         "OUTPUT_CUSTOMER_SENSITIVE")
+    # A non-visible secret turns the output sensitive on its own.
+    _err(_wifi(audience=["technician", "customer"]), "OUTPUT_CUSTOMER_SENSITIVE")
+
+
+def test_a_visible_secret_reaches_the_customer():
+    d = _wifi(audience=["technician", "customer"])
+    d["secrets"][0]["visible"] = True
+    out = PlaybookDefinition.model_validate(d).outputs[0]
+    assert out.sensitive is False and "customer" in out.audience
+
+
 def test_output_rules():
     cap = [{"key": "rx_power", "regex": "(-?\\d+)", "type": "number"}]
     base = _v2(verification=[_step("v", capture=cap)])
@@ -488,3 +511,35 @@ def test_mask_log_outputs_blanks_sensitive_captures_everywhere():
     assert out["rollback_steps"][0]["captures"] == {"rx": "-20"}
     assert out["outputs"][0]["value"] is None
     assert log["captures"]["ip"] == "10.0.0.9", "the stored log is not mutated"
+
+
+# ----------------------------------------------------------------- `all` captures
+
+_HOSTS = {"key": "hosts", "regex": r"lease ([\d.]+)", "all": True}
+
+
+def test_an_all_capture_is_text_without_thresholds():
+    base = _v2(verification=[_step("v", capture=[_HOSTS])],
+               outputs=[{"key": "hosts", "label": "Equipos conectados",
+                         "value": "{{capture.hosts}}", "audience": ["customer"]}])
+    model = PlaybookDefinition.model_validate(base)
+    assert model.verification[0].capture[0].all is True
+    _err(_v2(verification=[_step("v", capture=[_HOSTS | {"type": "number"}])]),
+         "must be text")
+    _err(_v2(verification=[_step("v", capture=[_HOSTS | {"equals": "x"}])]),
+         "no threshold")
+
+
+def test_an_all_capture_may_not_reach_a_command():
+    # Its value is multi-line: inside a command it would be command injection.
+    _err(_v2(configuration=[_step("c", capture=[_HOSTS]),
+                            _step("c2", template="ping {{capture.hosts}}")]),
+         "CAPTURE_ALL_IN_STEP")
+
+
+def test_gate_capture_items_gates_each_item():
+    from database_utils.utils.playbook_render import gate_capture_items
+    assert gate_capture_items(["10.0.0.1", "10.0.0.2"]) == "10.0.0.1\n10.0.0.2"
+    assert gate_capture_items([]) == ""           # nobody connected is an answer
+    assert gate_capture_items(["ok", "con espacio"]) is None   # one bad item refuses the lot
+    assert len(gate_capture_items([f"h{i}" for i in range(80)]).splitlines()) == 50
