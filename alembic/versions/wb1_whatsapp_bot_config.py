@@ -1,7 +1,7 @@
 """whatsapp_bot_config: menú del bot de WhatsApp (Nova) por cablera
 
 Revision ID: wb1_whatsapp_bot_config
-Revises: pz1_provisioning_zone
+Revises: ca1_collection_areas
 Create Date: 2026-10-21
 
 whatsapp_bot_config  (una fila por company; options = JSON validado por
