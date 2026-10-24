@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Annotated, List, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from database_utils.models.crm import TaskJobKind
+from database_utils.models.isp import CANONICAL_PLAYBOOK_PURPOSES, PLAYBOOK_PURPOSE_PATTERN
 
 __all__ = [
-    "BUILTIN_FLOWS", "WhatsAppBotOption", "InfoOption", "CreateTaskOption", "BuiltinOption",
+    "BUILTIN_FLOWS", "WhatsAppBotOption", "InfoOption", "CreateTaskOption", "BuiltinOption", "PurposeOption",
     "WhatsAppBotConfigIn", "WhatsAppBotConfigOut", "default_whatsapp_bot_config",
 ]
 
@@ -51,8 +52,24 @@ class BuiltinOption(_OptionBase):
     flow: BuiltinFlow
 
 
+class PurposeOption(_OptionBase):
+    """Corre un proposito personalizado de la cablera (WIFI_PASSWORD,
+    LAN_HOSTS, ...) con el flujo generico del bot: el bot le pregunta al
+    backend que datos pedir y que mostrar, asi que no sabe que hace cada uno.
+    Los cuatro canonicos mueven estado y facturacion: son de oficina."""
+    type: Literal["PURPOSE"]
+    purpose: str = Field(pattern=PLAYBOOK_PURPOSE_PATTERN)
+
+    @field_validator("purpose")
+    @classmethod
+    def _no_canonico(cls, v: str) -> str:
+        if v in CANONICAL_PLAYBOOK_PURPOSES:
+            raise ValueError(f"'{v}' es una accion de oficina, no del suscriptor")
+        return v
+
+
 WhatsAppBotOption = Annotated[
-    Union[InfoOption, CreateTaskOption, BuiltinOption], Field(discriminator="type")
+    Union[InfoOption, CreateTaskOption, BuiltinOption, PurposeOption], Field(discriminator="type")
 ]
 
 
@@ -86,7 +103,15 @@ def default_whatsapp_bot_config() -> WhatsAppBotConfigIn:
         "factura": "Consultar mi factura", "instalacion": "Nueva instalación",
         "agente": "Hablar con un agente", "resincronizar": "Resincronizar mi equipo",
     }
+    # Los casos que el bot corre con un playbook de la cablera. Sin ese
+    # playbook el bot responde que la opcion no esta disponible.
+    propositos = [
+        ("wifi_password", "Cambiar mi clave WiFi", "WIFI_PASSWORD"),
+        ("lan_hosts", "Quién está conectado", "LAN_HOSTS"),
+        ("traffic_usage", "Ver mi consumo", "TRAFFIC_USAGE"),
+    ]
     return WhatsAppBotConfigIn(
         welcome_text="¡Hola! 👋 Soy *Nova*, tu asistente virtual.\n¿En qué te puedo ayudar hoy?",
-        options=[{"id": f, "title": titulos[f], "type": "BUILTIN", "flow": f} for f in BUILTIN_FLOWS],
+        options=[{"id": f, "title": titulos[f], "type": "BUILTIN", "flow": f} for f in BUILTIN_FLOWS]
+        + [{"id": i, "title": t, "type": "PURPOSE", "purpose": pr} for i, t, pr in propositos],
     )

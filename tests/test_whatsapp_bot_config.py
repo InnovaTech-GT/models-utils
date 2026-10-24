@@ -22,18 +22,21 @@ def _info(i="horarios", **kw):
 
 def test_menu_predeterminado_es_valido_y_trae_los_flujos_actuales():
     cfg = default_whatsapp_bot_config()
-    assert [o.flow for o in cfg.options] == list(BUILTIN_FLOWS)
+    assert [o.flow for o in cfg.options if o.type == "BUILTIN"] == list(BUILTIN_FLOWS)
+    assert [o.purpose for o in cfg.options if o.type == "PURPOSE"] == ["WIFI_PASSWORD", "LAN_HOSTS", "TRAFFIC_USAGE"]
+    assert len(cfg.options) == 9
     assert cfg.enabled is True and cfg.menu_button_text == "Ver opciones"
 
 
-def test_acepta_los_tres_tipos():
+def test_acepta_los_cuatro_tipos():
     cfg = WhatsAppBotConfigIn(**_config([
         _info(),
         {"id": "wifi", "title": "Cambiar clave WiFi", "type": "CREATE_TASK",
          "job_kind": "MAINTENANCE", "task_name": "Cambio de clave WiFi"},
         {"id": "falla", "title": "Reportar una falla", "type": "BUILTIN", "flow": "falla"},
+        {"id": "hosts", "title": "Quién está conectado", "type": "PURPOSE", "purpose": "LAN_HOSTS"},
     ]))
-    assert [o.type for o in cfg.options] == ["INFO", "CREATE_TASK", "BUILTIN"]
+    assert [o.type for o in cfg.options] == ["INFO", "CREATE_TASK", "BUILTIN", "PURPOSE"]
     assert cfg.options[1].requires_client is True
 
 
@@ -47,6 +50,9 @@ def test_acepta_los_tres_tipos():
     [{"id": "x", "title": "X", "type": "CREATE_TASK", "job_kind": "OTRO", "task_name": "t"}],
     [{"id": "x", "title": "X", "type": "BUILTIN", "flow": "otro"}],
     [_info(extra="no permitido")],                                # campo extra
+    [{"id": "x", "title": "X", "type": "PURPOSE", "purpose": "ACTIVATION"}],  # canonico
+    [{"id": "x", "title": "X", "type": "PURPOSE", "purpose": "wifi"}],        # minusculas
+    [{"id": "x", "title": "X", "type": "PURPOSE"}],                           # sin proposito
 ])
 def test_rechaza_configs_invalidas(opciones):
     with pytest.raises(ValidationError):
