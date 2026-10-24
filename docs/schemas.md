@@ -2,7 +2,7 @@
 
 ## Description
 
-Pydantic v2 request/response schemas for all models — 37 modules in
+Pydantic v2 request/response schemas for all models — 38 modules in
 `database_utils/schemas/`, shared between auth-erp and backend-erp to keep API
 contracts consistent (frontend-erp consumes the resulting JSON shapes via the
 backend proxies).
@@ -400,6 +400,32 @@ Pinned by `tests/test_inventory_received_at.py`.
   `collector_daily_goal`, `technician_daily_goal`), both `extra="forbid"`.
   `CompanyUpdate` and `CompanyOut` gain `mobile_settings`.
 - `requests.py`: `LoginRequest.client_type: Literal["web","mobile"] = "web"`.
+
+### WhatsApp bot menu (6.12.0, revision `wb1_whatsapp_bot_config`)
+
+New module `whatsapp_bot.py`, the contract shared by backend-erp (backoffice
+GET/PUT and the gateway's `whatsapp-config`), whatsapp-bot-gateway and
+frontend-erp:
+
+- `WhatsAppBotConfigIn` (`extra="forbid"`): `enabled` (default true),
+  `welcome_text` (1..1024), `menu_button_text` (1..20, default
+  `"Ver opciones"`), `options` (1..10, ids unique).
+- Options, discriminated by `type`; common fields `id`
+  (`^[a-z0-9_]{1,40}$`), `title` (1..24), `description` (≤ 72):
+  - `INFO` — `text` (1..4096): replies a fixed text.
+  - `CREATE_TASK` — `job_kind` (`TaskJobKind`), `task_name` (1..120),
+    `requires_client` (default true), `confirmation_text` (≤ 1024).
+  - `BUILTIN` — `flow` in `BUILTIN_FLOWS` (`aumento`, `falla`, `factura`,
+    `instalacion`, `agente`, `resincronizar`): an existing bot flow,
+    renamed or reordered.
+- `WhatsAppBotConfigOut` adds `id`, `company_id`, `updated_at`, all `None`
+  for the built-in menu (no saved row).
+- `default_whatsapp_bot_config()` — the bot's current menu (six `BUILTIN`
+  options), used when a company has no row or `enabled` is false, and for
+  "restore defaults".
+
+Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
+Pinned by `tests/test_whatsapp_bot_config.py`.
 
 ### Auth overhaul — request-schema changes (no DB migration)
 
