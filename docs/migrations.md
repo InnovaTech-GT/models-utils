@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (112 revisions, head: **`ca1_collection_areas`**) — plus
+`alembic/versions/` (113 revisions, head: **`wb1_whatsapp_bot_config`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
@@ -1170,6 +1170,21 @@ with `PROVISIONING_ZONE=<z>` serves only companies whose zone is `<z>`; an
 unzoned worker serves only `provisioning_zone IS NULL` (every tenant at
 release). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the column.
 Set by SQL only (no API yet). Guard: `tests/pg/test_pz1_pg.py`.
+
+### `wb1_whatsapp_bot_config` (2026-10-21) — models-utils 6.12.1
+
+On `ca1_collection_areas`. Additive. Creates `whatsapp_bot_config`, the
+per-company menu of the WhatsApp bot (Nova): `id UUID PK`, `created_at`/
+`updated_at TIMESTAMPTZ NOT NULL`, `company_id UUID NOT NULL` → `company`
+ON DELETE CASCADE, `enabled BOOLEAN NOT NULL DEFAULT true`, `welcome_text
+VARCHAR NOT NULL`, `menu_button_text VARCHAR NOT NULL DEFAULT 'Ver opciones'`,
+`options JSON NOT NULL DEFAULT '[]'`, plus the unique index
+`uq_whatsapp_bot_config_company (company_id)` — one row per company.
+`options` is opaque to the DB; every write is validated by
+`schemas.whatsapp_bot.WhatsAppBotConfigIn`. No row, or `enabled = false`,
+means the bot keeps its built-in menu (`default_whatsapp_bot_config()`).
+`lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the table (reversible,
+saved menus are lost). Guard: `tests/pg/test_wb1_pg.py`.
 
 ## Key rules
 
