@@ -37,7 +37,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    entities, plus doc 40's port-level topology (`InventoryItemPort`,
    `NetworkLink`) (see [network-models.md](network-models.md)). All models use
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
-2. **Pydantic v2 schemas** — 37 modules shared between services
+2. **Pydantic v2 schemas** — 38 modules shared between services
    ([schemas.md](schemas.md)).
 3. **Alembic migrations + idempotent seeds** — 107 revisions (head
    `pd2_payment_day_backfill`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run

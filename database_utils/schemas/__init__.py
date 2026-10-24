@@ -44,3 +44,5 @@ OrderOut.model_rebuild()
 OrderGenerationResponse.model_rebuild()
 GeneratedOrdersWithGaps.model_rebuild()
 RegeneratePeriodResponse.model_rebuild()
+# wb1: menú del bot de WhatsApp por cablera
+from .whatsapp_bot import *
