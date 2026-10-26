@@ -103,6 +103,25 @@ commits or rolls back with the state change. `close_run` emits `RUN_CLOSED`
 is gone. backend-erp drains the table in `id` order behind one advisory lock
 and runs the handlers.
 
+## 6.13.0: the `connection_request` driver
+
+`connection_request` is a playbook driver for a step that summons a CPE: the
+worker sends it a CWMP connection request from inside the tenant's network
+(the ACS on Railway cannot reach CPEs on a private LAN). The CPE then opens a
+session with the ACS at once, and GenieACS runs every task queued for it.
+
+- `PLAYBOOK_DRIVERS`, `NETWORK_DRIVERS` and `NO_UNDO_DRIVERS` include it (a
+  summon changes nothing to undo, so it is resend-safe and needs no rollback).
+- `REQUEST_DRIVERS` (`http`, `tr069`, `connection_request`) are the drivers
+  whose payload is a `request` dict. `playbook_render` renders those value by
+  value, and the step validator requires `request` for `http` and
+  `connection_request`.
+- `ALLOWED_BY_TIER["EDGE"]` allows it. It is not in `EDITOR_DRIVERS`: playbooks
+  normally use the tr069 request flag `summon` instead, which runs the same
+  summon inside the tr069 step (provisioning-worker `drivers/connection_request.py`).
+
+The request shape is defined by the worker driver, not validated here.
+
 ## Tests
 
 | File | Covers |

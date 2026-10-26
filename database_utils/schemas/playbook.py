@@ -95,7 +95,10 @@ def normalize_purpose(v: str) -> str:
 # Cycle 7 (doc 25 §4.3): "ping" joins the set — backend-erp's connectivity
 # probe driver (provisioning/drivers/ping.py), used by the per-company
 # core_connectivity_check system playbooks (doc 25 §5.1).
-PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual"}
+# connection_request: the worker summons a CPE to inform the ACS now (a
+# CWMP connection request sent from the tenant's network, not by the ACS).
+PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual",
+                    "connection_request"}
 _VAR_TYPES = {"TEXT", "NUMBER", "BOOLEAN"}
 
 
@@ -141,9 +144,11 @@ SESSION_PROBE_STEP = "__session__"
 SESSION_PROBE_LABEL = "Conexión con el equipo"
 CLI_DRIVERS = frozenset({"ssh", "telnet"})
 # Drivers whose step reaches a real device over the network (doc 42 §4.5).
-NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069"})
+NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069", "connection_request"})
 # Drivers that change nothing that would need undoing (doc 42 §7.1).
-NO_UNDO_DRIVERS = frozenset({"simulator", "ping"})
+NO_UNDO_DRIVERS = frozenset({"simulator", "ping", "connection_request"})
+# Drivers whose step payload is a `request` dict, rendered value by value.
+REQUEST_DRIVERS = frozenset({"http", "tr069", "connection_request"})
 
 # doc 42d: a step a person performs. Its timeout_seconds is the confirm
 # deadline, with its own range (the upper bound stays under the 1 h
@@ -463,7 +468,7 @@ class PlaybookStep(BaseModel):
     name: str
     driver: str
     template: Optional[str] = None            # command-style drivers
-    request: Optional[Dict[str, Any]] = None  # http / tr069 drivers
+    request: Optional[Dict[str, Any]] = None  # http / tr069 / connection_request drivers
     validation: Optional[PlaybookStepValidation] = None  # postcondition (canon C15)
     timeout_seconds: int = 30
     # Cycle 7 (doc 25 §4.1): step targeting for the CLI/ping drivers — an
@@ -513,9 +518,9 @@ class PlaybookStep(BaseModel):
         if self.manual is not None:
             raise ValueError(f"MANUAL_FIELD_NOT_ALLOWED: step '{self.name}': 'manual' is for "
                              "driver 'manual'")
-        if self.driver == "http":
+        if self.driver in ("http", "connection_request"):
             if not self.request:
-                raise ValueError(f"step '{self.name}': http driver requires 'request'")
+                raise ValueError(f"step '{self.name}': {self.driver} driver requires 'request'")
         elif self.driver == "tr069":
             if not self.request and not self.template:
                 raise ValueError(
