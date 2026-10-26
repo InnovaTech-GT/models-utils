@@ -21,9 +21,10 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 |---|---|
 | Auth / tenancy | `user`, `company`, `role`, `permission`, `invitation`, `notification`, `audit_log`, `requests` (Login + flat company-only Signup), `email_verification`, `password_reset` |
 | SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
-| CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration` |
+| CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration`, `whatsapp_bot` (wb1, see below) |
+| Field ops (uplink-mobile) | `mobile_integration` (`UploadedFileOut`, `CollectionRouteOut`, `RouteStopOut`, `CollectionVisitCreate`/`Out` — `idempotency_key` forwarded to the payment for PAID/PARTIAL, `CashSessionOut`, `CashSessionClose` {`counted_cash_cents`, `deposit_slip_photo_id`}, `TaskCloseoutCreate`/`Out`), `collection_area` (ca1: `CollectionAreaCreate`/`Update`/`Out` — `name` 1..80 stripped, `color` `#RRGGBB` upper-cased, `polygon` through `normalize_polygon`: `[lat, lng]` pairs in range, a closing repeat dropped, 3..1000 distinct points; `Update` takes `collector_id: null` to unassign; `CollectorHomeUpdate` {`home_latitude`, `home_longitude`}, both or neither) |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
-| Network config (Cycle 5) | `acs_registration`, `device_credential`, `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`; no ZTP switch: ZTP is always on, `zt1`'s `ztp_enabled` was removed in 6.7.0 / `zt3_ztp_always_on` (a stale `ztp_enabled` key in a PATCH is ignored). `ProvisioningSettingsUpdate` rejects an explicit `null` for every NOT NULL column — `enabled`, `dial_target`, `proxy_kind`, `acs_auth_required` — with a 422 instead of the router's 500; omitted fields stay omitted) |
+| Network config (Cycle 5) | `acs_registration`, `device_credential`, `device_action_log` (`DeviceActionLogOut` only — rows are append-only, no write schemas), `provisioning_settings` (the transport axis + ACS config live here since `tr1_transport_axis`; no ZTP switch: ZTP is always on, `zt1`'s `ztp_enabled` was removed in 6.7.0 / `zt3_ztp_always_on` (a stale `ztp_enabled` key in a PATCH is ignored). `ProvisioningSettingsUpdate` rejects an explicit `null` for every NOT NULL column — `enabled`, `dial_target`, `proxy_kind`, `acs_auth_required` — with a 422 instead of the router's 500; omitted fields stay omitted) |
 | Workflow | `workflow` |
 | Generic | `pagination` — `PaginatedResponse[T]` wrapper |
 
@@ -55,7 +56,7 @@ matters when reading `__init__.py`:
 - `Out` schemas use `from_attributes=True` for ORM compatibility
 - Sensitive fields are excluded from `Out` schemas (e.g. `password_hash`);
   integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
-  `api_key`/`token`/`password` → `***`)
+  `api_key`/`token`/`password`/`app_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks)
 - `integration` (fg1): `IntegrationCreate` gains `provider:
   Optional[Literal["WHATSAPP_BUSINESS"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`

@@ -25,12 +25,12 @@ tokens, backend-erp validates them via `jwt_utils`).
 |---|---|---|
 | `backend-erp` | `requirements.txt` pin `database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<sha>` | Models, schemas, `get_db`, permission/audit utils, **workflow engine** (called after CRUD mutations), provisioning models + resolution (worker + manual provision endpoint); **6.9.0**: the shared playbook language, `finish_job`/`fail_parked`, connectivity-job construction and the GenieACS NBI read helpers ([playbook-language.md](playbook-language.md)), imported by both the API and the provisioning worker; **6.10.0**: the `provisioning_event` outbox: the worker writes it (via `close_run`, `finish_job`, `emit_event`), the API drains it and runs the business follow-ons |
 | `auth-erp` | same SHA-pinned dependency | Auth models/schemas, `jwt_utils`, **email service + templates**, invitation/verification/reset tokens, SaaS billing models |
-| `cron-erp` | pip dependency | `RecurrenceEnum` / client_service billing (legacy `RecurringOrder` dropped by `ld1_legacy_drop`) |
+| `cron-erp` | **none** | Does not install this package; it calls backend-erp/auth-erp billing endpoints over HTTP, which use these models |
 | `frontend-erp` | none (indirect) | Consumes JSON shaped by these Pydantic schemas via backend proxies |
 | repo-root `docker-compose.yml` | `migrate` service builds this repo's `Dockerfile` | Applies Alembic head + seeds to the local Postgres before backends start |
 
-Both backends are currently pinned to `6843506420f6cd1705932682ce3cb8bfee6482ea`
-(= `develop` HEAD, the Cycles 1–3 release composition). During feature work each
+Each backend's current pin is the SHA in its `requirements.txt` (auth-erp:
+`develop` @`e074d07`, 6.12.0, as of 2026-10-25). During feature work each
 backend pins the feature-branch SHA; at release composition both re-pin to the
 composed `develop` HEAD. See [deployment-production.md](deployment-production.md).
 

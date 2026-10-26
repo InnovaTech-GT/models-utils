@@ -6,7 +6,7 @@ library development.
 
 ## Full local stack (docker compose)
 
-From the **repo root** (`/home/rpellecer/cable`, one level above this repo):
+From the **`uplink-workspace`** checkout (a sibling of this repo; it holds the root `docker-compose.yml`):
 
 ```bash
 docker compose up --build     # postgres + redis + migrate + auth + backend + frontend

@@ -1,8 +1,8 @@
 # models-utils (`database-utils`)
 
 Shared data layer of the **Uplink** ISP platform — a pip-installable Python library
-(package name `database-utils`, module `database_utils`; v5.1.0 on `develop`, v4.5.1
-on `main` = production since the Uplink v1.0.0 release). It is
+(package name `database-utils`, module `database_utils`; v6.12.2 on both `develop` and
+`main` = production since 2026-10-24). It is
 **not a running service**: it has no server, no port, and no entry point of its own.
 
 models-utils owns everything that must be identical across the platform's backends:
@@ -15,8 +15,9 @@ models-utils owns everything that must be identical across the platform's backen
 
 It is the **schema authority** for Uplink: every database change flows through this
 repo (model edit → Alembic autogenerate revision → SHA pin bump in the consuming
-backends). Consumers — `backend-erp` (CRM API + provisioning worker), `auth-erp`,
-and `cron-erp` — install it pinned by commit SHA:
+backends). Consumers — `backend-erp` (CRM API + provisioning worker) and `auth-erp` —
+install it pinned by commit SHA (`cron-erp` does not depend on it; it only calls
+the backends over HTTP):
 
 ```
 database-utils @ git+https://github.com/InnovaTech-GT/models-utils.git@<commit-sha>
@@ -36,7 +37,7 @@ root repo docs and [docs/connections.md](docs/connections.md).
 
 ### As part of the full local stack (recommended)
 
-From the **repo root** (`/home/rpellecer/cable`, one level above this repo):
+From the **`uplink-workspace`** checkout (a sibling of this repo; it holds the root `docker-compose.yml`):
 
 ```bash
 docker compose up --build
@@ -50,8 +51,8 @@ The `migrate` compose service builds this repo's `Dockerfile` and runs
 
 ```bash
 pip install -e . -r requirements-dev.txt          # editable install + test deps (pytest-asyncio is required)
-pytest -v                                         # 959 tests (in-memory SQLite; needs placeholder POSTGRES_* env)
-PG_TEST_URL=postgresql://... pytest -m pg tests/pg  # 49 Postgres-only tests (DB at alembic head)
+pytest -v                                         # 1171 tests (in-memory SQLite; needs placeholder POSTGRES_* env)
+PG_TEST_URL=postgresql://... pytest -m pg tests/pg  # 65 Postgres-only tests (DB at alembic head)
 alembic revision --autogenerate -m "description"  # generate a migration (needs a reachable DB)
 ```
 

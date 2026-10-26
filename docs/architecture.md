@@ -38,7 +38,8 @@ services (email)   middleware   dependencies
 The library has **no entry point of its own**. It runs in exactly two ways:
 
 1. **As a library** — imported by the FastAPI apps (`auth-erp`, `backend-erp`,
-   including backend-erp's `provision-worker` process) and by `cron-erp`.
+   including backend-erp's `provision-worker` process). `cron-erp` does not
+   import it.
 2. **As a migration runner** — `alembic upgrade head`:
    - locally via the repo-root compose `migrate` service, which builds this
      repo's `Dockerfile` (python:3.12-slim, `pip install .`,
