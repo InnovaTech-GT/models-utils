@@ -3,7 +3,7 @@ Context-aware playbook drivers: the single rule matrix.
 
 Which drivers a playbook step may use depends on the TARGET device's category
 tier. ssh/telnet/snmp need CORE (ssh/telnet are modelled on
-inventory_item.cli_protocol, CORE-only); tr069 needs EDGE (the CPE informs to
+inventory_item.cli_protocol, CORE-only); tr069 and connection_request need EDGE (the CPE informs to
 the ACS); manual (a step the technician performs, doc 42d §5.3) is EDGE-only,
 because a parked step holds its device lock for up to an hour and a shared
 OLT/router must never wait for a person; ping/http/simulator are general. Fed to the bind validator
@@ -25,13 +25,14 @@ from typing import Any, Optional
 
 DRIVER_NOT_ALLOWED_FOR_TARGET = "DRIVER_NOT_ALLOWED_FOR_TARGET"
 
-# Order is the UI order. snmp is schema-valid but not offered in the editor.
+# Order is the UI order. snmp and connection_request are schema-valid but not
+# offered in the editor (connection_request is normally the tr069 `summon` flag).
 EDITOR_DRIVERS = ("ssh", "telnet", "tr069", "ping", "http", "simulator", "manual")
 
 _GENERAL = frozenset({"ping", "simulator"})
 ALLOWED_BY_TIER: dict[Optional[str], frozenset[str]] = {
     "CORE": frozenset({"ssh", "telnet", "snmp", "ping", "http", "simulator"}),
-    "EDGE": frozenset({"tr069", "ping", "http", "simulator", "manual"}),
+    "EDGE": frozenset({"tr069", "connection_request", "ping", "http", "simulator", "manual"}),
     "CONSUMABLE": _GENERAL,
     "TOOL": _GENERAL,
     "OTHER": _GENERAL,
