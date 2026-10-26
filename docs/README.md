@@ -20,13 +20,13 @@ ISP platform. Start with the [repo README](../README.md) for a quickstart.
 | Page | One-liner |
 |---|---|
 | [auth-models.md](auth-models.md) | Auth, tenancy, RBAC, email/password tokens, and SaaS-billing models |
-| [crm-models.md](crm-models.md) | CRM models: clients, orders, payments ledger, tasks, custom fields, integrations |
+| [crm-models.md](crm-models.md) | CRM models: clients, orders, payments ledger, tasks, custom fields, integrations, mobile field records (routes, visits, cash sessions, collection areas), and the WhatsApp bot menu (`whatsapp_bot.py`) |
 | [isp-models.md](isp-models.md) | ISP vertical models: service plans, client services, inventory, playbooks, provisioning runs and jobs |
 | [network-models.md](network-models.md) | Network config models (Cycles 5+7): GenieACS/TR-069 tables, ProvisioningJob extensions, PENDING_INFORM status, core-config columns (tiers, mgmt surface, install state) — **plus the Cycle-10 company network graph**: the `inventory_item` tree + its two guard triggers, `is_passive`, the playbook binding tables, `ProvisioningRun` (lazy one-child runs; producers never lock, `claim_token` fence) — and the doc-40 port topology (`InventoryItemPort`, `NetworkLink`) |
 | [workflow-models.md](workflow-models.md) | Workflow automation models: workflows, triggers, step DAG, executions |
 | [workflow-engine.md](workflow-engine.md) | Engine semantics: trigger matching, DAG execution, the two `ENQUEUE_PROVISIONING` modes, provisioning resolution |
-| [schemas.md](schemas.md) | The 38 Pydantic v2 schema modules |
+| [schemas.md](schemas.md) | The 39 Pydantic v2 schema modules |
 | [playbook-language.md](playbook-language.md) | **6.9.0, provisioning worker split R1**: the playbook language (renderer, render-only preview, guided, redaction, driver matrix, failure codes), `finish_job` / `fail_parked`, connectivity-job construction and the read-side GenieACS NBI helpers, moved from backend-erp so the API and the worker share one implementation; **6.10.0 (R2)**: the `provisioning_event` outbox (`emit_event`, `RUN_CLOSED` / `JOB_FINISHED`) |
-| [utilities.md](utilities.md) | The 37 shared utility modules (network graph, provisioning resolution + runs, JWT, permissions, audit, SSRF, OTEL, ...) |
+| [utilities.md](utilities.md) | The 38 shared utility modules (network graph, provisioning resolution + runs, JWT, permissions, audit, SSRF, OTEL, ...) |
 | [email-service.md](email-service.md) | Transactional email service, SMTP implementation, Jinja2 templates |
 | [migrations.md](migrations.md) | Alembic workflow, revision chains, seed scripts |
