@@ -3,7 +3,7 @@
 Navigation index for the `database-utils` library (v6.3.0 = `develop` + ri1 inventory intake + tl1 task location + oa1 ONU auto-assign flag; `main`/prod is 4.5.1 = Uplink v1.0.0;
 Python >= 3.11).
 Not a running service: no endpoints, no ports. Consumed as a pip dependency by
-`backend-erp`, `auth-erp`, and `cron-erp`; also built as the one-shot `migrate`
+`backend-erp` and `auth-erp` (not `cron-erp`, which only calls them over HTTP); also built as the one-shot `migrate`
 docker-compose service. May drift — verify against actual files.
 
 ## Top Level
@@ -47,14 +47,14 @@ docker-compose service. May drift — verify against actual files.
 
 Key enums: `OrderStatus`, `OrderType`, `PaymentStatus`, `PaymentKind`, `PaymentMethodType`, `RecurrenceEnum`, `ServiceAvailability` (`InstallationStatus` removed by cf1), `TaskJobKind`, `TaskLinkedObjectType`, `CashSessionStatus`, `IntegrationAuthType`, `ServicePlanType`, `CatalogKind`, `ClientServiceStatus`, `SuspensionReason`, `ProvisioningJobStatus` (incl. Cycle-5 `PENDING_INFORM`), `ProvisioningTrigger`, `TriggerEventType`, `StepActionType`, `ExecutionStatus`, `InsightChartType` (`NUMBER`/`BAR`/`PIE`/`LINE`). Cycle-5/7 driver-bounded value sets are CHECK-constrained strings, not PG enums: `CREDENTIAL_KINDS`, `DIAL_TARGETS`, `PROXY_KINDS` (the last two replace the deleted `NETWORK_ACCESS_KINDS`/`NETWORK_ACCESS_MODES`/`NAT_MODES`, `tr1_transport_axis`); Cycle 7 adds `DEVICE_CATEGORY_TIERS` (CORE/EDGE), `CLI_PROTOCOLS` (ssh/telnet), `INSTALL_STATES` (NOT_INSTALLED/IN_PROGRESS/INSTALLED). Purposes stay plain strings, not a PG enum (tenants define their own): `PURPOSE_ACTIVATION`/`SUSPENSION`/`REACTIVATION`/`DEPROVISION`, `CANONICAL_PLAYBOOK_PURPOSES` and `PLAYBOOK_PURPOSE_PATTERN` — renamed from `CANONICAL_TOPOLOGY_PURPOSES`/`TOPOLOGY_PURPOSE_PATTERN` in Cycle 10, since purposes now key playbook bindings rather than topologies.
 
-### Schemas (`schemas/` — 38 modules, Pydantic v2; `__init__.py` star-imports + `model_rebuild()`)
+### Schemas (`schemas/` — 39 modules, Pydantic v2; `__init__.py` star-imports + `model_rebuild()`)
 
 client, company, custom_field, invoice, notification, order, order_item, payment,
 permission, requests (Login + flat company-only Signup), role, task,
 task_template, user, workflow, integration, service_plan,
 client_service, inventory, playbook, tier, billing_due, mobile_integration,
 whatsapp_bot (wb1: `WhatsAppBotConfigIn`/`Out`, `INFO`/`CREATE_TASK`/`BUILTIN`/`PURPOSE` options, `default_whatsapp_bot_config()`),
-device_action_log,
+device_action_log, collection_area (ca1: `CollectionAreaCreate`/`Update`/`Out`, `normalize_polygon`, `CollectorHomeUpdate`),
 subscription, payment_method, billing_invoice, invitation,
 audit_log, device_category, email_verification, password_reset, pagination
 (`PaginatedResponse[T]`); **Cycle 4**: insight (v2: opaque `spec`/`viz`/`default_time_range`, `InsightChartSpec` deleted); **Cycle 5**: acs_registration,
@@ -100,7 +100,7 @@ added to `ResendConfirmationRequest`, `PasswordResetRequestSchema`, and
 (`age` removed); `PasswordResetConfirmSchema.new_password` min raised 6 → 8 —
 see [docs/schemas.md](docs/schemas.md) + [docs/email-service.md](docs/email-service.md).
 
-### Utilities (`utils/` — 37 modules)
+### Utilities (`utils/` — 38 modules)
 
 | Module | Role |
 |---|---|
@@ -161,6 +161,6 @@ Notable revision chains (base: `f612571eaad0_initial_schema_with_uuid`):
 
 - `backend-erp` — pins by SHA; uses models, schemas, `get_db`, permission/audit utils, workflow engine, provisioning models/resolution
 - `auth-erp` — pins by SHA; uses auth models/schemas, jwt_utils, email service + templates, SaaS billing models
-- `cron-erp` — pip dependency; billing enums / `ClientService` (the legacy `RecurringOrder` models were dropped by `ld1_legacy_drop`)
+- `cron-erp` — **no dependency** (its `requirements.txt` has no `database-utils`); it calls backend-erp/auth-erp billing endpoints over HTTP
 - `frontend-erp` — no direct dependency; consumes JSON shaped by these schemas via backend proxies
 - Repo-root `docker-compose.yml` — `migrate` service builds this repo's Dockerfile

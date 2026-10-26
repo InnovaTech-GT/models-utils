@@ -6,10 +6,10 @@ Alembic-managed schema migrations for all models in this repo — revisions in
 `alembic/versions/` (113 revisions, head: **`wb1_whatsapp_bot_config`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
-Where each database is (2026-10-06): **production** = `main` `67c2af4` (Uplink
-v1.0.0) at `vw1_viewer_no_credential_read`; **Railway development** = `develop`
-`cad3ab4` at `pc1_provisioning_claim_token` (`pt2_unmap_port_labels` and `pc1`
-are not yet on prod).
+Where each database is (2026-10-25): **production** (`main` `8394620`) and
+**Railway development** (`develop` `4f86566`) are both at head
+`wb1_whatsapp_bot_config` — the Alembic Migrate runs for both succeeded on
+2026-10-24.
 
 ## Goal
 
@@ -51,7 +51,7 @@ Full release mechanics: [deployment-production.md](deployment-production.md).
 
 ## Connection configuration
 
-`alembic/env.py` imports all four model modules (for autogenerate) and builds
+`alembic/env.py` imports all four model modules (for autogenerate; `whatsapp_bot.py` is registered through `database_utils/models/__init__.py`) and builds
 the DB URL itself from `DATABASE_URL`, `DB_URL`, or the composed `POSTGRES_*`
 env vars — the URL is **not** hardcoded in `alembic.ini`.
 
@@ -1171,6 +1171,20 @@ unzoned worker serves only `provisioning_zone IS NULL` (every tenant at
 release). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the column.
 Set by SQL only (no API yet). Guard: `tests/pg/test_pz1_pg.py`.
 
+### `ca1_collection_areas` (2026-10-16) — models-utils 6.12.0
+
+On `pz1_provisioning_zone`. Additive. New table `collection_area` (company
+CASCADE, `collector_id` FK user SET NULL, `uq_collection_area_company_name`,
+partial unique index `uq_collection_area_collector` WHERE `collector_id IS NOT
+NULL`, `ck_collection_area_color` regex `#RRGGBB`, `ck_collection_area_polygon`
+JSON array of at least 3). `user` + `home_latitude` / `home_longitude` (DOUBLE
+PRECISION NULL) and `ck_user_home_location` (both or neither). Permissions
+`collection_areas.read` / `collection_areas.update` inserted and granted to the
+global ADMIN role (the seed lists them too). The CHECKs live in the revision
+only (SQLite `create_all` in the consumers). `lock_timeout 5s`, `IF [NOT]
+EXISTS`, post-upgrade asserts. Downgrade drops the table, the columns and the
+grants. Guard: `tests/pg/test_ca1_pg.py`.
+
 ### `wb1_whatsapp_bot_config` (2026-10-21) — models-utils 6.12.1
 
 On `ca1_collection_areas`. Additive. Creates `whatsapp_bot_config`, the
@@ -1185,6 +1199,31 @@ VARCHAR NOT NULL`, `menu_button_text VARCHAR NOT NULL DEFAULT 'Ver opciones'`,
 means the bot keeps its built-in menu (`default_whatsapp_bot_config()`).
 `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the table (reversible,
 saved menus are lost). Guard: `tests/pg/test_wb1_pg.py`.
+
+### Other revisions (summary only)
+
+Smaller revisions with no section above, oldest first:
+
+| Revision | Date | What it does |
+|---|---|---|
+| `t2_paid_tier_network_modules` | 2026-08 | Data only: adds the `inventory`/`topologies`/`provisioning` modules to every paid tier's `modules` JSON |
+| `uf1_uploaded_file` | 2026-08-18 | `uploaded_file` table, the polymorphic photo/signature store (`owner_type`/`owner_id`) for uplink-mobile evidence |
+| `rs1_route_cash` | 2026-08-18 | `collection_route`, `route_stop`, `collection_visit`, `cash_session` (uplink-mobile cobros) |
+| `tc1_task_closeout` | 2026-08-18 | `task.scheduled_date` + `task.job_kind` (`taskjobkind`), and the one-to-one `task_closeout` table |
+| `cfg1_user_profile` | 2026-09-15 | `user.phone`, `user.photo_url`, `user_invitation.phone` |
+| `cfg2_service_plan_group` | 2026-09-15 | `service_plan.service_group` (free-text heading) + `installation_price_cents`, index `ix_service_plan_company_group` |
+| `cfg3_matrix_permissions` | 2026-09-15 | Permissions `mobile.technician`, `mobile.collector`, `audit_logs.read` |
+| `cl1_client_dpi_deactivation` | 2026-09-16 | `client.dpi` (unique per company, `uq_client_company_dpi`), `deactivated_at` + `deactivation_reason`, index `ix_client_company_active` |
+| `tj1_task_job_kinds` | 2026-09-16 | `taskjobkind` gains `SUSPEND` and `MAINTENANCE` |
+| `tk2_task_links` | 2026-09-16 | `task_state.kind` (since dropped by `ld1`); `task.client_id`/`client_service_id`/`device_category_id`/`inventory_item_id`/`parent_item_id`/`address` + indexes; `task_assignee.role` |
+| `inv1_general_inventory` | 2026-09-16 | `device_category.tier` gains CONSUMABLE/TOOL/OTHER; `device_type.unit`; `inventory_item.custodian_user_id` + `label` + indexes |
+| `pm1_payment_evidence` | 2026-09-16 | `uploadedfileownertype` gains `PAYMENT` (payment evidence); index `ix_order_company_client` |
+| `al1_audit_log_created_idx` | 2026-09-16 | Index `ix_audit_log_created_at` for the activity timeline |
+
+The hex-ID revisions right after the base (`1e745f682fff` … `d4e5f6a7b8c9`,
+plus `a1f2b3c4d5e6` and `6e7506e57be9`) are the original ERP chain: orders,
+tasks, workflows, notifications, integrations, tier changes, email
+verification; their file names describe them.
 
 ## Key rules
 
@@ -1209,17 +1248,3 @@ saved menus are lost). Guard: `tests/pg/test_wb1_pg.py`.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
-
-### `ca1_collection_areas` (2026-10-16) — models-utils 6.12.0
-
-On `pz1_provisioning_zone`. Additive. New table `collection_area` (company
-CASCADE, `collector_id` FK user SET NULL, `uq_collection_area_company_name`,
-partial unique index `uq_collection_area_collector` WHERE `collector_id IS NOT
-NULL`, `ck_collection_area_color` regex `#RRGGBB`, `ck_collection_area_polygon`
-JSON array of at least 3). `user` + `home_latitude` / `home_longitude` (DOUBLE
-PRECISION NULL) and `ck_user_home_location` (both or neither). Permissions
-`collection_areas.read` / `collection_areas.update` inserted and granted to the
-global ADMIN role (the seed lists them too). The CHECKs live in the revision
-only (SQLite `create_all` in the consumers). `lock_timeout 5s`, `IF [NOT]
-EXISTS`, post-upgrade asserts. Downgrade drops the table, the columns and the
-grants. Guard: `tests/pg/test_ca1_pg.py`.

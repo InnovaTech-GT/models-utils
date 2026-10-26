@@ -3,7 +3,7 @@
 ## What models-utils is
 
 models-utils (pip package **`database-utils`**, Python module **`database_utils`**,
-v6.3.0 with ri1 + tl1 + oa1, 4.5.1 on `main`) is the **shared data layer** of the Uplink ISP platform. It is a
+v6.12.2; `main` and `develop` identical since 2026-10-24) is the **shared data layer** of the Uplink ISP platform. It is a
 pip-installable Python library — **not a running service**. There is no server,
 no port, and no entry point; it executes only inside its consumers and as an
 Alembic migration runner.
@@ -25,7 +25,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
 
 ## What it owns
 
-1. **SQLAlchemy ORM models** for all four domains — auth/tenancy/SaaS-billing
+1. **SQLAlchemy ORM models** for all four domains (+ the small `whatsapp_bot.py` module, wb1) — auth/tenancy/SaaS-billing
    ([auth-models.md](auth-models.md)), CRM ([crm-models.md](crm-models.md)),
    ISP vertical ([isp-models.md](isp-models.md)), and workflow automation
    ([workflow-models.md](workflow-models.md)). The ISP module also holds the
@@ -37,10 +37,10 @@ consuming backends. Its CI blocks PRs that change models without a revision.
    entities, plus doc 40's port-level topology (`InventoryItemPort`,
    `NetworkLink`) (see [network-models.md](network-models.md)). All models use
    UUID v4 primary keys and `created_at`/`updated_at` timestamps.
-2. **Pydantic v2 schemas** — 38 modules shared between services
+2. **Pydantic v2 schemas** — 39 modules shared between services
    ([schemas.md](schemas.md)).
-3. **Alembic migrations + idempotent seeds** — 107 revisions (head
-   `pd2_payment_day_backfill`; prod is at `vw1_viewer_no_credential_read`); RBAC, tier, and ISP catalog/template seeds run
+3. **Alembic migrations + idempotent seeds** — 113 revisions (head
+   `wb1_whatsapp_bot_config`, applied to Railway dev and prod 2026-10-24); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL
@@ -59,7 +59,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
 |---|---|
 | `backend-erp` (CRM API + provisioning worker) | pip pin by commit SHA |
 | `auth-erp` | pip pin by commit SHA |
-| `cron-erp` | pip dependency (billing enums) |
+| `cron-erp` | none — calls the backends' billing endpoints over HTTP |
 | `frontend-erp` | none directly — consumes JSON shaped by these schemas via backend proxies |
 | repo-root `docker-compose.yml` | builds this repo's Dockerfile as the one-shot `migrate` service |
 
@@ -67,7 +67,7 @@ Details in [connections.md](connections.md).
 
 ## Tests
 
-`tests/` holds 84 files, **1018 tests** — 962 SQLite + 56 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
+`tests/` holds 99 files (84 + 15 in `tests/pg`), **1236 tests** — 1171 SQLite + 65 in `tests/pg`, which run only with `PG_TEST_URL` (`pytest.ini` sets `asyncio_mode = auto`),
 running against in-memory SQLite so CI needs only placeholder `POSTGRES_*` env.
 `conftest.py` provides the shared `db` + `plant` fixtures — a real in-memory
 network graph rather than fakes, because resolution now runs recursive CTEs and
