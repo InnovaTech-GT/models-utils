@@ -35,6 +35,7 @@ from database_utils.schemas.playbook import (
     MANUAL_DRIVER,
     MAX_CAPTURE_ITEMS,
     PHASE_KEYS,
+    REQUEST_DRIVERS,
     SESSION_PROBE_STEP,
     job_steps,
     normalize_definition,
@@ -103,7 +104,7 @@ def _render_step(payload: dict, variables: Dict[str, Any], driver: Optional[str]
     """`payload` is a step or a step guard; both carry `template`/`request`.
     Returns (rendered, problems): the renderer's missing variables plus any
     token-shaped leftovers, so a step never runs with a placeholder."""
-    if payload.get("request") is not None and driver in ("http", "tr069"):
+    if payload.get("request") is not None and driver in REQUEST_DRIVERS:
         rendered, missing = render_value(payload["request"], variables)
     else:
         rendered, missing = render_string(payload.get("template") or "", variables)
@@ -377,7 +378,7 @@ def render_preview(step: dict, variables: Dict[str, Any], secret_values: List[st
     (variables, captures, secrets), then masked like a step log entry. A
     template problem is not reported here: the approved step fails
     RENDER_FAILED when it runs."""
-    if step.get("request") is not None and step.get("driver") in ("http", "tr069"):
+    if step.get("request") is not None and step.get("driver") in REQUEST_DRIVERS:
         rendered, _ = render_value(step["request"], variables)
     else:
         rendered, _ = render_string(step.get("template") or "", variables)

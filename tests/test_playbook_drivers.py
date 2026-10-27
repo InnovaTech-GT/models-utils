@@ -13,7 +13,7 @@ from database_utils.utils.playbook_drivers import (
 
 @pytest.mark.parametrize("tier,expected", [
     ("CORE", {"ssh", "telnet", "snmp", "ping", "http", "simulator"}),
-    ("EDGE", {"tr069", "ping", "http", "simulator", "manual"}),
+    ("EDGE", {"tr069", "connection_request", "ping", "http", "simulator", "manual"}),
     ("CONSUMABLE", {"ping", "simulator"}),
     ("TOOL", {"ping", "simulator"}),
     ("OTHER", {"ping", "simulator"}),
@@ -64,3 +64,15 @@ def test_mismatches_walks_every_phase():
          "rollback": [{"name": "r", "driver": "tr069", "template": "x"}]}
     found = [(m["phase"], m["step_index"]) for m in mismatches(d, "CORE")]
     assert found == [("verification", 0), ("rollback", 0)]
+
+
+def test_connection_request_step_needs_request_and_renders_it():
+    from database_utils.schemas.playbook import PlaybookStep
+    from database_utils.utils.playbook_render import _render_step
+    with pytest.raises(ValueError, match="connection_request driver requires 'request'"):
+        PlaybookStep(name="s", driver="connection_request", template="x")
+    step = PlaybookStep(name="s", driver="connection_request",
+                        request={"serial": "{{serial}}", "username": "u", "password": "p"})
+    rendered, problems = _render_step(step.model_dump(), {"serial": "ABC"},
+                                      "connection_request")
+    assert rendered["serial"] == "ABC" and not problems
