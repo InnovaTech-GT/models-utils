@@ -61,6 +61,7 @@ from database_utils.models.isp import (
     PHASE_ROLLBACK,
     PHASE_VERIFICATION,
     PURPOSE_ACTIVATION,
+    PURPOSE_CPE_SWAP,
     PURPOSE_DEPROVISION,
     TEARDOWN_PURPOSES,
     ClientService,
@@ -203,7 +204,7 @@ def _child_variables(run: ProvisioningRun, item_id: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------- plan
 
 # Purposes that run top-down, root -> leaf (core router -> OLT -> CPE).
-TOP_DOWN_PURPOSES = frozenset({PURPOSE_ACTIVATION, PURPOSE_DEPROVISION})
+TOP_DOWN_PURPOSES = frozenset({PURPOSE_ACTIVATION, PURPOSE_DEPROVISION, PURPOSE_CPE_SWAP})
 
 
 def order_for_purpose(steps: List[ResolvedNode], purpose: str) -> List[ResolvedNode]:
@@ -211,7 +212,9 @@ def order_for_purpose(steps: List[ResolvedNode], purpose: str) -> List[ResolvedN
     ACTIVATION runs top-down so the service exists upstream before the CPE's
     last steps need it (founder 2026-10-17); DEPROVISION runs top-down so the
     PPPoE session is cut before the ONU leaves the OLT and the ACS (CSR's
-    deprovision order, founder 2026-10-19). Every other purpose keeps
+    deprovision order, founder 2026-10-19); CPE_SWAP runs top-down so the
+    old unit is released upstream before the new one is authorized (doc 53
+    DC8). Every other purpose keeps
     leaf -> root (CPE -> OLT -> core, founder 2026-10-12)."""
     return list(reversed(steps)) if purpose in TOP_DOWN_PURPOSES else list(steps)
 
@@ -791,8 +794,9 @@ def _finish_dry_run(db: Session, run: ProvisioningRun) -> None:
 def _succeed(db: Session, run: ProvisioningRun) -> None:
     close_run(db, run, ProvisioningJobStatus.SUCCEEDED)
     # The path this service was provisioned against is now the path it sits
-    # on, so any re-parent drift recorded earlier is settled.
-    if run.purpose == PURPOSE_ACTIVATION:
+    # on, so any re-parent drift recorded earlier is settled. A CPE_SWAP
+    # re-provisions the path too (doc 53 §8.2).
+    if run.purpose in (PURPOSE_ACTIVATION, PURPOSE_CPE_SWAP):
         svc = db.get(ClientService, run.client_service_id)
         if svc is not None:
             svc.path_changed_at = None

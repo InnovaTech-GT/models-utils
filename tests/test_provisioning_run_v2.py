@@ -17,6 +17,7 @@ import sqlalchemy as sa
 
 from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
+    PURPOSE_CPE_SWAP,
     PURPOSE_DEPROVISION,
     PURPOSE_REACTIVATION,
     PURPOSE_SUSPENSION,
@@ -170,9 +171,36 @@ def _nodes(*positions):
     ("CUSTOM_THING", [0, 3, 4]),
     (PURPOSE_SUSPENSION, [0, 3, 4]),
     (PURPOSE_DEPROVISION, [4, 3, 0]),
+    (PURPOSE_CPE_SWAP, [4, 3, 0]),
 ])
 def test_order_for_purpose(purpose, expected):
     assert [n.position for n in order_for_purpose(_nodes(0, 3, 4), purpose)] == expected
+
+
+def test_cpe_swap_runs_top_down():
+    cpe, olt, core = _nodes(0, 3, 4)
+    assert order_for_purpose([cpe, olt, core], "CPE_SWAP") == [core, olt, cpe]
+
+
+def test_cpe_swap_success_clears_path_changed_at(db, csr):
+    csr.bind_cpe_swap()
+    csr.swap_event({"swap": True})
+    csr.service.path_changed_at = now_gt()
+    db.flush()
+    run = create_run(db, csr.service, PURPOSE_CPE_SWAP)
+    _drive(db, run)
+    assert run.status == S.SUCCEEDED
+    db.refresh(csr.service)
+    assert csr.service.path_changed_at is None
+
+
+def test_cpe_swap_run_is_not_revertible(db, csr):
+    csr.bind_cpe_swap()
+    csr.swap_event({"swap": True})
+    run = create_run(db, csr.service, PURPOSE_CPE_SWAP)
+    _drive(db, run)
+    assert run.status == S.SUCCEEDED
+    assert "only an ACTIVATION" in (revert_refusal(db, run) or "")
 
 
 def test_order_without_a_configured_cpe():

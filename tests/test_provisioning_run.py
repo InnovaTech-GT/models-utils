@@ -4,9 +4,9 @@ Reuses the seeded plant from the resolver tests: one company's
 CORE-1 -> OLT-1 -> SPL-1 -> SPL-2 -> ONT-1 chain, splitters passive, ACTIVATION
 and SUSPENSION bound to the router/olt/onu device types. The plant's playbooks
 are one legacy `steps` simulator step each, which normalizes to one
-CONFIGURATION entry per device (no probe); ACTIVATION runs root -> leaf
-(core first, CPE last), every other purpose leaf -> root (CPE first, core
-last). Engine v2 phases, rollback, revert and secrets: tests/test_provisioning_run_v2.py.
+CONFIGURATION entry per device (no probe); ACTIVATION, DEPROVISION and
+CPE_SWAP run root -> leaf (core first, CPE last), every other purpose
+leaf -> root (CPE first, core last). Engine v2 phases, rollback, revert and secrets: tests/test_provisioning_run_v2.py.
 """
 
 import uuid
