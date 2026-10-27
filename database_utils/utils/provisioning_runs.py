@@ -447,7 +447,7 @@ def create_run(
         raise ValueError(
             f"guided_timeout_seconds must be {GUIDED_TIMEOUT_MIN}-{GUIDED_TIMEOUT_MAX}, "
             f"got {guided_timeout_seconds}")
-    resolved = resolution or resolve_provisioning(db, client_service, purpose)
+    resolved = resolution or resolve_provisioning(db, client_service, purpose, dry_run=dry_run)
     gate_errors = run_gate_failures(db, resolved, dry_run)
     if gate_errors:
         raise ProvisioningGateError(gate_errors)

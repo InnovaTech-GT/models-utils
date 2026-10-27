@@ -13,14 +13,18 @@ from conftest import _DEF_DEVICE_FREE, CO_B
 
 from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
+    PURPOSE_CPE_SWAP,
+    ProvisioningJobStatus,
 )
 from database_utils.utils.provisioning_resolution import (
     _DEVICE_VARIABLE_PATTERN,
+    _last_activation_frames,
     DEVICE_ATTRIBUTES,
     PORT_ATTRIBUTES,
     ResolutionError,
     build_device_frame,
     iter_client_custom_fields,
+    latest_swap_event,
     resolve_playbook_for,
     resolve_provisioning,
 )
@@ -201,11 +205,110 @@ def test_device_variable_pattern_matches_the_new_namespaces():
     """This pattern FAILS OPEN. A namespace missing from it silently downgrades
     a fatal resolution error into a half-configured customer."""
     for token in ("{{device.serial}}", "{{cpe.serial}}", "{{path.olt.mgmt_host}}",
-                  "{{ cpe.serial | upper }}", "{{path.cpe_router.mac}}"):
+                  "{{ cpe.serial | upper }}", "{{path.cpe_router.mac}}",
+                  "{{ old_cpe.serial }}"):
         assert _DEVICE_VARIABLE_PATTERN.search(token), token
     for token in ("{{chain[1].serial}}", "{{edge_devices[0].serial}}",
                   "{{core_devices[0].serial}}"):
         assert not _DEVICE_VARIABLE_PATTERN.search(token), token
+
+
+# ------------------------------------------------- old_cpe.* (doc 53 §8.3–8.5)
+
+def test_old_cpe_frame_from_swap_event(db, plant):
+    plant.bind_cpe_swap()
+    old, ev = plant.swap_event({"swap": True, "door": "OFFICE"})
+    assert latest_swap_event(db, plant.service).id == ev.id
+    res = resolve_provisioning(db, plant.service, PURPOSE_CPE_SWAP)
+    assert res.shared_variables["old_cpe.serial"] == old.serial_number == "ONT-OLD"
+    assert res.shared_variables["old_cpe.item_id"] == str(old.id)
+    assert res.shared_variables["cpe.serial"] == "ONT-1"
+    assert "old_cpe.out_port" not in res.shared_variables
+    assert {k for k in res.shared_variables if k.startswith("old_cpe.")} == {
+        f"old_cpe.{a}" for a in DEVICE_ATTRIBUTES}
+
+
+def test_old_cpe_newest_swap_event_wins(db, plant):
+    plant.bind_cpe_swap()
+    from datetime import timedelta
+    _, first = plant.swap_event({"swap": True}, serial="ONT-A")
+    newer, second = plant.swap_event({"swap": True}, serial="ONT-B")
+    second.created_at = first.created_at + timedelta(seconds=1)
+    db.flush()
+    res = resolve_provisioning(db, plant.service, PURPOSE_CPE_SWAP)
+    assert res.shared_variables["old_cpe.serial"] == "ONT-B"
+
+
+def _old_cpe_codes(db, plant, **kw):
+    with pytest.raises(ResolutionError) as exc:
+        resolve_provisioning(db, plant.service, PURPOSE_CPE_SWAP, **kw)
+    assert exc.value.code == "RESOLUTION_FAILED"
+    return [e["code"] for e in exc.value.errors]
+
+
+def test_old_cpe_not_set_live(db, plant):
+    plant.bind_cpe_swap()
+    assert _old_cpe_codes(db, plant) == ["OLD_CPE_NOT_SET"]
+
+
+def test_old_cpe_dry_run_stand_in(db, plant):
+    plant.bind_cpe_swap()
+    res = resolve_provisioning(db, plant.service, PURPOSE_CPE_SWAP, dry_run=True)
+    assert res.shared_variables["old_cpe.serial"] == res.shared_variables["cpe.serial"] == "ONT-1"
+
+
+def test_old_cpe_ignores_non_swap_replaced_event(db, plant):
+    """Review Focus 2: a manual REPLACED (no swap flag) must never feed
+    old_cpe.* — a CPE_SWAP run would delete a live ONT."""
+    plant.bind_cpe_swap()
+    plant.swap_event(None)
+    plant.swap_event({"swap": False}, serial="ONT-X")
+    assert latest_swap_event(db, plant.service) is None
+    assert _old_cpe_codes(db, plant) == ["OLD_CPE_NOT_SET"]
+
+
+def test_old_cpe_ignores_a_swap_of_another_cpe(db, plant):
+    """related_item_id must be the service's CURRENT CPE: an older swap's
+    event (whose new unit was since swapped out) is not the old unit now."""
+    plant.bind_cpe_swap()
+    _, ev = plant.swap_event({"swap": True})
+    ev.related_item_id = plant.olt.id
+    db.flush()
+    assert _old_cpe_codes(db, plant) == ["OLD_CPE_NOT_SET"]
+
+
+def test_unresolved_old_cpe_token_refused_up_front(db, plant):
+    plant.bind_cpe_swap()
+    plant.swap_event({"swap": True})
+    plant.playbooks["onu-cpe_swap"].definition = {"steps": [
+        {"name": "s", "driver": "simulator", "template": "rm {{old_cpe.foo}}"}]}
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        resolve_provisioning(db, plant.service, PURPOSE_CPE_SWAP)
+    assert exc.value.code == "RESOLUTION_FAILED"
+    assert [(e["code"], e.get("token")) for e in exc.value.errors] == [
+        ("UNRESOLVED_TOKEN", "old_cpe.foo")]
+
+
+def test_other_purposes_get_no_old_cpe_frame(db, plant):
+    plant.swap_event({"swap": True})
+    res = resolve_provisioning(db, plant.service, PURPOSE_ACTIVATION)
+    assert not [k for k in res.shared_variables if k.startswith("old_cpe.")]
+
+
+def test_cpe_swap_run_is_drift_baseline(db, plant):
+    from datetime import timedelta
+
+    from database_utils.utils.provisioning_runs import create_run
+    plant.bind_cpe_swap()
+    plant.swap_event({"swap": True})
+    act = create_run(db, plant.service, PURPOSE_ACTIVATION)
+    swap = create_run(db, plant.service, PURPOSE_CPE_SWAP)
+    act.status = swap.status = ProvisioningJobStatus.SUCCEEDED
+    swap.created_at = act.created_at + timedelta(seconds=1)
+    swap.frames = {"shared": {"marker": "swap"}}
+    db.flush()
+    assert _last_activation_frames(db, plant.service) == {"shared": {"marker": "swap"}}
 
 
 # ------------------------------------------- client custom fields (unchanged)
