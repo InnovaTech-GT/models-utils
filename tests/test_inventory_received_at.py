@@ -113,3 +113,14 @@ def test_receive_rows_and_out():
     row = InventoryReceiveRow(serial_number="A", result="CREATED", warning="SERIAL_PATTERN_MISMATCH")
     out = InventoryReceiveOut(receipt_id=uuid.uuid4(), created=1, warnings=1, duplicates=0, invalid=0, rows=[row])
     assert out.rows[0].item is None
+
+
+def test_receive_in_destinations_are_optional_and_unvalidated():
+    me = uuid.uuid4()
+    custody = InventoryReceiveIn(device_type_id=uuid.uuid4(), custodian_user_id=me, serials=["A"])
+    assert custody.warehouse_id is None and custody.custodian_user_id == me
+    assert _receive().custodian_user_id is None
+    neither = InventoryReceiveIn(device_type_id=uuid.uuid4(), serials=["A"])
+    assert neither.warehouse_id is None and neither.custodian_user_id is None
+    both = _receive(custodian_user_id=me)  # the router, not the schema, rejects both/neither
+    assert both.warehouse_id is not None and both.custodian_user_id == me
