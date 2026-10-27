@@ -36,13 +36,14 @@ def _user(*roles):
 
 
 def test_constants_are_the_four_builtin_roles():
-    assert Roles.ALL == {"ADMIN", "VIEWER", "COLLECTOR", "TECHNICIAN"}
+    # cp1 added the portal service role on top of the four human-facing ones.
+    assert Roles.ALL == {"ADMIN", "VIEWER", "COLLECTOR", "TECHNICIAN", "CAPTIVE_PORTAL"}
 
 
 def test_revision_remaps_into_builtin_roles_only():
     rr1 = _load("versions/rr1_four_builtin_roles.py", "rr1")
     assert rr1.down_revision == "ci1_category_icons"
-    assert set(rr1.BUILTIN_ROLES) == Roles.ALL
+    assert set(rr1.BUILTIN_ROLES) == Roles.ALL - {Roles.CAPTIVE_PORTAL}
     assert set(rr1.ROLE_REMAP.values()) <= Roles.ALL
     assert set(rr1.ROLE_REMAP).isdisjoint(Roles.ALL)
     assert rr1.ROLE_REMAP["MANAGER"] == "ADMIN"
@@ -58,7 +59,7 @@ def test_web_access_row_matches_the_seed():
 
 def test_isp_seed_only_creates_the_mobile_roles():
     isp = _load("seeds/isp_seed.py", "isp_seed_rr1_test")
-    assert set(isp.ISP_ROLES) == {"COLLECTOR", "TECHNICIAN"}
+    assert set(isp.ISP_ROLES) == {"COLLECTOR", "TECHNICIAN", "CAPTIVE_PORTAL"}
     for spec in isp.ISP_ROLES.values():
         assert "web.access" not in spec["permissions"]
 

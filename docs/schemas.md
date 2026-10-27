@@ -400,6 +400,14 @@ Pinned by `tests/test_inventory_received_at.py`.
   `currency` default GTQ) and `MobileSettings` (`bank_account`,
   `collector_daily_goal`, `technician_daily_goal`), both `extra="forbid"`.
   `CompanyUpdate` and `CompanyOut` gain `mobile_settings`.
+  `MobileSettings` gains `working_days` (cp1: unique ints 0..6, Mon=0, sorted,
+  non-empty; `None` = `DEFAULT_WORKING_DAYS` Mon-Sat). `DunningSettings`
+  (cp1, doc 52 §2.1, `extra="forbid"`): `auto_suspension_mode` OFF/REPORT/ON,
+  `min_overdue_orders` (>=1, default 2), `captive_portal_enabled`,
+  `portal_contact` (`PortalContact`: whatsapp/phone/hours/message),
+  `promise_window_days` (>=0, default 3), `promise_capacity_pct` (0..100,
+  default 20), `promise_reconnect_enabled` (only with mode ON). `CompanyUpdate`
+  and `CompanyOut` gain `dunning_settings`.
 - `requests.py`: `LoginRequest.client_type: Literal["web","mobile"] = "web"`.
 
 ### WhatsApp bot menu (6.12.0, revision `wb1_whatsapp_bot_config`)
