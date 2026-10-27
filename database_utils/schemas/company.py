@@ -77,6 +77,25 @@ class DunningSettings(BaseModel):
         return self
 
 
+def merge_settings(stored: Optional[dict], patch: Optional[BaseModel], model: type[BaseModel]) -> dict:
+    """Deep-merge a partial settings patch over the stored JSON and re-validate.
+
+    The JSON columns (`mobile_settings`, `dunning_settings`) are written by
+    several pages that each send a subset of keys; replacing the column would
+    reset the others to their defaults (e.g. auto_suspension_mode -> OFF).
+    Only keys the client set (`exclude_unset`) are applied, so model-level
+    rules (reconnect needs mode ON) are checked on the merged result.
+    """
+    def deep(base: dict, over: dict) -> dict:
+        out = dict(base)
+        for k, v in over.items():
+            out[k] = deep(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+
+    over = patch.model_dump(exclude_unset=True) if patch is not None else {}
+    return model.model_validate(deep(stored or {}, over)).model_dump(mode="json")
+
+
 class CompanyBase(BaseModel):
     name: str
     email: Optional[EmailStr]

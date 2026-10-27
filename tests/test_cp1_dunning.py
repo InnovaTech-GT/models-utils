@@ -103,3 +103,29 @@ def test_rbac_pins():
     for other, spec in isp_seed().ISP_ROLES.items():
         if other != "CAPTIVE_PORTAL":
             assert "captive_portal.access" not in spec["permissions"]
+
+
+def test_merge_settings_keeps_unpatched_keys():
+    from database_utils.schemas.company import merge_settings
+    stored = {"auto_suspension_mode": "ON", "promise_reconnect_enabled": True,
+              "portal_contact": {"whatsapp": "1", "hours": "9-5"}}
+    patch = CompanyUpdate(dunning_settings={"captive_portal_enabled": True,
+                                            "portal_contact": {"whatsapp": "2"}}).dunning_settings
+    out = merge_settings(stored, patch, DunningSettings)
+    assert out["auto_suspension_mode"] == "ON" and out["promise_reconnect_enabled"] is True
+    assert out["captive_portal_enabled"] is True
+    assert out["portal_contact"]["whatsapp"] == "2" and out["portal_contact"]["hours"] == "9-5"
+
+
+def test_merge_settings_validates_merged_result():
+    from database_utils.schemas.company import merge_settings
+    patch = CompanyUpdate(dunning_settings={"auto_suspension_mode": "OFF"}).dunning_settings
+    with pytest.raises(ValidationError):
+        merge_settings({"auto_suspension_mode": "ON", "promise_reconnect_enabled": True}, patch, DunningSettings)
+
+
+def test_merge_settings_goals_only_keeps_working_days():
+    from database_utils.schemas.company import merge_settings
+    patch = CompanyUpdate(mobile_settings={"collector_daily_goal": 5}).mobile_settings
+    out = merge_settings({"working_days": [0, 1]}, patch, MobileSettings)
+    assert out["working_days"] == [0, 1] and out["collector_daily_goal"] == 5

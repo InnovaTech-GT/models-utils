@@ -400,7 +400,7 @@ Pinned by `tests/test_inventory_received_at.py`.
   `currency` default GTQ) and `MobileSettings` (`bank_account`,
   `collector_daily_goal`, `technician_daily_goal`), both `extra="forbid"`.
   `CompanyUpdate` and `CompanyOut` gain `mobile_settings`.
-  `MobileSettings` gains `working_days` (cp1: unique ints 0..6, Mon=0, sorted,
+  `merge_settings(stored, patch, Model)` deep-merges a partial `CompanyUpdate.mobile_settings`/`dunning_settings` patch (set keys only) over the stored JSON and re-validates; auth-erp's PATCH must use it instead of `setattr`-replacing the column. `MobileSettings` gains `working_days` (cp1: unique ints 0..6, Mon=0, sorted,
   non-empty; `None` = `DEFAULT_WORKING_DAYS` Mon-Sat). `DunningSettings`
   (cp1, doc 52 §2.1, `extra="forbid"`): `auto_suspension_mode` OFF/REPORT/ON,
   `min_overdue_orders` (>=1, default 2), `captive_portal_enabled`,
