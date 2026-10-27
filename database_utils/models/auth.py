@@ -80,6 +80,11 @@ class Company(Base):
     #  collector_daily_goal: int | null, technician_daily_goal: int | null}.
     # Validated by schemas.company.MobileSettings; NULL = nothing configured.
     mobile_settings = Column(JSON, nullable=True)
+    # cp1 (doc 52 §2.1): {auto_suspension_mode OFF|REPORT|ON, min_overdue_orders,
+    # captive_portal_enabled, portal_contact{}, promise_window_days,
+    # promise_capacity_pct, promise_reconnect_enabled}. Validated by
+    # schemas.company.DunningSettings; NULL = everything off.
+    dunning_settings = Column(JSON, nullable=True)
     # pz1: which provisioning worker serves this tenant. NULL = the default
     # (Railway) worker; a value = only the worker started with that
     # PROVISIONING_ZONE (e.g. a DigitalOcean droplet inside the tenant's

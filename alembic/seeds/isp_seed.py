@@ -186,6 +186,12 @@ ISP_ROLES = {
             "inventory_items.read",
         ],
     },
+    # cp1_dunning (doc 52 §5.2): the captive portal's per-tenant service user.
+    # One permission, no web.access, never given to a human.
+    "CAPTIVE_PORTAL": {
+        "description": "Captive portal service user: view a suspended service's debt, record payment promises",
+        "permissions": ["captive_portal.access"],
+    },
 }
 
 # Cycle 2 amendment 14: 'network' -> 'topologies' (D5). The key 'network'
