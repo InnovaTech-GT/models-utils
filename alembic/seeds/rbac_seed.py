@@ -106,10 +106,15 @@ PERMISSIONS_DATA = [
         # through VIEWER_PERMISSION_FILTER.
         {"name": "collection_areas.read", "resource": "collection_areas", "action": "read", "description": "Ver las áreas de cobro"},
         {"name": "collection_areas.update", "resource": "collection_areas", "action": "update", "description": "Crear, editar y eliminar áreas de cobro y la ubicación de la casa de los cobradores"},
+
+        # Captive portal (cp1_dunning, doc 52 §5.2): the portal's service user.
+        # Held by the built-in CAPTIVE_PORTAL role only (isp_seed.ISP_ROLES);
+        # ADMIN converges via the `*` step, never granted to humans.
+        {"name": "captive_portal.access", "resource": "captive_portal", "action": "access", "description": "Portal cautivo: consultar la deuda de un servicio suspendido y registrar promesas de pago"},
 ]
 
-# The four built-in (global) roles. ADMIN/VIEWER are created here;
-# COLLECTOR/TECHNICIAN by isp_seed.ISP_ROLES. Tenants add custom roles on top.
+# The built-in (global) roles. ADMIN/VIEWER are created here;
+# COLLECTOR/TECHNICIAN/CAPTIVE_PORTAL by isp_seed.ISP_ROLES. Tenants add custom roles on top.
 # device_credentials.read is excluded (vw1_viewer_no_credential_read): read-only
 # users must not see device credentials.
 VIEWER_PERMISSION_FILTER = (

@@ -17,7 +17,7 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text, Text,
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
-    SmallInteger, ForeignKeyConstraint,
+    SmallInteger, ForeignKeyConstraint, Date,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
@@ -669,6 +669,90 @@ class ServiceSuspension(Base):
 
     client_service = relationship("ClientService", back_populates="suspensions")
     creator = relationship("User", foreign_keys=[created_by])
+
+
+class PaymentPromiseSource(str, enum.Enum):
+    PORTAL = "PORTAL"
+    COLLECTOR = "COLLECTOR"
+    BOT = "BOT"
+
+
+class PaymentPromiseStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    KEPT = "KEPT"
+    BROKEN = "BROKEN"
+    CANCELLED = "CANCELLED"
+
+
+class DunningRunOutcome(str, enum.Enum):
+    OK = "OK"
+    TRIPPED = "TRIPPED"
+
+
+class PaymentPromise(Base):
+    """cp1 (doc 52 §4.1): a client's promise to pay a given service by a date
+    (a collector visit). Per service (D14): one OPEN per client_service_id."""
+    __tablename__ = "payment_promise"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    promised_date = Column(Date, nullable=False)
+    source = Column(Enum(PaymentPromiseSource), nullable=False)
+    status = Column(Enum(PaymentPromiseStatus), nullable=False, default=PaymentPromiseStatus.OPEN)
+    reconnected = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    client_service_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("client_service.id", ondelete="CASCADE"), nullable=False
+    )
+    # The suspension episode the promise was made in.
+    suspension_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_suspension.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_payment_promise_open_service", "client_service_id",
+            unique=True, postgresql_where=text("status = 'OPEN'"),
+        ),
+        Index(
+            "ix_payment_promise_open_date", "company_id", "promised_date",
+            postgresql_where=text("status = 'OPEN'"),
+        ),
+        Index("ix_payment_promise_service", "client_service_id"),
+    )
+
+
+class DunningRun(Base):
+    """cp1 (doc 52 §3.3): one row per tenant per daily run. candidates /
+    suspended / skipped are JSON lists of per-service entries."""
+    __tablename__ = "dunning_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    ran_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    # REPORT | ON (OFF tenants are not run).
+    mode = Column(String(10), nullable=False)
+    outcome = Column(Enum(DunningRunOutcome), nullable=False)
+    candidates = Column(JSON, nullable=False, default=list)
+    suspended = Column(JSON, nullable=False, default=list)
+    skipped = Column(JSON, nullable=False, default=list)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_dunning_run_company_ran_at", "company_id", "ran_at"),
+        CheckConstraint("mode IN ('REPORT', 'ON')", name="ck_dunning_run_mode"),
+    )
 
 
 # ---------------------------------------------------------------------------

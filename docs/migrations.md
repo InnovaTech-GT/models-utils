@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (113 revisions, head: **`wb1_whatsapp_bot_config`**) — plus
+`alembic/versions/` (114 revisions, head: **`cp1_dunning`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1199,6 +1199,26 @@ VARCHAR NOT NULL`, `menu_button_text VARCHAR NOT NULL DEFAULT 'Ver opciones'`,
 means the bot keeps its built-in menu (`default_whatsapp_bot_config()`).
 `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops the table (reversible,
 saved menus are lost). Guard: `tests/pg/test_wb1_pg.py`.
+
+### `cp1_dunning` (2026-10-26) — models-utils 6.14.0
+
+On `wb1_whatsapp_bot_config`. Additive (doc 52, captive portal + automatic
+suspension, phase 1). Adds `company.dunning_settings JSON NULL`
+(`schemas.company.DunningSettings`); PG enums `paymentpromisesource`
+(PORTAL/COLLECTOR/BOT), `paymentpromisestatus` (OPEN/KEPT/BROKEN/CANCELLED),
+`dunningrunoutcome` (OK/TRIPPED); tables `payment_promise` (per service, FKs to
+company/client/client_service CASCADE, `suspension_id` → `service_suspension`
+and `created_by_user_id` → `user` SET NULL; indexes
+`uq_payment_promise_open_service` UNIQUE (client_service_id) WHERE
+status='OPEN', `ix_payment_promise_open_date` (company_id, promised_date)
+WHERE status='OPEN', `ix_payment_promise_service`) and `dunning_run`
+(`ck_dunning_run_mode`, `ix_dunning_run_company_ran_at`); permission
+`captive_portal.access` and the global `CAPTIVE_PORTAL` role holding exactly it
+(also declared in `rbac_seed.PERMISSIONS_DATA` / `isp_seed.ISP_ROLES`, pinned
+by `tests/test_cp1_dunning.py`; ADMIN converges via the seed pass, never
+granted to humans). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops
+tables/types/column, the role and the permission (same env.py seed-pass
+caveat as cfg3). Guard: `tests/pg/test_cp1_pg.py`.
 
 ### Other revisions (summary only)
 
