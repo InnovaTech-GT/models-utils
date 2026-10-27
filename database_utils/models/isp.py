@@ -1444,7 +1444,8 @@ class ProvisioningRun(Base):
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
-    # phase-major, leaf -> root (CPE first, core last, every purpose),
+    # phase-major, in order_for_purpose order (root -> leaf for
+    # TOP_DOWN_PURPOSES, else leaf -> root),
     # ROLLBACK entries appended on failure:
     # [{item_id, playbook_id, playbook_version, category_key, device_label,
     #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
@@ -1602,7 +1603,7 @@ class ProvisioningJob(Base):
         Uuid, ForeignKey("provisioning_run.id", ondelete="CASCADE"),
         nullable=True, index=True,
     )
-    # 0-based index into ProvisioningRun.plan, i.e. leaf -> root order.
+    # 0-based index into ProvisioningRun.plan, i.e. order_for_purpose order.
     run_position = Column(Integer, nullable=True)
 
     company = relationship("Company", back_populates="provisioning_jobs")

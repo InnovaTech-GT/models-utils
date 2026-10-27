@@ -23,7 +23,8 @@ run is QUEUED or RUNNING at any moment. Two consequences worth stating plainly:
 
 Engine v2 (doc 42 §5-§8): the plan is phase-major — every device's
 PRECONDITIONS, then CONFIGURATION, then VERIFICATION, in order_for_purpose
-(ACTIVATION root -> leaf, every other purpose leaf -> root) — one entry and one child per
+(ACTIVATION, DEPROVISION and CPE_SWAP root -> leaf, every other purpose
+leaf -> root — TOP_DOWN_PURPOSES) — one entry and one child per
 (device, phase). A precondition failure ends the run with nothing changed; a
 configuration or verification failure APPENDS one ROLLBACK entry per device
 that ran a step, in reverse configuration order, each running that playbook's
