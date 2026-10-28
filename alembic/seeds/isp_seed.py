@@ -262,6 +262,8 @@ DEVICE_CATEGORIES = [
     ('SWITCH', 'Switch', 20, 'CORE', False, 'network', True),
     ('OLT', 'OLT', 30, 'CORE', False, 'server', True),
     ('ONU', 'ONU / ONT', 40, 'EDGE', False, 'house-wifi', True),
+    # pa2 (doc 56): Cable over GPON receiver at the customer; tracked, never configured.
+    ('MICRONODE', 'Micronodo', 45, 'EDGE', True, 'box', True),
     ('SPLITTER', 'Splitter', 50, None, True, 'split', False),
     ('SPLICE_CLOSURE', 'Splice Closure', 60, None, True, 'box', False),
     ('MUFA', 'MUFA', 65, None, True, 'box', False),

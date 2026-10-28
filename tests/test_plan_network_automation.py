@@ -69,3 +69,11 @@ def test_revision_permission_matches_seed():
     pa1 = load("versions/pa1_plan_network_automation.py", "pa1_plan_network_automation")
     seeded = next(p for p in isp_seed().ISP_PERMISSIONS if p["name"] == "client_services.cancel")
     assert pa1.CANCEL_PERMISSION == seeded
+
+
+def test_micronode_revision_matches_seed():
+    pa2 = load("versions/pa2_micronode_category.py", "pa2_micronode_category")
+    seed_rows = {row[0]: row for row in isp_seed().DEVICE_CATEGORIES}
+    assert pa2.MICRONODE == seed_rows["MICRONODE"]
+    assert pa2.down_revision == "pa1_plan_network_automation"
+    assert len(pa2.revision) <= 32

@@ -90,9 +90,9 @@ def test_seed_tiers_are_check_legal_and_match_backfill():
     by_key = {key: tier for key, _name, _sort, tier, _passive, _icon, _active in categories}
     assert all(t in (None,) + isp.DEVICE_CATEGORY_TIERS for t in by_key.values())
     assert {k for k, t in by_key.items() if t == "CORE"} == {"ROUTER", "SWITCH", "OLT"}
-    # inv1 added MODEM and SET_TOP_BOX to the EDGE side.
+    # inv1 added MODEM and SET_TOP_BOX to the EDGE side, pa2 MICRONODE.
     assert {k for k, t in by_key.items() if t == "EDGE"} == {
-        "ONU", "CPE_ROUTER", "ACCESS_POINT", "MODEM", "SET_TOP_BOX"
+        "ONU", "CPE_ROUTER", "ACCESS_POINT", "MODEM", "SET_TOP_BOX", "MICRONODE"
     }
 
 
