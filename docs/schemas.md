@@ -58,7 +58,7 @@ matters when reading `__init__.py`:
   integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
   `api_key`/`token`/`password`/`app_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks)
 - `integration` (fg1): `IntegrationCreate` gains `provider:
-  Optional[Literal["WHATSAPP_BUSINESS"]] = None` and `enabled: bool = True`;
+  Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper
@@ -435,6 +435,15 @@ frontend-erp:
 
 Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
+
+### Payment links (6.15.0, revision `pl1_payment_link`)
+
+`schemas/payment_link.py`:
+
+- `RecurrenteSettings` — the non-secret settings of a `RECURRENTE` integration, stored in its `credentials` next to `header_name` (`X-SECRET-KEY`) and `api_key` (masked by `IntegrationOut.from_orm_masked`, it is in `SENSITIVE_KEYS`). `payment_methods`: a non-empty list without duplicates of `bank_transfer` / `card`, default `["bank_transfer"]` (the company chooses what it accepts); `link_hours` 1..720, default 120 (five days, the window the gateway gives to match a transfer by hand). Unknown keys refused.
+- `PaymentLinkOut` — the office view of a `payment_link` row; nothing secret.
+
+Pinned by `tests/test_payment_link.py`.
 
 ### Auth overhaul — request-schema changes (no DB migration)
 

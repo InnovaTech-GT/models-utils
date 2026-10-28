@@ -40,7 +40,7 @@ consuming backends. Its CI blocks PRs that change models without a revision.
 2. **Pydantic v2 schemas** — 39 modules shared between services
    ([schemas.md](schemas.md)).
 3. **Alembic migrations + idempotent seeds** — 113 revisions (head
-   `wb1_whatsapp_bot_config` then `cp1_dunning` (6.14.0, not yet applied), applied to Railway dev and prod 2026-10-24); RBAC, tier, and ISP catalog/template seeds run
+   `wb1_whatsapp_bot_config` then `cp1_dunning` (6.14.0, not yet applied) then `pl1_payment_link` (6.15.0, not yet applied), applied to Railway dev and prod 2026-10-24); RBAC, tier, and ISP catalog/template seeds run
    automatically after upgrade ([migrations.md](migrations.md)).
 4. **Cross-service utilities** — JWT, password hashing, permission checks,
    audit logging, pagination, Guatemala timezone helpers, SSRF guard, OTEL

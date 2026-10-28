@@ -120,6 +120,7 @@ from .workflow import (
 )
 
 from .whatsapp_bot import WhatsAppBotConfig
+from .payment_link import PaymentLink, PaymentLinkStatus, ACTIVE_PAYMENT_LINK_STATUSES
 
 # Import all models here so Alembic can detect them
 __all__ = [
@@ -238,4 +239,8 @@ __all__ = [
     "ExecutionStatus",
     # WhatsApp bot (wb1)
     "WhatsAppBotConfig",
+    # Links de pago en línea (pl1)
+    "PaymentLink",
+    "PaymentLinkStatus",
+    "ACTIVE_PAYMENT_LINK_STATUSES",
 ]

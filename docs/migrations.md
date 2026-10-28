@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (114 revisions, head: **`cp1_dunning`**) — plus
+`alembic/versions/` (115 revisions, head: **`pl1_payment_link`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1219,6 +1219,35 @@ by `tests/test_cp1_dunning.py`; ADMIN converges via the seed pass, never
 granted to humans). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops
 tables/types/column, the role and the permission (same env.py seed-pass
 caveat as cfg3). Guard: `tests/pg/test_cp1_pg.py`.
+
+### `pl1_payment_link` (2026-10-28) — models-utils 6.15.0
+
+On `cp1_dunning`. Additive. Creates `payment_link`: one row per online payment
+link Uplink asked of a payment gateway (today only Recurrente) for one order.
+The row only records which links are ours, for how much and how they ended;
+whether a link was paid is decided by backend-erp asking the gateway, and the
+payment itself is recorded by `PaymentService`.
+
+- FKs: `company_id` CASCADE; `client_id`, `order_id` and `payment_id` RESTRICT
+  (an order, client or payment a link points at cannot vanish); `integration_id`
+  SET NULL (the history survives a deleted integration).
+- `status` is VARCHAR(16) + `ck_payment_link_status` (CREATING, PENDING, PAID,
+  EXPIRED, REVIEW, FAILED), not a native enum, so a new state is a CHECK change
+  instead of an irreversible `ALTER TYPE`.
+- Guards: `ck_payment_link_amount` (>= 500, the gateway minimum),
+  `ck_payment_link_currency` (GTQ/USD), `ck_payment_link_provider`
+  (RECURRENTE), `ck_payment_link_checks` (>= 0), `ck_payment_link_has_checkout`
+  (outside CREATING/FAILED a checkout id and url exist), `ck_payment_link_paid`
+  (PAID needs `intent_id`, `payment_id` and `paid_at`),
+  `ck_payment_link_review` (REVIEW needs `review_reason`).
+- Partial unique indexes: `uq_payment_link_active_order (order_id) WHERE status
+  IN ('CREATING', 'PENDING')` (one live link per order),
+  `uq_payment_link_checkout`, `uq_payment_link_intent` (a gateway intent pays at
+  most one link). The model declares them with `sqlite_where` too, so the
+  SQLite suites see the same partial behaviour.
+- Downgrade drops the table. Upgrade and downgrade are idempotent.
+
+Pinned by `tests/test_payment_link.py` and `tests/pg/test_pl1_pg.py`.
 
 ### Other revisions (summary only)
 

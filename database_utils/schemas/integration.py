@@ -6,7 +6,7 @@ from datetime import datetime
 from database_utils.models.crm import IntegrationAuthType
 
 MASKED = "***"
-IntegrationProvider = Literal["WHATSAPP_BUSINESS"]
+IntegrationProvider = Literal["WHATSAPP_BUSINESS", "RECURRENTE"]
 # app_secret: App Secret de Meta (WhatsApp Business); firma los webhooks del tenant.
 SENSITIVE_KEYS = {"api_key", "token", "password", "app_secret"}
 
