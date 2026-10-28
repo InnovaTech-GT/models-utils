@@ -75,6 +75,11 @@ class ServicePlanBase(BaseModel):
     # derivation). Absorbed-from-Product: stock (NULL = not stock-tracked).
     kind: CatalogKind = CatalogKind.SERVICE
     stock: Optional[int] = None
+    # pa1 (doc 56): new plans are manual (field work orders) and accept no CPE
+    # category until the office picks some. The DB default stays true so
+    # pre-pa1 plans keep today's automated behaviour.
+    network_automation: bool = False
+    allowed_device_category_ids: List[UUID] = []
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
@@ -101,6 +106,8 @@ class ServicePlanUpdate(BaseModel):
     provisioning_params: Optional[List[ProvisioningParam]] = None
     kind: Optional[CatalogKind] = None
     stock: Optional[int] = None
+    network_automation: Optional[bool] = None
+    allowed_device_category_ids: Optional[List[UUID]] = None
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
