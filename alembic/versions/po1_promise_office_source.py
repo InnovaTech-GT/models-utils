@@ -1,6 +1,6 @@
-"""po1_payment_promise_office_source: PaymentPromiseSource gains OFFICE
+"""po1_promise_office_source: PaymentPromiseSource gains OFFICE
 
-Revision ID: po1_payment_promise_office_source
+Revision ID: po1_promise_office_source
 Revises: cp1_dunning
 Create Date: 2026-10-27
 
@@ -8,7 +8,7 @@ Additive: backoffice (web) promises are recorded with source OFFICE.
 """
 from alembic import op
 
-revision = "po1_payment_promise_office_source"
+revision = "po1_promise_office_source"
 down_revision = "cp1_dunning"
 branch_labels = None
 depends_on = None
