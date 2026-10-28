@@ -1268,3 +1268,8 @@ verification; their file names describe them.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+## po1_promise_office_source (6.15.0)
+
+On `cp1_dunning`. Additive: `ALTER TYPE paymentpromisesource ADD VALUE IF NOT EXISTS 'OFFICE'`
+inside `autocommit_block()`. Downgrade is a no-op (PostgreSQL cannot drop an enum value).
