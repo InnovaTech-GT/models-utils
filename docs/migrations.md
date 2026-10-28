@@ -1285,3 +1285,11 @@ On `po1_promise_office_source`. Doc 56, additive:
 
 Downgrade drops the table and the column; the enum label and the permission row stay.
 Tests: `tests/test_plan_network_automation.py`, `tests/pg/test_pa1_pg.py`.
+
+## pa2_micronode_category (6.16.1)
+
+Doc 56 §2. Inserts the platform-global device category `MICRONODE` ("Micronodo", tier EDGE, `is_passive` true,
+`is_active` true, icon `box`) with `ON CONFLICT (key) DO NOTHING`; `isp_seed.DEVICE_CATEGORIES` carries the same row
+(pinned by `tests/test_plan_network_automation.py`). It is the allowed CPE of a Cable GPON plan: tracked in inventory and
+recovered on cancel, never configured. Tenants create their own micronode product (device type) with it; backend-erp's
+default products do not include it. Downgrade deletes the row only while no device type or plan references it. Additive.
