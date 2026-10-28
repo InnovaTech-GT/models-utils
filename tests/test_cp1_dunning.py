@@ -77,7 +77,7 @@ def test_payment_promise_table():
     assert not t.c.client_service_id.nullable and t.c.suspension_id.nullable
     assert [e for e in PaymentPromiseStatus] == [PaymentPromiseStatus(v) for v in
                                                  ("OPEN", "KEPT", "BROKEN", "CANCELLED")]
-    assert {e.value for e in PaymentPromiseSource} == {"PORTAL", "COLLECTOR", "BOT"}
+    assert {e.value for e in PaymentPromiseSource} == {"PORTAL", "COLLECTOR", "BOT", "OFFICE"}
     idx = {i.name: i for i in t.indexes}
     assert idx["uq_payment_promise_open_service"].unique
     for name in ("uq_payment_promise_open_service", "ix_payment_promise_open_date"):
