@@ -375,7 +375,9 @@ any job endpoint; the stored log keeps the value (later children render it).
   `InventoryItemBase`/`Create` (backend-erp's `create_item` does
   `InventoryItem(**item_in.dict())`, so an explicit `None` would be written as
   NULL) nor on `InventoryItemUpdate` (xlsx is the only edit path).
-- `InventoryReceiveIn` — `device_type_id`, `warehouse_id`, `serials` (1..100),
+- `InventoryReceiveIn` — `device_type_id`, exactly one of `warehouse_id?` /
+  `custodian_user_id?` (enforced by backend-erp, not the schema; doc 55),
+  `serials` (1..100),
   `condition` (default NEW), `received_at?` (naive → America/Guatemala via
   `make_aware_gt`), `purchase_date?`, `cost_cents?` (≥0, per unit),
   `supplier?`/`reference?` (≤120), `notes?`, `receipt_id?` (client-generated
