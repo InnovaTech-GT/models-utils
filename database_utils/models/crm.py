@@ -685,6 +685,10 @@ class UploadedFileOwnerType(str, enum.Enum):
     # pm1: payment evidence ("Comprobante"). owner_id = payment.id, kind =
     # PHOTO (PDFs ride PHOTO too — a second kind buys the UI nothing).
     PAYMENT = "PAYMENT"
+    # pl2: a transfer receipt a subscriber sent for an online payment link that
+    # is not confirmed yet. owner_id = payment_link.id, kind = PHOTO (PDFs too).
+    # Evidence for the office only: it never marks anything as paid.
+    PAYMENT_LINK = "PAYMENT_LINK"
 
 
 class UploadedFileKind(str, enum.Enum):

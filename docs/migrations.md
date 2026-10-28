@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (116 revisions, head: **`pl1_payment_link`**) — plus
+`alembic/versions/` (117 revisions, head: **`pl2_payment_link_support`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1248,6 +1248,23 @@ payment itself is recorded by `PaymentService`.
 - Downgrade drops the table. Upgrade and downgrade are idempotent.
 
 Pinned by `tests/test_payment_link.py` and `tests/pg/test_pl1_pg.py`.
+
+### `pl2_payment_link_support` (2026-10-28) — models-utils 6.16.0
+
+On `pl1_payment_link`. Two pieces the online-payments cycle needs:
+
+- `user.is_system` BOOLEAN NOT NULL DEFAULT false: a machine account, such as
+  the per-company "Bot de WhatsApp" user that receives online payments.
+  `check_tier_limit` does not count it and auth-erp refuses its login. No
+  user-facing schema can set it. `ck_user_system_not_super_admin`.
+- `uploadedfileownertype` += `PAYMENT_LINK`: a transfer receipt for a payment
+  link not confirmed yet (owner_id = payment_link.id). `PAYMENT` (pm1) stays
+  for a recorded payment's evidence.
+
+Partly irreversible: downgrade drops the column and the CHECK; the enum label
+stays (Postgres cannot drop one; pm1/po1 precedent).
+
+Pinned by `tests/test_pl2_payment_link_support.py` and `tests/pg/test_pl2_pg.py`.
 
 ### Other revisions (summary only)
 
