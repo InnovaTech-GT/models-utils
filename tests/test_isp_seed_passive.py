@@ -43,10 +43,11 @@ def test_ups_and_radio_stay_configurable():
 
 def test_only_the_six_product_backed_categories_are_active():
     """USER DECISION (revision dc1_category_trim): a fresh insert only
-    activates the six categories backend-erp seeds as default products."""
+    activates the six categories backend-erp seeds as default products, plus
+    MICRONODE (pa2, doc 56: founder 2026-10-28, the Cable GPON plan's CPE)."""
     by_key = {row[0]: row for row in DEVICE_CATEGORIES}
     active = {key for key, row in by_key.items() if row[6] is True}
-    assert active == {"ROUTER", "SWITCH", "OLT", "ONU", "FIBER_OPTIC", "PATCH_CORD"}
+    assert active == {"ROUTER", "SWITCH", "OLT", "ONU", "FIBER_OPTIC", "PATCH_CORD", "MICRONODE"}
 
 
 def test_every_category_declares_the_flag():

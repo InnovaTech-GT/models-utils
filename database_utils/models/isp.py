@@ -17,7 +17,7 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text, Text,
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
-    SmallInteger, ForeignKeyConstraint, Date,
+    SmallInteger, ForeignKeyConstraint, Date, Table,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
@@ -440,6 +440,17 @@ class InsightChartType(str, enum.Enum):
 # Service catalog & subscriptions
 # ---------------------------------------------------------------------------
 
+# pa1 (doc 56): the CPE categories a plan accepts at install. DeviceCategory
+# is platform-global, so no company_id here; deleting a category in use is
+# refused (RESTRICT), deleting the plan drops its rows.
+service_plan_device_category = Table(
+    "service_plan_device_category",
+    Base.metadata,
+    Column("service_plan_id", Uuid, ForeignKey("service_plan.id", ondelete="CASCADE"), primary_key=True),
+    Column("device_category_id", Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), primary_key=True),
+)
+
+
 class ServicePlan(Base):
     __tablename__ = "service_plan"
 
@@ -487,6 +498,11 @@ class ServicePlan(Base):
     # NEVER exposed on Update schemas. 'c2a' = inserted by the c2a backfill.
     # Used by c2a's downgrade to delete ONLY rows it created.
     migration_source = Column(String, nullable=True)
+    # pa1 (doc 56): False = the network is cut/reconnected/removed by a
+    # technician (field work orders), never by provisioning. server_default
+    # true keeps every pre-pa1 plan automated; new plans default to False at
+    # the API schema.
+    network_automation = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -494,6 +510,14 @@ class ServicePlan(Base):
 
     company = relationship("Company", back_populates="service_plans")
     client_services = relationship("ClientService", back_populates="service_plan")
+    allowed_device_categories = relationship(
+        "DeviceCategory", secondary=service_plan_device_category, lazy="selectin"
+    )
+
+    @property
+    def allowed_device_category_ids(self):
+        """Serialized by ServicePlanOut (from_attributes)."""
+        return [c.id for c in self.allowed_device_categories]
 
     __table_args__ = (
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.

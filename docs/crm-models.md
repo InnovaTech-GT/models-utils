@@ -65,7 +65,7 @@ by backend-erp (cron-erp reaches them only through backend-erp's HTTP API).
 - Enums: `OrderStatus`, `OrderType`, `PaymentStatus`, `PaymentKind`,
   `PaymentMethodType`, `RecurrenceEnum`, `RecurringOrderStatus`,
   `ServiceAvailability`, `CustomFieldType` (TEXT/NUMBER/EMAIL/PHONE/URL/DATE/BOOLEAN),
-  `TaskJobKind`, `TaskLinkedObjectType` (CLIENT/ORDER/CLIENT_SERVICE/INVENTORY_ITEM),
+  `TaskJobKind` (INSTALL/FAULT/CHANGE/REMOVE/SUSPEND/MAINTENANCE/RELOCATION/RECONNECT — RECONNECT since pa1, doc 56), `TaskLinkedObjectType` (CLIENT/ORDER/CLIENT_SERVICE/INVENTORY_ITEM),
   `IntegrationAuthType`, `UploadedFileOwnerType`, `UploadedFileKind` (PHOTO/SIGNATURE),
   `CollectionRouteStatus`, `RouteStopStatus`, `CollectionVisitOutcome`,
   `CollectionVisitCode`, `CashSessionStatus`

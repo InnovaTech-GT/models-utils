@@ -496,9 +496,13 @@ class InventoryItemOut(InventoryItemBase):
 
 class InventoryReceiveIn(BaseModel):
     """One receive request: header fields apply to every serial. The web sends
-    one serial per request; pastes are chunked by 100."""
+    one serial per request; pastes are chunked by 100. Destination is a
+    warehouse (web) or the caller's own custody (mobile, doc 55); exactly one
+    is enforced by backend-erp, not here."""
     device_type_id: UUID
-    warehouse_id: UUID
+    warehouse_id: Optional[UUID] = None
+    # doc 55: receive into the caller's own custody (router enforces exactly one destination and == caller)
+    custodian_user_id: Optional[UUID] = None
     serials: List[str] = Field(min_length=1, max_length=100)
     condition: InventoryItemCondition = InventoryItemCondition.NEW
     # Backdate; None = now. A naive value is America/Guatemala.
