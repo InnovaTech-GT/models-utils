@@ -69,6 +69,11 @@ ISP_PERMISSIONS = [
     # (payments.refund precedent in rbac_seed). Deliberately granted to NO
     # ISP base role and given NO legacy grant-copy source in rbac_seed step 4.
     {"name": "client_services.adopt", "resource": "client_services", "action": "adopt", "description": "Attest a service as installed (brownfield adoption) - ADMIN only"},
+    # pa1 (doc 56): cancelling a service (PATCH -> CANCELLED, DEPROVISION,
+    # client deactivate) is an office decision. No ISP base role holds it:
+    # ADMIN converges via the `*` step, custom office roles may be granted it.
+    # pa1_plan_network_automation.CANCEL_PERMISSION must stay equal to this row.
+    {"name": "client_services.cancel", "resource": "client_services", "action": "cancel", "description": "Cancel a subscriber service"},
     # Inventory
     {"name": "device_types.create", "resource": "device_types", "action": "create", "description": "Create device catalog entries"},
     {"name": "device_types.read", "resource": "device_types", "action": "read", "description": "View device catalog"},

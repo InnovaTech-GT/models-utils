@@ -29,7 +29,7 @@ a provisioning run spans several devices. The structural detail lives in
 
 | Model | Purpose |
 |---|---|
-| `ServicePlan` (service_plan) | Merged catalog item. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour |
+| `ServicePlan` (service_plan) | Merged catalog item. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour. `network_automation` (pa1, doc 56; NOT NULL, `server_default true` — pre-pa1 plans stay automated, new plans default false at the schema): false = suspend/reconnect/cancel become technician work orders instead of provisioning. `allowed_device_categories` (association table `service_plan_device_category`, plan CASCADE / category RESTRICT, no company_id because `DeviceCategory` is global; pa1 backfilled ONU on every SERVICE plan) = the CPE categories installable on the plan; `allowed_device_category_ids` is a read-only property serialized by `ServicePlanOut` |
 
 ### Subscriber services
 
