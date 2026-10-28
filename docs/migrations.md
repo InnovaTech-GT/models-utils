@@ -1273,3 +1273,15 @@ verification; their file names describe them.
 
 On `cp1_dunning`. Additive: `ALTER TYPE paymentpromisesource ADD VALUE IF NOT EXISTS 'OFFICE'`
 inside `autocommit_block()`. Downgrade is a no-op (PostgreSQL cannot drop an enum value).
+
+## pa1_plan_network_automation (6.16.0)
+
+On `po1_promise_office_source`. Doc 56, additive:
+- `taskjobkind += RECONNECT` (autocommit block, first; nothing in the file names it).
+- `service_plan.network_automation BOOLEAN NOT NULL DEFAULT true` — existing plans keep automation.
+- `service_plan_device_category (service_plan_id CASCADE, device_category_id RESTRICT, PK both)`,
+  backfilled `SERVICE` plans × `device_category.key = 'ONU'` (`ON CONFLICT DO NOTHING`).
+- permission `client_services.cancel` + ADMIN grant (`CANCEL_PERMISSION`, pinned against `isp_seed`).
+
+Downgrade drops the table and the column; the enum label and the permission row stay.
+Tests: `tests/test_plan_network_automation.py`, `tests/pg/test_pa1_pg.py`.

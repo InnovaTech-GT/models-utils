@@ -90,6 +90,8 @@ class TaskJobKind(str, enum.Enum):
     # mi1_mobile_enum_labels: the tecnicos "Traslado" job (moving a client's
     # service to a new address).
     RELOCATION = "RELOCATION"
+    # pa1 (doc 56): a technician reconnects a manual plan after payment.
+    RECONNECT = "RECONNECT"
 
 
 class TaskLinkedObjectType(str, enum.Enum):
