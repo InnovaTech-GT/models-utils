@@ -53,7 +53,11 @@ non-passive node on the path has a binding for the purpose).
 
 - `PURPOSE_TO_STATUS` — the status each canonical purpose writes:
   `SUSPENSION → SUSPENDED`, `REACTIVATION → ACTIVE`, `DEPROVISION → CANCELLED`,
-  and **`ACTIVATION → None`**. `None` is deliberate: activating a service
+  **`ACTIVATION → None`** and **`CPE_SWAP → None`** (6.18.0, doc 53: replacing a
+  subscriber's CPE writes no status; `purpose_allowed_for_status` special-cases
+  it as legal **only from ACTIVE**, and it is not in `TEARDOWN_PURPOSES`).
+  The canonical purposes are `CANONICAL_PLAYBOOK_PURPOSES = (ACTIVATION,
+  SUSPENSION, REACTIVATION, DEPROVISION, CPE_SWAP)`. `None` is deliberate: activating a service
   *enqueues only*. The `PENDING_INSTALL → ACTIVE` flip is written by backend-erp's
   `recompute_install_state` once the install state reaches `INSTALLED` — i.e.
   after the provisioning job succeeds. Encoding `None` means a caller writing

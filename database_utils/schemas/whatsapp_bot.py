@@ -56,7 +56,7 @@ class PurposeOption(_OptionBase):
     """Corre un proposito personalizado de la cablera (WIFI_PASSWORD,
     LAN_HOSTS, ...) con el flujo generico del bot: el bot le pregunta al
     backend que datos pedir y que mostrar, asi que no sabe que hace cada uno.
-    Los cuatro canonicos mueven estado y facturacion: son de oficina."""
+    Los cinco canonicos mueven estado y facturacion: son de oficina."""
     type: Literal["PURPOSE"]
     purpose: str = Field(pattern=PLAYBOOK_PURPOSE_PATTERN)
 
