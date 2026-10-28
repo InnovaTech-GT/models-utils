@@ -1,7 +1,7 @@
 """payment_link: links de pago en línea (Recurrente) por orden
 
 Revision ID: pl1_payment_link
-Revises: cp1_dunning
+Revises: po1_promise_office_source
 Create Date: 2026-10-27
 
 payment_link (una fila por link pedido a la pasarela). Aditiva: tabla nueva,
@@ -15,7 +15,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "pl1_payment_link"
-down_revision: str | Sequence[str] | None = "cp1_dunning"
+down_revision: str | Sequence[str] | None = "po1_promise_office_source"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

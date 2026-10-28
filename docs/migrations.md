@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (115 revisions, head: **`pl1_payment_link`**) — plus
+`alembic/versions/` (116 revisions, head: **`pl1_payment_link`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1220,9 +1220,9 @@ granted to humans). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops
 tables/types/column, the role and the permission (same env.py seed-pass
 caveat as cfg3). Guard: `tests/pg/test_cp1_pg.py`.
 
-### `pl1_payment_link` (2026-10-28) — models-utils 6.15.0
+### `pl1_payment_link` (2026-10-28) — models-utils 6.16.0
 
-On `cp1_dunning`. Additive. Creates `payment_link`: one row per online payment
+On `po1_promise_office_source`. Additive. Creates `payment_link`: one row per online payment
 link Uplink asked of a payment gateway (today only Recurrente) for one order.
 The row only records which links are ours, for how much and how they ended;
 whether a link was paid is decided by backend-erp asking the gateway, and the
@@ -1297,3 +1297,8 @@ verification; their file names describe them.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+## po1_promise_office_source (6.15.0)
+
+On `cp1_dunning`. Additive: `ALTER TYPE paymentpromisesource ADD VALUE IF NOT EXISTS 'OFFICE'`
+inside `autocommit_block()`. Downgrade is a no-op (PostgreSQL cannot drop an enum value).

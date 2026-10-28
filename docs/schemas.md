@@ -436,7 +436,7 @@ frontend-erp:
 Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
 
-### Payment links (6.15.0, revision `pl1_payment_link`)
+### Payment links (6.16.0, revision `pl1_payment_link`)
 
 `schemas/payment_link.py`:
 

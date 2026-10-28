@@ -675,6 +675,7 @@ class PaymentPromiseSource(str, enum.Enum):
     PORTAL = "PORTAL"
     COLLECTOR = "COLLECTOR"
     BOT = "BOT"
+    OFFICE = "OFFICE"
 
 
 class PaymentPromiseStatus(str, enum.Enum):
