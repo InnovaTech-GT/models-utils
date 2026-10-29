@@ -48,6 +48,8 @@ from .crm import (
 )
 
 from .isp import (
+    Service,
+    service_device_category,
     ServicePlan,
     ServicePlanType,
     CatalogKind,
@@ -170,6 +172,8 @@ __all__ = [
     "CashMovement",
     "TaskCloseout",
     # ISP
+    "Service",
+    "service_device_category",
     "ServicePlan",
     "ServicePlanType",
     "CatalogKind",

@@ -7,7 +7,7 @@ from _mi_helpers import isp_seed, load
 
 from database_utils.models.crm import TaskJobKind
 from database_utils.models.isp import DeviceCategory, ServicePlan
-from database_utils.schemas.service_plan import ServicePlanCreate, ServicePlanOut, ServicePlanUpdate
+from database_utils.schemas.service_plan import ServicePlanCreate, ServicePlanUpdate
 
 
 def _company(db):
@@ -21,37 +21,29 @@ def _company(db):
     return co
 
 
-def test_new_plan_defaults_to_manual():
-    plan = ServicePlanCreate(name="X", price=1)
-    assert plan.network_automation is False
+def test_plan_schemas_dropped_service_level_fields():
+    assert "network_automation" not in ServicePlanCreate.model_fields
+    assert "allowed_device_category_ids" not in ServicePlanUpdate.model_fields
+
+
+def test_plan_without_service_is_automated_and_allows_nothing(db):
+    co = _company(db)
+    plan = ServicePlan(name="P", company_id=co.id)
+    db.add(plan)
+    db.flush()
+    assert plan.network_automation is True
     assert plan.allowed_device_category_ids == []
 
 
-def test_update_leaves_both_unset():
-    patch = ServicePlanUpdate()
-    assert patch.network_automation is None
-    assert patch.allowed_device_category_ids is None
-
-
 def test_db_default_keeps_existing_plans_automated(db):
+    # the deprecated column still defaults true for rows written by old code
     co = _company(db)
     plan_id = uuid.uuid4()
     db.execute(sa.text(
         "INSERT INTO service_plan (id, created_at, updated_at, name, plan_type, price, is_active, kind, company_id) "
         "VALUES (:id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'old', 'FIBER', 1, 1, 'SERVICE', :co)"
     ), {"id": plan_id.hex, "co": co.id.hex})
-    assert db.get(ServicePlan, plan_id).network_automation is True
-
-
-def test_allowed_categories_roundtrip(db):
-    co = _company(db)
-    cat = DeviceCategory(key=f"ONU-{uuid.uuid4().hex[:6]}", name="ONU")
-    plan = ServicePlan(name="P", company_id=co.id, allowed_device_categories=[cat])
-    db.add(plan)
-    db.flush()
-    db.expire_all()
-    plan = db.get(ServicePlan, plan.id)
-    assert ServicePlanOut.model_validate(plan).allowed_device_category_ids == [cat.id]
+    assert db.execute(sa.text("SELECT network_automation FROM service_plan")).scalar() in (1, True)
 
 
 def test_reconnect_job_kind():
