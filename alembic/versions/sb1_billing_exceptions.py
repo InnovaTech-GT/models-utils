@@ -5,7 +5,7 @@ end date, a superadmin note) and the latest Recurrente pay-this-invoice
 checkout id on billing_invoice. Purely additive.
 
 Revision ID: sb1_billing_exceptions
-Revises: sv1_service_entity
+Revises: pl2_payment_link_support
 """
 from typing import Sequence, Union
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'sb1_billing_exceptions'
-down_revision: Union[str, Sequence[str], None] = 'sv1_service_entity'
+down_revision: Union[str, Sequence[str], None] = 'pl2_payment_link_support'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

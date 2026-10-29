@@ -87,7 +87,7 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   `BillingInvoice.recurrente_intent_id` (unique) — webhook charge idempotency.
   `BillingWebhookEvent` provides the second idempotency layer: one row per
   svix delivery id.
-- **Billing exceptions + pay-by-invoice** (`sb1_billing_exceptions`, 6.20.0, doc 60,
+- **Billing exceptions + pay-by-invoice** (`sb1_billing_exceptions`, 6.21.0, doc 60,
   additive): `Subscription.discount_percent` (int, default 0, CHECK 0–100; 100 =
   complimentary), `discount_until` (NULL = indefinite; applies to periods starting
   before it), `billing_note` (superadmin-only text);
