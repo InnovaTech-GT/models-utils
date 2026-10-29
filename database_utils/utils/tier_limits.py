@@ -167,14 +167,24 @@ def _count_resource(db: Session, company_id: UUID, resource: str) -> int:
 def billing_access(db: Session, company_id: UUID, now=None) -> str:
     """Doc 61 §7: FULL, READ_ONLY (an unpaid invoice is 15+ days past due) or
     LOCKED (30+ days past due, or no paid-up subscription: INCOMPLETE /
-    CANCELED). No subscription = FULL (legacy/internal companies)."""
+    CANCELED). No subscription = FULL (legacy/internal companies); an active
+    100% discount (partner) = FULL unless CANCELED."""
     from database_utils.models.auth import BillingInvoice
     from database_utils.utils.timezone_utils import make_aware_gt, now_gt
 
     subscription = _subscription(db, company_id)
     if subscription is None:
         return ACCESS_FULL
-    if subscription.status in ("INCOMPLETE", "CANCELED"):
+    if subscription.status == "CANCELED":
+        return ACCESS_LOCKED
+    # Complimentary (partner, 100% discount still in force): owes nothing, so
+    # stale pre-partner invoices or a missing card never gate it.
+    if subscription.discount_percent == 100 and (
+        subscription.discount_until is None
+        or (now or now_gt()) < make_aware_gt(subscription.discount_until)
+    ):
+        return ACCESS_FULL
+    if subscription.status == "INCOMPLETE":
         return ACCESS_LOCKED
     oldest_due = (
         db.query(BillingInvoice.due_date)

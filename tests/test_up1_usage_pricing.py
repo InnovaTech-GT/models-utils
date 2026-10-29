@@ -131,3 +131,19 @@ def test_billing_access_ladder(db):
     sub.status = "INCOMPLETE"
     db.flush()
     assert tl.billing_access(db, CO) == tl.ACCESS_LOCKED
+
+
+def test_partner_discount_keeps_full_access(db):
+    sub = _world(db)
+    db.add(BillingInvoice(invoice_number="I-OLD", invoice_date=now_gt(), due_date=now_gt() - timedelta(days=90),
+                          subtotal=1, total=1, status="PENDING", payment_type="MANUAL", subscription_id=sub.id))
+    sub.status = "INCOMPLETE"
+    sub.discount_percent = 100
+    db.flush()
+    assert tl.billing_access(db, CO) == tl.ACCESS_FULL
+    sub.discount_until = now_gt() - timedelta(days=1)  # discount over: debt counts again
+    db.flush()
+    assert tl.billing_access(db, CO) == tl.ACCESS_LOCKED
+    sub.discount_until, sub.status = None, "CANCELED"
+    db.flush()
+    assert tl.billing_access(db, CO) == tl.ACCESS_LOCKED
