@@ -114,3 +114,13 @@ class PaymentLink(Base):
     )
     paid_at = Column(DateTime(timezone=True), nullable=True)
     review_reason = Column(String(64), nullable=True)
+
+    # Aviso por WhatsApp al confirmarse el pago (doc 59 §6): la integración
+    # WHATSAPP_BUSINESS y el número del cliente por donde pidió el link.
+    # wa_to es PII: nunca sale en PaymentLinkOut ni en el motor de workflows.
+    wa_integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("integration.id", ondelete="SET NULL"), nullable=True
+    )
+    wa_to = Column(String(32), nullable=True)
+    # Cuándo se dio por avisado (enviado o descartado sin reintento).
+    notified_at = Column(DateTime(timezone=True), nullable=True)

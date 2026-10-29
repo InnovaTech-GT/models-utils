@@ -8,7 +8,8 @@ from database_utils.models.crm import IntegrationAuthType
 MASKED = "***"
 IntegrationProvider = Literal["WHATSAPP_BUSINESS", "RECURRENTE"]
 # app_secret: App Secret de Meta (WhatsApp Business); firma los webhooks del tenant.
-SENSITIVE_KEYS = {"api_key", "token", "password", "app_secret"}
+# webhook_secret: signingSecret (Svix) del webhook de Recurrente, lo pone el servidor.
+SENSITIVE_KEYS = {"api_key", "token", "password", "app_secret", "webhook_secret"}
 
 
 class IntegrationCreate(BaseModel):

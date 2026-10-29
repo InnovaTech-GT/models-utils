@@ -47,6 +47,9 @@ def upgrade() -> None:
             payment_id UUID REFERENCES payment(id) ON DELETE RESTRICT,
             paid_at TIMESTAMPTZ,
             review_reason VARCHAR(64),
+            wa_integration_id UUID REFERENCES integration(id) ON DELETE SET NULL,
+            wa_to VARCHAR(32),
+            notified_at TIMESTAMPTZ,
             CONSTRAINT ck_payment_link_status CHECK (status IN
                 ('CREATING', 'PENDING', 'PAID', 'EXPIRED', 'REVIEW', 'FAILED')),
             CONSTRAINT ck_payment_link_provider CHECK (provider IN ('RECURRENTE')),

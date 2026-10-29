@@ -34,9 +34,9 @@ def _link(order_id, status=PaymentLinkStatus.PENDING, **kw):
 
 # --- ajustes de la integración ------------------------------------------------
 
-def test_ajustes_por_defecto_solo_transferencia_y_cinco_dias():
+def test_ajustes_por_defecto_transferencia_y_tarjeta_y_cinco_dias():
     s = RecurrenteSettings()
-    assert s.payment_methods == ["bank_transfer"]
+    assert s.payment_methods == ["bank_transfer", "card"]
     assert s.link_hours == 120
 
 
@@ -82,6 +82,20 @@ def test_la_llave_de_recurrente_sale_enmascarada():
     assert out.credentials["payment_methods"] == ["bank_transfer"]
 
 
+def test_el_secreto_del_webhook_sale_enmascarado():
+    fila = SimpleNamespace(
+        id=uuid.uuid4(), company_id=CO_A, name="Recurrente", description=None,
+        base_url="https://app.recurrente.com/api", auth_type="API_KEY",
+        credentials={"api_key": "sk_test_x", "webhook_endpoint_id": "we_123",
+                     "webhook_secret": "whsec_secreto"},
+        provider="RECURRENTE", enabled=True, created_at=now_gt(), updated_at=None,
+    )
+    out = IntegrationOut.from_orm_masked(fila)
+    assert out.credentials["webhook_secret"] == "***"
+    assert out.credentials["webhook_endpoint_id"] == "we_123"
+    assert "whsec_secreto" not in out.model_dump_json()
+
+
 # --- modelo -------------------------------------------------------------------
 
 def test_estados_activos():
@@ -96,6 +110,19 @@ def test_valores_por_defecto(db):
     assert link.provider == "RECURRENTE"
     assert link.currency == "GTQ"
     assert link.checks == 0
+    assert link.wa_integration_id is None and link.wa_to is None and link.notified_at is None
+
+
+def test_aviso_whatsapp_se_guarda_y_wa_to_no_sale_en_la_vista(db):
+    from database_utils.schemas.payment_link import PaymentLinkOut
+    link = _link(uuid.uuid4(), wa_to="50255551234", notified_at=now_gt())
+    db.add(link); db.commit(); db.refresh(link)
+    assert link.wa_to == "50255551234"
+    out = PaymentLinkOut.model_validate(link)
+    assert out.notified_at is not None
+    dump = out.model_dump()
+    assert "wa_to" not in dump and "wa_integration_id" not in dump
+    assert "50255551234" not in out.model_dump_json()
 
 
 def test_dos_links_activos_para_la_misma_orden_no(db):

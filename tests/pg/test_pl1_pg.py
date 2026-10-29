@@ -126,6 +126,30 @@ def test_checks_refuse_broken_links(conn, bad):
     _refused(conn, lambda: _link(conn, co, cl, order, **bad))
 
 
+def test_whatsapp_notify_columns_and_integration_delete_sets_null(conn):
+    cols = {r[0]: (r[1], r[2], r[3]) for r in _x(conn,
+        "SELECT column_name, data_type, character_maximum_length, is_nullable "
+        "FROM information_schema.columns WHERE table_name = 'payment_link' "
+        "AND column_name IN ('wa_integration_id', 'wa_to', 'notified_at')")}
+    assert cols == {
+        "wa_integration_id": ("uuid", None, "YES"),
+        "wa_to": ("character varying", 32, "YES"),
+        "notified_at": ("timestamp with time zone", None, "YES"),
+    }
+    co, cl, order = _fixture(conn)
+    integ = uuid.uuid4()
+    _x(conn, "INSERT INTO integration (id, created_at, updated_at, company_id, name, base_url, auth_type, enabled) "
+             "VALUES (:id, now(), now(), :co, 'wa', 'https://graph.facebook.com', 'NONE', true)", id=integ, co=co)
+    link = _link(conn, co, cl, order)
+    _x(conn, "UPDATE payment_link SET wa_integration_id = :i, wa_to = '50255551234' WHERE id = :l",
+       i=integ, l=link)
+    _x(conn, "DELETE FROM integration WHERE id = :i", i=integ)
+    row = _x(conn, "SELECT wa_integration_id, wa_to FROM payment_link WHERE id = :l", l=link).one()
+    assert tuple(row) == (None, "50255551234")
+    with pytest.raises(sa.exc.DataError), conn.begin_nested():
+        _x(conn, "UPDATE payment_link SET wa_to = :t WHERE id = :l", t="9" * 33, l=link)
+
+
 def test_order_and_client_are_kept_while_a_link_points_at_them(conn):
     co, cl, order = _fixture(conn)
     _link(conn, co, cl, order, status="EXPIRED")

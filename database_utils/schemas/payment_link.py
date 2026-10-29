@@ -10,10 +10,10 @@ PaymentLinkMethod = Literal["bank_transfer", "card"]
 
 class RecurrenteSettings(BaseModel):
     """Ajustes NO secretos de la integración, guardados en credentials junto
-    a la llave. Por defecto: solo transferencia, links de 5 días."""
+    a la llave. Por defecto: transferencia y tarjeta, links de 5 días."""
     model_config = ConfigDict(extra="forbid")
 
-    payment_methods: list[PaymentLinkMethod] = Field(default_factory=lambda: ["bank_transfer"])
+    payment_methods: list[PaymentLinkMethod] = Field(default_factory=lambda: ["bank_transfer", "card"])
     link_hours: int = Field(120, ge=1, le=720)
 
     @field_validator("payment_methods")
@@ -49,4 +49,5 @@ class PaymentLinkOut(BaseModel):
     payment_id: UUID | None = None
     paid_at: datetime | None = None
     review_reason: str | None = None
+    notified_at: datetime | None = None
     created_at: datetime
