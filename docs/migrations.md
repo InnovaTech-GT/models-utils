@@ -1297,3 +1297,13 @@ default products do not include it. Downgrade deletes the row only while no devi
 ## sv1_service_entity (6.19.0)
 
 Doc 58. Tables `service` (unique `(company_id, name)`, `service_type` reuses PG enum `serviceplantype`) and `service_device_category`; `service_plan.service_id` (NULL FK RESTRICT, indexed). Backfill: one service per (company, `service_group`) over SERVICE-kind plans (blank group -> Internet/Cable/Inalámbrico/DSL/Otro), type = mode of `plan_type`, `network_automation` = `bool_or`, categories = union of `service_plan_device_category`; plans get `service_id` and `service_group` = name; `plan_type` untouched. Idempotent (only plans with `service_id IS NULL`), asserts no SERVICE plan is left without a service. Deprecated and kept: `service_plan.network_automation`, `service_plan_device_category`, `service_plan.service_group`. Downgrade drops the FK column and both tables. Tests: `tests/test_service_entity.py`, `tests/pg/test_sv1_pg.py`.
+
+
+## sb1_billing_exceptions (6.20.0)
+
+Doc 60 (SaaS billing exceptions + pay-by-invoice), parent `sv1_service_entity`. Additive:
+`subscription.discount_percent` (int NOT NULL server_default 0, CHECK
+`ck_subscription_discount_percent` 0–100), `subscription.discount_until` (timestamptz),
+`subscription.billing_note` (text), `billing_invoice.recurrente_checkout_id` (varchar, index
+`ix_billing_invoice_recurrente_checkout_id`). Downgrade drops them. Rehearsed
+upgrade → downgrade → upgrade on a throwaway Postgres 16.

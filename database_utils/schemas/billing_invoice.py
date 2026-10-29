@@ -19,6 +19,7 @@ class BillingInvoiceOut(BaseModel):
     manual_payment_method: Optional[str]
     manual_payment_note: Optional[str]
     billing_reason: Optional[str]
+    notes: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

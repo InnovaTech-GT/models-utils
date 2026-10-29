@@ -137,6 +137,10 @@ matters when reading `__init__.py`:
   (Optional, mirror the rb1 columns)
 - `TierOut` gains `recurrente_product_id`/`recurrente_price_id`/
   `recurrente_price_yearly_id` (Optional — admin-facing)
+- **sb1 (6.20.0, doc 60)**: `SubscriptionOut` gains `discount_percent`/`discount_until`
+(never `billing_note`); new `SubscriptionExceptionUpdate` (superadmin PATCH:
+`discount_percent` 0–100, `discount_until`, `billing_note`, `activate_manual`);
+`BillingInvoiceOut` gains `notes`.
 - `TierPublic` gains `purchasable: bool = False` — stamped by the endpoint from
   `recurrente_price_id` presence; the raw price id is never exposed publicly
 

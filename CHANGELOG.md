@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `sv1_service_entity`, not yet on `main`.
 
 ### Added
+- **6.20.0** - SaaS billing exceptions + pay-by-invoice (doc 60), revision `sb1_billing_exceptions` (down `sv1_service_entity`). Additive. On branch `feat/saas-billing/models-exceptions` (not yet on `develop`).
+  - `Subscription.discount_percent` (0–100, default 0; 100 = complimentary), `discount_until`, `billing_note`; `BillingInvoice.recurrente_checkout_id`; `BillingInvoice.status` may be `VOID`.
+  - Schemas: `SubscriptionOut` + `discount_percent`/`discount_until`; new `SubscriptionExceptionUpdate`; `BillingInvoiceOut` + `notes`.
 - **6.19.0** - Service entity (doc 58), revision `sv1_service_entity` (down `pa2_micronode_category`). Additive.
   - New `Service` (`service`: company, unique name per company, `service_type` = existing enum `serviceplantype`, `network_automation` default false) + `service_device_category` association; `ServicePlan.service_id` (NULL FK, RESTRICT, indexed) and `ServicePlan.service`. `Service.plans`, `.allowed_device_categories`, read-only `.allowed_device_category_ids`, `.plan_count`, `.is_active` (any plan active).
   - **ORM break:** `ServicePlan.network_automation` / `allowed_device_categories` attributes removed; `network_automation` and `allowed_device_category_ids` are now read-only properties derived from the service (True / [] when the plan has no service). The pa1 column (mapped as `_deprecated_network_automation`), `service_plan_device_category` and `service_plan.service_group` stay in the DB, deprecated, dropped by a later revision.
