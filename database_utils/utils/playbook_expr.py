@@ -64,7 +64,7 @@ def is_secret_name(name: str) -> bool:
 
 # --- limits -----------------------------------------------------------------
 NAMESPACES = frozenset(
-    {"device", "cpe", "path", "service_plan", "client", "service", "computed"}
+    {"device", "cpe", "old_cpe", "path", "service_plan", "client", "service", "computed"}
 )
 COMPUTED_NAMESPACE = "computed"
 MAX_ENTRIES = 16

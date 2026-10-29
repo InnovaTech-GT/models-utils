@@ -1268,3 +1268,28 @@ verification; their file names describe them.
 ## Environment Variables
 
 - `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` — connection for `alembic/env.py`
+
+## po1_promise_office_source (6.15.0)
+
+On `cp1_dunning`. Additive: `ALTER TYPE paymentpromisesource ADD VALUE IF NOT EXISTS 'OFFICE'`
+inside `autocommit_block()`. Downgrade is a no-op (PostgreSQL cannot drop an enum value).
+
+## pa1_plan_network_automation (6.16.0)
+
+On `po1_promise_office_source`. Doc 56, additive:
+- `taskjobkind += RECONNECT` (autocommit block, first; nothing in the file names it).
+- `service_plan.network_automation BOOLEAN NOT NULL DEFAULT true` — existing plans keep automation.
+- `service_plan_device_category (service_plan_id CASCADE, device_category_id RESTRICT, PK both)`,
+  backfilled `SERVICE` plans × `device_category.key = 'ONU'` (`ON CONFLICT DO NOTHING`).
+- permission `client_services.cancel` + ADMIN grant (`CANCEL_PERMISSION`, pinned against `isp_seed`).
+
+Downgrade drops the table and the column; the enum label and the permission row stay.
+Tests: `tests/test_plan_network_automation.py`, `tests/pg/test_pa1_pg.py`.
+
+## pa2_micronode_category (6.16.1)
+
+Doc 56 §2. Inserts the platform-global device category `MICRONODE` ("Micronodo", tier EDGE, `is_passive` true,
+`is_active` true, icon `box`) with `ON CONFLICT (key) DO NOTHING`; `isp_seed.DEVICE_CATEGORIES` carries the same row
+(pinned by `tests/test_plan_network_automation.py`). It is the allowed CPE of a Cable GPON plan: tracked in inventory and
+recovered on cancel, never configured. Tenants create their own micronode product (device type) with it; backend-erp's
+default products do not include it. Downgrade deletes the row only while no device type or plan references it. Additive.

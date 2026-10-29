@@ -17,7 +17,7 @@ docs/isp-platform/18-cycle2-design.md (D1-D10, entity merge + topology rework).
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, ForeignKey, Enum, text, Text,
     Uuid, Float, Index, UniqueConstraint, CheckConstraint, LargeBinary,
-    SmallInteger, ForeignKeyConstraint, Date,
+    SmallInteger, ForeignKeyConstraint, Date, Table,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
@@ -88,14 +88,20 @@ PURPOSE_ACTIVATION = 'ACTIVATION'
 PURPOSE_SUSPENSION = 'SUSPENSION'
 PURPOSE_REACTIVATION = 'REACTIVATION'
 PURPOSE_DEPROVISION = 'DEPROVISION'
+# Doc 53 §8.1: replace an ACTIVE service's CPE (old_cpe.* -> cpe.*). A bring-up,
+# not a teardown; writes no status.
+PURPOSE_CPE_SWAP = 'CPE_SWAP'
 CANONICAL_PLAYBOOK_PURPOSES = (
-    PURPOSE_ACTIVATION, PURPOSE_SUSPENSION, PURPOSE_REACTIVATION, PURPOSE_DEPROVISION
+    PURPOSE_ACTIVATION, PURPOSE_SUSPENSION, PURPOSE_REACTIVATION, PURPOSE_DEPROVISION,
+    PURPOSE_CPE_SWAP,
 )
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
 
-# Engine v2 (doc 42 §5): purposes that take a service DOWN. Devices run
-# leaf -> root (CPE first, core last) for every purpose; this set only gates
-# the CPE probe and the CPE_NETWORK_PRECONDITION playbook warning.
+# Engine v2 (doc 42 §5): purposes that take a service DOWN. This set only
+# gates the CPE probe and the CPE_NETWORK_PRECONDITION playbook warning; it
+# says nothing about device order (ACTIVATION / DEPROVISION / CPE_SWAP run
+# root -> leaf, the rest leaf -> root — see TOP_DOWN_PURPOSES in
+# utils/provisioning_runs.py). CPE_SWAP is a bring-up, so it is NOT here.
 TEARDOWN_PURPOSES = frozenset({PURPOSE_SUSPENSION, PURPOSE_DEPROVISION})
 
 # Engine v2 (doc 42 §6, revision pe1): the phase of a run and of each run
@@ -129,6 +135,7 @@ PURPOSE_TO_STATUS = {
     PURPOSE_SUSPENSION: ClientServiceStatus.SUSPENDED,
     PURPOSE_REACTIVATION: ClientServiceStatus.ACTIVE,
     PURPOSE_DEPROVISION: ClientServiceStatus.CANCELLED,
+    PURPOSE_CPE_SWAP: None,
 }
 
 # Legal status writes. CANCELLED is terminal — a cancelled service is never
@@ -150,14 +157,14 @@ def purpose_allowed_for_status(purpose, current_status) -> bool:
     enabled only when the machine allows it AND a playbook exists for that
     purpose — this answers the first half).
 
-    Four cases:
+    Five cases:
       1. ACTIVATION — special-cased, because it writes no status and therefore
          has no target to look up in ALLOWED_TRANSITIONS. Legal ONLY from
          PENDING_INSTALL: an already-ACTIVE service gets no Activate button,
          and re-activating a SUSPENDED service is REACTIVATION's job.
       2. REACTIVATION — ALSO special-cased, and for a reason that is not
          obvious: it is the exact inverse of SUSPENSION, so it is legal ONLY
-         from SUSPENDED. The generic rule (case 3) would wrongly allow it from
+         from SUSPENDED. The generic rule (case 4) would wrongly allow it from
          PENDING_INSTALL, because its target ACTIVE happens to be a legal
          transition out of PENDING_INSTALL — that edge belongs to ACTIVATION
          and is owned by recompute_install_state, NOT by a status write. Taking
@@ -168,9 +175,12 @@ def purpose_allowed_for_status(purpose, current_status) -> bool:
          `POST /client-services/{id}/reactivate` endpoint has always rejected
          this ("Only SUSPENDED services can be reactivated"); both paths share
          `_apply_reactivation`, so they must agree.
-      3. Any other canonical purpose — legal iff its target status is a legal
+      3. CPE_SWAP — special-cased like ACTIVATION (writes no status): legal
+         ONLY from ACTIVE (doc 53 DC1). Without the branch its None target
+         would return False forever.
+      4. Any other canonical purpose — legal iff its target status is a legal
          transition out of `current_status`.
-      4. A tenant-defined custom purpose (purposes are extensible free strings,
+      5. A tenant-defined custom purpose (purposes are extensible free strings,
          see PLAYBOOK_PURPOSE_PATTERN) — falls through to True: it is
          enqueue-only, writes no status, so there is no transition to police.
          It MUST NOT raise; an unknown purpose is a normal tenant config, not a
@@ -197,6 +207,9 @@ def purpose_allowed_for_status(purpose, current_status) -> bool:
         # ACTIVE is a legal edge, but it is ACTIVATION's, and reaching it here
         # bills a subscriber whose install never happened.
         return status == ClientServiceStatus.SUSPENDED
+
+    if key == PURPOSE_CPE_SWAP:
+        return status == ClientServiceStatus.ACTIVE
 
     if key not in PURPOSE_TO_STATUS:
         return True  # custom purpose: enqueue-only, no status transition
@@ -427,6 +440,17 @@ class InsightChartType(str, enum.Enum):
 # Service catalog & subscriptions
 # ---------------------------------------------------------------------------
 
+# pa1 (doc 56): the CPE categories a plan accepts at install. DeviceCategory
+# is platform-global, so no company_id here; deleting a category in use is
+# refused (RESTRICT), deleting the plan drops its rows.
+service_plan_device_category = Table(
+    "service_plan_device_category",
+    Base.metadata,
+    Column("service_plan_id", Uuid, ForeignKey("service_plan.id", ondelete="CASCADE"), primary_key=True),
+    Column("device_category_id", Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), primary_key=True),
+)
+
+
 class ServicePlan(Base):
     __tablename__ = "service_plan"
 
@@ -474,6 +498,11 @@ class ServicePlan(Base):
     # NEVER exposed on Update schemas. 'c2a' = inserted by the c2a backfill.
     # Used by c2a's downgrade to delete ONLY rows it created.
     migration_source = Column(String, nullable=True)
+    # pa1 (doc 56): False = the network is cut/reconnected/removed by a
+    # technician (field work orders), never by provisioning. server_default
+    # true keeps every pre-pa1 plan automated; new plans default to False at
+    # the API schema.
+    network_automation = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -481,6 +510,14 @@ class ServicePlan(Base):
 
     company = relationship("Company", back_populates="service_plans")
     client_services = relationship("ClientService", back_populates="service_plan")
+    allowed_device_categories = relationship(
+        "DeviceCategory", secondary=service_plan_device_category, lazy="selectin"
+    )
+
+    @property
+    def allowed_device_category_ids(self):
+        """Serialized by ServicePlanOut (from_attributes)."""
+        return [c.id for c in self.allowed_device_categories]
 
     __table_args__ = (
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
@@ -675,6 +712,7 @@ class PaymentPromiseSource(str, enum.Enum):
     PORTAL = "PORTAL"
     COLLECTOR = "COLLECTOR"
     BOT = "BOT"
+    OFFICE = "OFFICE"
 
 
 class PaymentPromiseStatus(str, enum.Enum):
@@ -1431,7 +1469,8 @@ class ProvisioningRun(Base):
     #           playbook_version}]  (the last six since doc 40)
     path = Column(JSON, nullable=False)
     # One entry per child, in execution order. Engine v2 (doc 42 §6.1):
-    # phase-major, leaf -> root (CPE first, core last, every purpose),
+    # phase-major, in order_for_purpose order (root -> leaf for
+    # TOP_DOWN_PURPOSES, else leaf -> root),
     # ROLLBACK entries appended on failure:
     # [{item_id, playbook_id, playbook_version, category_key, device_label,
     #   phase, steps: [{name, label, skip?}], probe?, ran_steps?}]
@@ -1589,7 +1628,7 @@ class ProvisioningJob(Base):
         Uuid, ForeignKey("provisioning_run.id", ondelete="CASCADE"),
         nullable=True, index=True,
     )
-    # 0-based index into ProvisioningRun.plan, i.e. leaf -> root order.
+    # 0-based index into ProvisioningRun.plan, i.e. order_for_purpose order.
     run_position = Column(Integer, nullable=True)
 
     company = relationship("Company", back_populates="provisioning_jobs")

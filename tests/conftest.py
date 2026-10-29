@@ -27,6 +27,8 @@ from database_utils.models.isp import (
     DeviceCategory,
     DeviceType,
     DeviceTypePlaybook,
+    EquipmentEvent,
+    EquipmentEventType,
     InventoryItem,
     InventoryItemPlaybook,
     InventoryItemPort,
@@ -166,6 +168,26 @@ class Plant:
         self.db.add(link)
         self.db.flush()
         return link
+
+    def bind_cpe_swap(self):
+        """Bind a CPE_SWAP playbook to the router, olt and onu types."""
+        for key in ("ROUTER", "OLT", "ONU"):
+            self.bind_type(self.types[key], "CPE_SWAP",
+                           self._playbook(f"{key.lower()}-cpe_swap"))
+
+    def swap_event(self, metadata=None, serial="ONT-OLD"):
+        """A REPLACED event pairing a fresh old unit with the service's CPE
+        (doc 53 §8.4). `metadata` None = a manual REPLACED, not a swap."""
+        old = self._item(serial, "ONU", None)
+        ev = EquipmentEvent(
+            id=uuid.uuid4(), company_id=self.company_id,
+            event_type=EquipmentEventType.REPLACED, item_id=old.id,
+            related_item_id=self.cpe.id, client_service_id=self.service.id,
+            event_metadata=metadata,
+        )
+        self.db.add(ev)
+        self.db.flush()
+        return old, ev
 
     def unbind_type(self, device_type, purpose):
         self.db.execute(sa.delete(DeviceTypePlaybook.__table__).where(

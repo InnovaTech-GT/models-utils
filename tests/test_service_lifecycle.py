@@ -11,10 +11,12 @@ from database_utils.models.isp import (
     CANONICAL_PLAYBOOK_PURPOSES,
     ClientServiceStatus,
     PURPOSE_ACTIVATION,
+    PURPOSE_CPE_SWAP,
     PURPOSE_DEPROVISION,
     PURPOSE_REACTIVATION,
     PURPOSE_SUSPENSION,
     PURPOSE_TO_STATUS,
+    TEARDOWN_PURPOSES,
     purpose_allowed_for_status,
 )
 
@@ -82,6 +84,21 @@ def test_cancelled_is_terminal():
 ])
 def test_purpose_allowed_matrix(purpose, status, expected):
     assert purpose_allowed_for_status(purpose, status) is expected
+
+
+# --- CPE_SWAP (doc 53 §8.1, DC1) ---
+
+@pytest.mark.parametrize("status,ok", [
+    ("ACTIVE", True), ("PENDING_INSTALL", False), ("SUSPENDED", False), ("CANCELLED", False),
+])
+def test_cpe_swap_allowed_only_for_active(status, ok):
+    assert purpose_allowed_for_status("cpe-swap", status) is ok
+
+
+def test_cpe_swap_is_canonical_and_writes_no_status():
+    assert CANONICAL_PLAYBOOK_PURPOSES[-1] == PURPOSE_CPE_SWAP == "CPE_SWAP"
+    assert PURPOSE_TO_STATUS[PURPOSE_CPE_SWAP] is None
+    assert PURPOSE_CPE_SWAP not in TEARDOWN_PURPOSES
 
 
 def test_reactivation_is_suspended_only_regression():

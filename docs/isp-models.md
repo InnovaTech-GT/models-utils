@@ -29,7 +29,7 @@ a provisioning run spans several devices. The structural detail lives in
 
 | Model | Purpose |
 |---|---|
-| `ServicePlan` (service_plan) | Merged catalog item. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour |
+| `ServicePlan` (service_plan) | Merged catalog item. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour. `network_automation` (pa1, doc 56; NOT NULL, `server_default true` — pre-pa1 plans stay automated, new plans default false at the schema): false = suspend/reconnect/cancel become technician work orders instead of provisioning. `allowed_device_categories` (association table `service_plan_device_category`, plan CASCADE / category RESTRICT, no company_id because `DeviceCategory` is global; pa1 backfilled ONU on every SERVICE plan) = the CPE categories installable on the plan; `allowed_device_category_ids` is a read-only property serialized by `ServicePlanOut` |
 
 ### Subscriber services
 
@@ -37,7 +37,7 @@ a provisioning run spans several devices. The structural detail lives in
 |---|---|
 | `ClientService` (client_service) | A client's subscription to a plan; `ClientServiceStatus`. Absorbed recurring-order billing in `c2b_service_billing`; the legacy `recurring_order` link (`recurring_order_id`) and table were dropped by `ld1_legacy_drop`. Cycle 7 (`nc2a`): `install_state` (`INSTALL_STATES` CHECK: NOT_INSTALLED/IN_PROGRESS/INSTALLED, separate from billing `status`, written only by backend-erp's `recompute_install_state`) + `installed_at` (stamped on first INSTALLED, never cleared). Brownfield adoption (doc 30, `ba1_attested_adoption`): `adopted_at` (TIMESTAMPTZ NULL) + `adopted_by_user_id` (UUID FK → `user`, SET NULL, `adopted_by` relationship) + `adoption_note` (VARCHAR NULL) + partial index `ix_client_service_adopted` (`company_id` WHERE `adopted_at IS NOT NULL`) — a persistent attestation FACT substituting for a missing SUCCEEDED activation job inside backend-erp's install_state derivation (never a state, never writes `install_state`, the CHECK is unchanged); writable only via the adopt/un-adopt endpoints behind the ADMIN-only `client_services.adopt` permission; historical `installed_at` may be pre-set at adopt time only when still NULL. `ACTIVATION_EVIDENCE_*` module constants back the backend-computed `activation_evidence` field. Per-service provisioning parameters (`sp1_service_params`): `provisioning_params` (JSON NULL, `[{key, value}]`) holds this service's VALUES for the parameters its plan declares with `scope='service'` — the plan owns the declaration, the service owns only the value, and both resolve to `{{service_plan.<key>}}`. Distinct from `connection_params`, which stays free-form and is not a playbook variable source. **Cycle 10 (`ng1`/`ng2`)**: `topology_id` is **dropped**; `cpe_item_id` (FK → `inventory_item`, SET NULL, indexed, `cpe_item` relationship) and `path_changed_at` (TIMESTAMPTZ NULL, stamped on a re-parent above the CPE, cleared by a SUCCEEDED non-dry-run ACTIVATION run) replace it |
 | `ServiceSuspension` (service_suspension) | Suspension records with `SuspensionReason` |
-| `PaymentPromise` (payment_promise) | cp1 (doc 52 §4.1): a client's promise to pay one **service** by `promised_date` (`source` PORTAL/COLLECTOR/BOT, `status` OPEN/KEPT/BROKEN/CANCELLED, `reconnected`, `suspension_id` → the episode, `created_by_user_id`). Partial unique index `uq_payment_promise_open_service` (one OPEN per `client_service_id`); `ix_payment_promise_open_date (company_id, promised_date) WHERE status='OPEN'` |
+| `PaymentPromise` (payment_promise) | cp1 (doc 52 §4.1): a client's promise to pay one **service** by `promised_date` (`source` PORTAL/COLLECTOR/BOT/OFFICE (OFFICE added by `po1_promise_office_source`, 6.15.0), `status` OPEN/KEPT/BROKEN/CANCELLED, `reconnected`, `suspension_id` → the episode, `created_by_user_id`). Partial unique index `uq_payment_promise_open_service` (one OPEN per `client_service_id`); `ix_payment_promise_open_date (company_id, promised_date) WHERE status='OPEN'` |
 | `DunningRun` (dunning_run) | cp1 (doc 52 §3.3): one row per tenant per daily auto-suspension run — `mode` REPORT/ON (CHECK), `outcome` `DunningRunOutcome` OK/TRIPPED, `candidates`/`suspended`/`skipped` JSON lists |
 
 #### Service lifecycle status machine (doc 35)
@@ -53,7 +53,11 @@ non-passive node on the path has a binding for the purpose).
 
 - `PURPOSE_TO_STATUS` — the status each canonical purpose writes:
   `SUSPENSION → SUSPENDED`, `REACTIVATION → ACTIVE`, `DEPROVISION → CANCELLED`,
-  and **`ACTIVATION → None`**. `None` is deliberate: activating a service
+  **`ACTIVATION → None`** and **`CPE_SWAP → None`** (6.18.0, doc 53: replacing a
+  subscriber's CPE writes no status; `purpose_allowed_for_status` special-cases
+  it as legal **only from ACTIVE**, and it is not in `TEARDOWN_PURPOSES`).
+  The canonical purposes are `CANONICAL_PLAYBOOK_PURPOSES = (ACTIVATION,
+  SUSPENSION, REACTIVATION, DEPROVISION, CPE_SWAP)`. `None` is deliberate: activating a service
   *enqueues only*. The `PENDING_INSTALL → ACTIVE` flip is written by backend-erp's
   `recompute_install_state` once the install state reaches `INSTALLED` — i.e.
   after the provisioning job succeeds. Encoding `None` means a caller writing
