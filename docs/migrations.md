@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (114 revisions, head: **`cp1_dunning`**) — plus
+`alembic/versions/` (120 revisions, head: **`pl2_payment_link_support`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1219,6 +1219,57 @@ by `tests/test_cp1_dunning.py`; ADMIN converges via the seed pass, never
 granted to humans). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops
 tables/types/column, the role and the permission (same env.py seed-pass
 caveat as cfg3). Guard: `tests/pg/test_cp1_pg.py`.
+
+### `pl1_payment_link` (2026-10-28, columns added 2026-10-29) — models-utils 6.20.0
+
+On `sv1_service_entity` (re-parented from `po1_promise_office_source` when the branch merged develop; never ran on Railway). Additive. Creates `payment_link`: one row per online payment
+link Uplink asked of a payment gateway (today only Recurrente) for one order.
+The row only records which links are ours, for how much and how they ended;
+whether a link was paid is decided by backend-erp asking the gateway, and the
+payment itself is recorded by `PaymentService`.
+
+- FKs: `company_id` CASCADE; `client_id`, `order_id` and `payment_id` RESTRICT
+  (an order, client or payment a link points at cannot vanish); `integration_id`
+  SET NULL (the history survives a deleted integration).
+- WhatsApp notification (doc 59 §6): `wa_integration_id` UUID NULL FK
+  `integration` ON DELETE SET NULL (the WHATSAPP_BUSINESS integration the
+  client asked on), `wa_to` VARCHAR(32) NULL (the client's WhatsApp number,
+  PII), `notified_at` TIMESTAMPTZ NULL (set once the gateway answered, sent or
+  a final skip).
+- `status` is VARCHAR(16) + `ck_payment_link_status` (CREATING, PENDING, PAID,
+  EXPIRED, REVIEW, FAILED), not a native enum, so a new state is a CHECK change
+  instead of an irreversible `ALTER TYPE`.
+- Guards: `ck_payment_link_amount` (>= 500, the gateway minimum),
+  `ck_payment_link_currency` (GTQ/USD), `ck_payment_link_provider`
+  (RECURRENTE), `ck_payment_link_checks` (>= 0), `ck_payment_link_has_checkout`
+  (outside CREATING/FAILED a checkout id and url exist), `ck_payment_link_paid`
+  (PAID needs `intent_id`, `payment_id` and `paid_at`),
+  `ck_payment_link_review` (REVIEW needs `review_reason`).
+- Partial unique indexes: `uq_payment_link_active_order (order_id) WHERE status
+  IN ('CREATING', 'PENDING')` (one live link per order),
+  `uq_payment_link_checkout`, `uq_payment_link_intent` (a gateway intent pays at
+  most one link). The model declares them with `sqlite_where` too, so the
+  SQLite suites see the same partial behaviour.
+- Downgrade drops the table. Upgrade and downgrade are idempotent.
+
+Pinned by `tests/test_payment_link.py` and `tests/pg/test_pl1_pg.py`.
+
+### `pl2_payment_link_support` (2026-10-28) — models-utils 6.20.0
+
+On `pl1_payment_link`. Two pieces the online-payments cycle needs:
+
+- `user.is_system` BOOLEAN NOT NULL DEFAULT false: a machine account, such as
+  the per-company "Bot de WhatsApp" user that receives online payments.
+  `check_tier_limit` does not count it and auth-erp refuses its login. No
+  user-facing schema can set it. `ck_user_system_not_super_admin`.
+- `uploadedfileownertype` += `PAYMENT_LINK`: a transfer receipt for a payment
+  link not confirmed yet (owner_id = payment_link.id). `PAYMENT` (pm1) stays
+  for a recorded payment's evidence.
+
+Partly irreversible: downgrade drops the column and the CHECK; the enum label
+stays (Postgres cannot drop one; pm1/po1 precedent).
+
+Pinned by `tests/test_pl2_payment_link_support.py` and `tests/pg/test_pl2_pg.py`.
 
 ### Other revisions (summary only)
 

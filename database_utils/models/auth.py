@@ -186,6 +186,12 @@ class User(Base):
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
+    # pl2: a machine account, e.g. the per-company "Bot de WhatsApp" that
+    # receives online payments. Never counted against the tier's max_users
+    # (utils/tier_limits.py) and NEVER allowed to log in (auth-erp refuses it).
+    # Not on any user-facing create/update schema on purpose: only backend
+    # code creates one. ck_user_system_not_super_admin lives in the revision.
+    is_system = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     company = relationship("Company", back_populates="users")

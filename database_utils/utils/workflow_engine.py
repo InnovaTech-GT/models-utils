@@ -53,6 +53,8 @@ KNOWN_RESOURCE_TYPES = frozenset({
     "order", "client", "task", "invoice", "order_item",
     "service_plan", "client_service", "service_suspension",
     "inventory_item", "provisioning_job",
+    # pl1: trigger-only (READ_ONLY_RESOURCE_TYPES below).
+    "payment_link",
 })
 
 
@@ -67,6 +69,7 @@ def _get_model_map():
             ServicePlan, ClientService, ServiceSuspension,
             InventoryItem, ProvisioningJob,
         )
+        from database_utils.models.payment_link import PaymentLink
         _MODEL_MAP = {
             "order": Order,
             "client": Client,
@@ -81,6 +84,8 @@ def _get_model_map():
             # 'network_node' REMOVED (Cycle 2 D6, revision c2d_graph_removal —
             # the free-form network graph no longer exists).
             "provisioning_job": ProvisioningJob,
+            # pl1: online payment links. Trigger-only: see READ_ONLY_RESOURCE_TYPES.
+            "payment_link": PaymentLink,
         }
         assert set(_MODEL_MAP) == set(KNOWN_RESOURCE_TYPES), (
             "KNOWN_RESOURCE_TYPES drifted from _get_model_map() — update both"
@@ -465,6 +470,21 @@ CREATE_ENTITY_FIELD_DENYLIST: Dict[str, frozenset] = {
     "service_plan": frozenset({"migration_source"}),
 }
 
+# Resources an automation may TRIGGER on but never write or create, whatever
+# the field (pl1). A payment link's state is decided by backend-erp asking the
+# payment gateway and recorded through PaymentService; letting UPDATE_FIELD
+# set status=PAID or CREATE_ENTITY forge a link would bypass all of it. Whole
+# resource, not a field list, so a column added later is covered too.
+READ_ONLY_RESOURCE_TYPES: frozenset = frozenset({"payment_link"})
+
+
+def _refuse_read_only(action: str, resource_type: str) -> None:
+    if resource_type in READ_ONLY_RESOURCE_TYPES:
+        raise ValueError(
+            f"{action} may not write '{resource_type}': it is trigger-only; its state "
+            f"is decided by backend-erp with the payment gateway and PaymentService"
+        )
+
 
 def _execute_update_field(
     db: Session,
@@ -477,6 +497,8 @@ def _execute_update_field(
     resource_type = config.get("resource_type")
     if not resource_type or resource_type not in model_map:
         raise ValueError(f"Unknown resource_type: {resource_type}")
+
+    _refuse_read_only("UPDATE_FIELD", resource_type)
 
     model_class = model_map[resource_type]
 
@@ -565,6 +587,8 @@ def _execute_create_entity(
     resource_type = config.get("resource_type")
     if not resource_type or resource_type not in model_map:
         raise ValueError(f"Unknown resource_type: {resource_type}")
+
+    _refuse_read_only("CREATE_ENTITY", resource_type)
 
     if resource_type in CREATE_ENTITY_FORBIDDEN_TYPES:
         raise ValueError(
