@@ -1,5 +1,5 @@
 # schemas/tier.py
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
@@ -13,6 +13,10 @@ class TierBase(BaseModel):
     features: Optional[dict] = None
     modules: Optional[list] = None  # ["core", "admin", "management", "automations"]
     is_active: bool = True
+    # Usage pricing (doc 61); NULL = flat tier.
+    included_clients: Optional[int] = Field(None, ge=0)
+    extra_client_price: Optional[float] = Field(None, ge=0)
+    quote_above_clients: Optional[int] = Field(None, ge=0)
 
 
 class TierCreate(TierBase):
@@ -28,6 +32,9 @@ class TierUpdate(BaseModel):
     features: Optional[dict] = None
     modules: Optional[list] = None
     is_active: Optional[bool] = None
+    included_clients: Optional[int] = Field(None, ge=0)
+    extra_client_price: Optional[float] = Field(None, ge=0)
+    quote_above_clients: Optional[int] = Field(None, ge=0)
 
 
 class TierOut(TierBase):
@@ -51,6 +58,9 @@ class TierPublic(BaseModel):
     modules: Optional[list] = None
     features: Optional[dict] = None
     is_active: bool
+    included_clients: Optional[int] = None
+    extra_client_price: Optional[float] = None
+    quote_above_clients: Optional[int] = None
     # True when the tier can be bought via hosted Recurrente checkout
     # (recurrente_price_id set) — the endpoint stamps it; never the raw id.
     purchasable: bool = False

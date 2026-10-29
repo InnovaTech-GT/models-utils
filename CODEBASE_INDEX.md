@@ -94,6 +94,8 @@ backend-computed `activation_evidence`) and the `ClientServiceAdoptIn` /
 from `recurrente_price_id` presence — never exposes the raw price id).
 **Billing exceptions** (sb1, doc 60): `SubscriptionOut` + `discount_percent`/`discount_until`;
 new `SubscriptionExceptionUpdate`; `BillingInvoiceOut` + `notes`.
+**Usage pricing** (up1, doc 61): tier pricing fields, `SubscriptionOut` + peak/custom price,
+`SubscriptionWithTier` + `billable_clients`/`estimate_total`, invoice period + `billed_clients`.
 **Transport axis** (`tr1_transport_axis`, 2026-09-27) deletes `network_access` and extends `provisioning_settings`: `Update` gains `dial_target`/`proxy_kind` (validated against `DIAL_TARGETS`/`PROXY_KINDS`), `proxy_address`, `gateway_host`, `acs_auth_required`, plus a `model_validator` mirroring what it can see of the DB CHECKs; `Out` gains those six plus `acs_base_url` and the two `cwmp_*_credential_id` pointers. `acs_base_url` is on `Out` ONLY — the router applies `Update` with a blanket `setattr` loop, so keeping the field off the write schema is what makes read-only structural rather than guard-dependent. `inventory`'s `nat_port` (`Field(ge=1, le=65535)`, the pattern `mgmt_port` also uses, nat1 2026-08-13) is unchanged and is still the gateway scenarios' per-device operand. See [docs/network-models.md](docs/network-models.md).
 **Auth overhaul** (no migration): `requests.SignupCompanyRequest` flattened to
 `{company_name, name, email, password (min 8), locale}` and `SignupUserRequest`

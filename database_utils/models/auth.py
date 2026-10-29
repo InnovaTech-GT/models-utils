@@ -53,6 +53,12 @@ class Tier(Base):
     recurrente_product_id = Column(String, nullable=True)
     recurrente_price_id = Column(String, nullable=True)          # monthly price
     recurrente_price_yearly_id = Column(String, nullable=True)   # yearly price
+    # Usage pricing (doc 61): price covers included_clients; each billable
+    # client above it costs extra_client_price (GTQ). NULL = flat tier.
+    # quote_above_clients is informational (superadmin "needs quote").
+    included_clients = Column(Integer, nullable=True)
+    extra_client_price = Column(Float, nullable=True)
+    quote_above_clients = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)  # Can be assigned to new companies
 
     # Relationships
@@ -453,6 +459,17 @@ class Subscription(Base):
     discount_percent = Column(Integer, nullable=False, default=0, server_default="0")
     discount_until = Column(DateTime(timezone=True), nullable=True)
     billing_note = Column(Text, nullable=True)
+    # Doc 61: highest billable client count (clients with an ACTIVE service)
+    # seen this period, sampled nightly; billed in arrears when the period ends.
+    period_peak_clients = Column(Integer, nullable=False, default=0, server_default="0")
+    # Quoted monthly price (GTQ) replacing the tier formula; the discount still applies.
+    custom_monthly_price = Column(Float, nullable=True)
+    # Doc 61 §7: per-tenant limit overrides ({"max_users": 80, ...}) winning
+    # over tier.features (utils/tier_limits.effective_limit). Superadmin-set.
+    limit_overrides = Column(JSON, nullable=True)
+    # Doc 61 §8: card saved at signup (Recurrente setup checkout); every
+    # monthly invoice is charged to it (POST /one_time_payments).
+    recurrente_payment_method_id = Column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint("discount_percent >= 0 AND discount_percent <= 100", name="ck_subscription_discount_percent"),
@@ -536,6 +553,11 @@ class BillingInvoice(Base):
     # Additional details
     billing_reason = Column(String, nullable=True)  # "subscription_cycle", "subscription_create", "manual"
     notes = Column(Text, nullable=True)
+    # Doc 61: the period this invoice bills (NULL on pre-61 invoices) and the
+    # client peak it was priced at.
+    period_start = Column(DateTime(timezone=True), nullable=True)
+    period_end = Column(DateTime(timezone=True), nullable=True)
+    billed_clients = Column(Integer, nullable=True)
 
     # Relationships
     subscription = relationship("Subscription", back_populates="invoices")
