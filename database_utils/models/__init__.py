@@ -48,6 +48,8 @@ from .crm import (
 )
 
 from .isp import (
+    Service,
+    service_device_category,
     ServicePlan,
     ServicePlanType,
     CatalogKind,
@@ -83,6 +85,7 @@ from .isp import (
     PURPOSE_SUSPENSION,
     PURPOSE_REACTIVATION,
     PURPOSE_DEPROVISION,
+    PURPOSE_CPE_SWAP,
     CANONICAL_PLAYBOOK_PURPOSES,
     PLAYBOOK_PURPOSE_PATTERN,
     PURPOSE_TO_STATUS,
@@ -170,6 +173,8 @@ __all__ = [
     "CashMovement",
     "TaskCloseout",
     # ISP
+    "Service",
+    "service_device_category",
     "ServicePlan",
     "ServicePlanType",
     "CatalogKind",
@@ -205,6 +210,7 @@ __all__ = [
     "PURPOSE_SUSPENSION",
     "PURPOSE_REACTIVATION",
     "PURPOSE_DEPROVISION",
+    "PURPOSE_CPE_SWAP",
     "CANONICAL_PLAYBOOK_PURPOSES",
     "PLAYBOOK_PURPOSE_PATTERN",
     "PURPOSE_TO_STATUS",

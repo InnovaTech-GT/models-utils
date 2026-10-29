@@ -42,7 +42,7 @@ by backend-erp (cron-erp reaches them only through backend-erp's HTTP API).
 | Model | Purpose |
 |-------|---------|
 | `WhatsAppBotConfig` (whatsapp_bot_config) | wb1: the WhatsApp bot (Nova) menu, one row per company (`uq_whatsapp_bot_config_company`). `enabled` (false = the bot uses its built-in menu), `welcome_text`, `menu_button_text` (default `Ver opciones`), `options` JSON validated on every write by `schemas.whatsapp_bot` ([schemas.md](schemas.md)); the gateway reads it through backend-erp's whatsapp-config endpoint |
-| `PaymentLink` (payment_link) | pl1: one online payment link asked of a gateway (today only Recurrente) for one order (`models/payment_link.py`). `status` CREATING/PENDING/PAID/EXPIRED/REVIEW/FAILED (`PaymentLinkStatus`; `ACTIVE_PAYMENT_LINK_STATUSES` = CREATING, PENDING), `amount_cents`, `currency`, `payment_methods`, `expires_at`, `checkout_id`/`checkout_url`/`live_mode`, `last_checked_at`/`checks`, `intent_id` (unique), `payment_id` → payment, `paid_at`, `review_reason`. One live link per order. Never the source of truth for "paid": backend-erp confirms with the gateway and records through `PaymentService` |
+| `PaymentLink` (payment_link) | pl1: one online payment link asked of a gateway (today only Recurrente) for one order (`models/payment_link.py`). `status` CREATING/PENDING/PAID/EXPIRED/REVIEW/FAILED (`PaymentLinkStatus`; `ACTIVE_PAYMENT_LINK_STATUSES` = CREATING, PENDING), `amount_cents`, `currency`, `payment_methods`, `expires_at`, `checkout_id`/`checkout_url`/`live_mode`, `last_checked_at`/`checks`, `intent_id` (unique), `payment_id` → payment, `paid_at`, `review_reason`, `wa_integration_id` (FK integration SET NULL) / `wa_to` (VARCHAR(32), the client's WhatsApp number, PII: never in `PaymentLinkOut` nor the workflow engine) / `notified_at` (doc 59 §6: where and whether the client was told the payment landed). One live link per order. Never the source of truth for "paid": backend-erp confirms with the gateway and records through `PaymentService` |
 
 ## Connections to Other Components
 
@@ -66,7 +66,7 @@ by backend-erp (cron-erp reaches them only through backend-erp's HTTP API).
 - Enums: `OrderStatus`, `OrderType`, `PaymentStatus`, `PaymentKind`,
   `PaymentMethodType`, `RecurrenceEnum`, `RecurringOrderStatus`,
   `ServiceAvailability`, `CustomFieldType` (TEXT/NUMBER/EMAIL/PHONE/URL/DATE/BOOLEAN),
-  `TaskJobKind`, `TaskLinkedObjectType` (CLIENT/ORDER/CLIENT_SERVICE/INVENTORY_ITEM),
+  `TaskJobKind` (INSTALL/FAULT/CHANGE/REMOVE/SUSPEND/MAINTENANCE/RELOCATION/RECONNECT — RECONNECT since pa1, doc 56), `TaskLinkedObjectType` (CLIENT/ORDER/CLIENT_SERVICE/INVENTORY_ITEM),
   `IntegrationAuthType`, `UploadedFileOwnerType`, `UploadedFileKind` (PHOTO/SIGNATURE),
   `CollectionRouteStatus`, `RouteStopStatus`, `CollectionVisitOutcome`,
   `CollectionVisitCode`, `CashSessionStatus`

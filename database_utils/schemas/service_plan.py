@@ -5,7 +5,7 @@ Cycle 2 D1/D2/D5: ServicePlan absorbs Product (kind/stock) and gains
 is a dedicated marker column (doc 18 amendment 1/2) and is NEVER exposed on
 any schema here — it is internal audit state, not user-editable data.
 """
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, List, Literal, Optional
 from uuid import UUID
 from datetime import datetime
@@ -75,6 +75,10 @@ class ServicePlanBase(BaseModel):
     # derivation). Absorbed-from-Product: stock (NULL = not stock-tracked).
     kind: CatalogKind = CatalogKind.SERVICE
     stock: Optional[int] = None
+    # sv1 (doc 58): the owning service. Required for kind=SERVICE (the API
+    # answers 422 SERVICE_REQUIRED); NULL for INSTALLATION/HARDWARE plans.
+    # network_automation / allowed CPEs live on the service now.
+    service_id: Optional[UUID] = None
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
@@ -101,6 +105,7 @@ class ServicePlanUpdate(BaseModel):
     provisioning_params: Optional[List[ProvisioningParam]] = None
     kind: Optional[CatalogKind] = None
     stock: Optional[int] = None
+    service_id: Optional[UUID] = None
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
@@ -114,5 +119,41 @@ class ServicePlanOut(ServicePlanBase):
     created_at: datetime
     # Column since Cycle 1, never exposed until now (integer-cents money).
     price_cents: Optional[int] = None
+    # sv1: read-only, derived from the service via ServicePlan properties
+    # (True / [] when the plan has no service).
+    network_automation: bool = True
+    allowed_device_category_ids: List[UUID] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ServiceBase(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    service_type: ServicePlanType = ServicePlanType.FIBER
+    # doc 56/58: a new service is manual until the office opts in.
+    network_automation: bool = False
+    # EDGE-tier categories only (API: 422 CATEGORY_NOT_CPE).
+    allowed_device_category_ids: List[UUID] = []
+
+
+class ServiceCreate(ServiceBase):
+    pass
+
+
+class ServiceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    service_type: Optional[ServicePlanType] = None
+    network_automation: Optional[bool] = None
+    allowed_device_category_ids: Optional[List[UUID]] = None
+
+
+class ServiceOut(ServiceBase):
+    id: UUID
+    company_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    is_active: bool  # derived: any plan active
+    plan_count: int
+    plans: List[ServicePlanOut] = []
 
     model_config = ConfigDict(from_attributes=True)

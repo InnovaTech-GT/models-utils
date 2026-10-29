@@ -20,9 +20,9 @@ difference is not cosmetic:
   so ONE run executes SEVERAL playbooks, one per configured device.
 - Path length is variable, so positional variables are gone (see below).
 
-Ordering is LEAF -> ROOT everywhere (doc 35 §3.1): devices are configured from
-the subscriber outward, CPE first and core last, for every purpose, in the
-executor and in the UI alike.
+`path` and `steps` are ordered LEAF -> ROOT (doc 35 §3.1). The run engine
+re-orders per purpose: ACTIVATION, DEPROVISION and CPE_SWAP configure root ->
+leaf, every other purpose leaf -> root (provisioning_runs.TOP_DOWN_PURPOSES).
 
 THE VARIABLE NAMESPACE (doc 35 §4). Positional namespaces are RETIRED with no
 compatibility shim: `chain[n]`, `edge_devices[n]`, `core_devices[n]` and the
@@ -31,6 +31,8 @@ playbook that still contains them.
 
   device.<attr>              the device THIS playbook is running on
   cpe.<attr>                 the subscriber edge device that triggered the run
+  old_cpe.<attr>             CPE_SWAP only: the unit the CPE replaced, read
+                             from the newest swap REPLACED event (doc 53 §8.3)
   path.<category_key>.<attr> any other node on THIS RUN's path, named by its
                              device-category role; nearest-to-the-CPE wins if a
                              role repeats
@@ -79,8 +81,11 @@ from sqlalchemy.orm import Session
 
 from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
+    PURPOSE_CPE_SWAP,
     ClientService,
     DeviceTypePlaybook,
+    EquipmentEvent,
+    EquipmentEventType,
     InventoryItem,
     InventoryItemPlaybook,
     InventoryItemPort,
@@ -315,7 +320,7 @@ def resolve_playbook_for(
 _FILTER_SUFFIX = r'(?:\s*\|[^{}\n]*)?'
 
 _DEVICE_VARIABLE_PATTERN = re.compile(
-    r'\{\{\s*(?:device|cpe|path\.[a-z][a-z0-9_]*)\.[a-z][a-z0-9_]*'
+    r'\{\{\s*(?:device|cpe|old_cpe|path\.[a-z][a-z0-9_]*)\.[a-z][a-z0-9_]*'
     + _FILTER_SUFFIX + r'\s*\}\}'
 )
 
@@ -359,7 +364,7 @@ def build_device_frame(node: ResolvedNode, prefix: str) -> Dict[str, Any]:
         if getattr(node, attr) is not None
     }
 
-_DEVICE_NAMESPACES = ("device", "cpe", "path")
+_DEVICE_NAMESPACES = ("device", "cpe", "old_cpe", "path")
 
 
 def _computed_names(definition: Any) -> Optional[set]:
@@ -592,15 +597,35 @@ class _Explainer:
         }
 
 
+def latest_swap_event(db: Session, client_service: Any) -> Optional[EquipmentEvent]:
+    """The newest swap REPLACED event whose new unit is the service's CURRENT
+    CPE (doc 53 §8.4, DC20), or None. Only an event flagged
+    `event_metadata.swap` counts: a manual REPLACED feeding old_cpe.* would
+    make a CPE_SWAP run delete a live unit."""
+    return db.execute(
+        sa.select(EquipmentEvent)
+        .where(
+            EquipmentEvent.company_id == client_service.company_id,
+            EquipmentEvent.event_type == EquipmentEventType.REPLACED,
+            EquipmentEvent.client_service_id == client_service.id,
+            EquipmentEvent.related_item_id == client_service.cpe_item_id,
+            EquipmentEvent.event_metadata["swap"].as_boolean().is_(True),
+        )
+        .order_by(EquipmentEvent.created_at.desc(), EquipmentEvent.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def _last_activation_frames(db: Session, client_service: Any) -> Optional[Dict[str, Any]]:
-    """Frames of the service's last SUCCEEDED, non-dry ACTIVATION run — the
-    port facts the devices were actually configured with."""
+    """Frames of the service's last SUCCEEDED, non-dry ACTIVATION or CPE_SWAP
+    run — the port facts the devices were actually configured with (a swap
+    re-provisions the path, so later runs compare against it, doc 53 §8.5)."""
     return db.execute(
         sa.select(ProvisioningRun.frames)
         .where(
             ProvisioningRun.company_id == client_service.company_id,
             ProvisioningRun.client_service_id == client_service.id,
-            ProvisioningRun.purpose == PURPOSE_ACTIVATION,
+            ProvisioningRun.purpose.in_((PURPOSE_ACTIVATION, PURPOSE_CPE_SWAP)),
             ProvisioningRun.dry_run.is_(False),
             ProvisioningRun.status == ProvisioningJobStatus.SUCCEEDED,
         )
@@ -698,6 +723,8 @@ def resolve_provisioning(
     db: Session,
     client_service: ClientService,
     purpose: str = PURPOSE_ACTIVATION,
+    *,
+    dry_run: bool = False,
 ) -> ResolvedProvisioning:
     """Resolve a service's configuration path, its per-node playbooks and its
     variable frames — or raise ResolutionError.
@@ -715,6 +742,11 @@ def resolve_provisioning(
        renders must have a value, and (other than for ACTIVATION) every port
        fact it reads must match the last live activation — else
        RESOLUTION_FAILED with the whole list, before any device is touched
+
+    For CPE_SWAP the shared frame also carries old_cpe.* (doc 53 §8.4) from
+    latest_swap_event; with no such event a dry run stands the current CPE in
+    for the old one, and a live run raises RESOLUTION_FAILED / OLD_CPE_NOT_SET.
+    `dry_run` matters for nothing else.
 
     Step 6 preserves the pre-existing fatality posture exactly: ACTIVATION
     fails visibly (a half-provisioned install is worse than a refused one),
@@ -859,6 +891,23 @@ def resolve_provisioning(
     # cpe.* — the leaf that triggered the run. Always path[0]; ordering is
     # leaf -> root by contract, not by luck.
     shared.update(build_device_frame(path[0], "cpe"))
+
+    # old_cpe.* — CPE_SWAP only (doc 53 §8.3/8.4). No port keys: the port is
+    # the same, read it from path.*.
+    if purpose == PURPOSE_CPE_SWAP:
+        swap = latest_swap_event(db, client_service)
+        if swap is not None:
+            shared.update(build_device_frame(
+                _node_from_item(db, swap.item, 0, purpose), "old_cpe"))
+        elif dry_run:
+            shared.update(build_device_frame(path[0], "old_cpe"))  # stand-in (DC7)
+        else:
+            raise ResolutionError(
+                "RESOLUTION_FAILED",
+                "No swap recorded for this service's CPE",
+                errors=[{"code": "OLD_CPE_NOT_SET",
+                         "detail": "No swap recorded for this service's CPE"}],
+            )
 
     # path.<category_key>.* — nearest-to-the-CPE wins. Because `path` is
     # leaf -> root, taking the FIRST occurrence of each category IS "nearest",

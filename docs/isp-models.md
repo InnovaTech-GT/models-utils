@@ -29,7 +29,8 @@ a provisioning run spans several devices. The structural detail lives in
 
 | Model | Purpose |
 |---|---|
-| `ServicePlan` (service_plan) | Merged catalog item. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour |
+| `Service` (service) | sv1 (doc 58): what the tenant sells. `name` (unique per company), `service_type` (`ServicePlanType`), `network_automation` (default false), allowed CPE categories (`service_device_category`). Derived `is_active` (any plan active), `plan_count`. Owns its `plans`. |
+| `ServicePlan` (service_plan) | Merged catalog item. **sv1 (doc 58):** `service_id` (NULL only for non-SERVICE kinds); `network_automation` / `allowed_device_category_ids` are read-only properties from the service (True / [] without one); `service_group` is a deprecated copy of the service name. `ServicePlanType`; `CatalogKind` is the **hybrid kind** introduced when the legacy CRM `Product` was absorbed by the Cycle 2 catalog merge (revision `c2a_catalog_merge`). `provisioning_params` (JSON) holds the plan's playbook parameters as `[{key, value, description, scope}]` — `scope` is `plan` (one shared value) or `service` (declared here, valued on each `ClientService`); a row without `scope` is plan-scoped, so pre-feature rows keep their behaviour. `network_automation` (pa1, doc 56; NOT NULL, `server_default true` — pre-pa1 plans stay automated, new plans default false at the schema): false = suspend/reconnect/cancel become technician work orders instead of provisioning. `allowed_device_categories` (association table `service_plan_device_category`, plan CASCADE / category RESTRICT, no company_id because `DeviceCategory` is global; pa1 backfilled ONU on every SERVICE plan) = the CPE categories installable on the plan; `allowed_device_category_ids` is a read-only property serialized by `ServicePlanOut` |
 
 ### Subscriber services
 
@@ -53,7 +54,11 @@ non-passive node on the path has a binding for the purpose).
 
 - `PURPOSE_TO_STATUS` — the status each canonical purpose writes:
   `SUSPENSION → SUSPENDED`, `REACTIVATION → ACTIVE`, `DEPROVISION → CANCELLED`,
-  and **`ACTIVATION → None`**. `None` is deliberate: activating a service
+  **`ACTIVATION → None`** and **`CPE_SWAP → None`** (6.18.0, doc 53: replacing a
+  subscriber's CPE writes no status; `purpose_allowed_for_status` special-cases
+  it as legal **only from ACTIVE**, and it is not in `TEARDOWN_PURPOSES`).
+  The canonical purposes are `CANONICAL_PLAYBOOK_PURPOSES = (ACTIVATION,
+  SUSPENSION, REACTIVATION, DEPROVISION, CPE_SWAP)`. `None` is deliberate: activating a service
   *enqueues only*. The `PENDING_INSTALL → ACTIVE` flip is written by backend-erp's
   `recompute_install_state` once the install state reaches `INSTALLED` — i.e.
   after the provisioning job succeeds. Encoding `None` means a caller writing

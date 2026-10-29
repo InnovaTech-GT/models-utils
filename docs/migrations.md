@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (117 revisions, head: **`pl2_payment_link_support`**) — plus
+`alembic/versions/` (120 revisions, head: **`pl2_payment_link_support`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1220,9 +1220,9 @@ granted to humans). `lock_timeout 5s`, `IF [NOT] EXISTS`. Downgrade drops
 tables/types/column, the role and the permission (same env.py seed-pass
 caveat as cfg3). Guard: `tests/pg/test_cp1_pg.py`.
 
-### `pl1_payment_link` (2026-10-28) — models-utils 6.16.0
+### `pl1_payment_link` (2026-10-28, columns added 2026-10-29) — models-utils 6.20.0
 
-On `po1_promise_office_source`. Additive. Creates `payment_link`: one row per online payment
+On `sv1_service_entity` (re-parented from `po1_promise_office_source` when the branch merged develop; never ran on Railway). Additive. Creates `payment_link`: one row per online payment
 link Uplink asked of a payment gateway (today only Recurrente) for one order.
 The row only records which links are ours, for how much and how they ended;
 whether a link was paid is decided by backend-erp asking the gateway, and the
@@ -1231,6 +1231,11 @@ payment itself is recorded by `PaymentService`.
 - FKs: `company_id` CASCADE; `client_id`, `order_id` and `payment_id` RESTRICT
   (an order, client or payment a link points at cannot vanish); `integration_id`
   SET NULL (the history survives a deleted integration).
+- WhatsApp notification (doc 59 §6): `wa_integration_id` UUID NULL FK
+  `integration` ON DELETE SET NULL (the WHATSAPP_BUSINESS integration the
+  client asked on), `wa_to` VARCHAR(32) NULL (the client's WhatsApp number,
+  PII), `notified_at` TIMESTAMPTZ NULL (set once the gateway answered, sent or
+  a final skip).
 - `status` is VARCHAR(16) + `ck_payment_link_status` (CREATING, PENDING, PAID,
   EXPIRED, REVIEW, FAILED), not a native enum, so a new state is a CHECK change
   instead of an irreversible `ALTER TYPE`.
@@ -1249,7 +1254,7 @@ payment itself is recorded by `PaymentService`.
 
 Pinned by `tests/test_payment_link.py` and `tests/pg/test_pl1_pg.py`.
 
-### `pl2_payment_link_support` (2026-10-28) — models-utils 6.16.0
+### `pl2_payment_link_support` (2026-10-28) — models-utils 6.20.0
 
 On `pl1_payment_link`. Two pieces the online-payments cycle needs:
 
@@ -1319,3 +1324,27 @@ verification; their file names describe them.
 
 On `cp1_dunning`. Additive: `ALTER TYPE paymentpromisesource ADD VALUE IF NOT EXISTS 'OFFICE'`
 inside `autocommit_block()`. Downgrade is a no-op (PostgreSQL cannot drop an enum value).
+
+## pa1_plan_network_automation (6.16.0)
+
+On `po1_promise_office_source`. Doc 56, additive:
+- `taskjobkind += RECONNECT` (autocommit block, first; nothing in the file names it).
+- `service_plan.network_automation BOOLEAN NOT NULL DEFAULT true` — existing plans keep automation.
+- `service_plan_device_category (service_plan_id CASCADE, device_category_id RESTRICT, PK both)`,
+  backfilled `SERVICE` plans × `device_category.key = 'ONU'` (`ON CONFLICT DO NOTHING`).
+- permission `client_services.cancel` + ADMIN grant (`CANCEL_PERMISSION`, pinned against `isp_seed`).
+
+Downgrade drops the table and the column; the enum label and the permission row stay.
+Tests: `tests/test_plan_network_automation.py`, `tests/pg/test_pa1_pg.py`.
+
+## pa2_micronode_category (6.16.1)
+
+Doc 56 §2. Inserts the platform-global device category `MICRONODE` ("Micronodo", tier EDGE, `is_passive` true,
+`is_active` true, icon `box`) with `ON CONFLICT (key) DO NOTHING`; `isp_seed.DEVICE_CATEGORIES` carries the same row
+(pinned by `tests/test_plan_network_automation.py`). It is the allowed CPE of a Cable GPON plan: tracked in inventory and
+recovered on cancel, never configured. Tenants create their own micronode product (device type) with it; backend-erp's
+default products do not include it. Downgrade deletes the row only while no device type or plan references it. Additive.
+
+## sv1_service_entity (6.19.0)
+
+Doc 58. Tables `service` (unique `(company_id, name)`, `service_type` reuses PG enum `serviceplantype`) and `service_device_category`; `service_plan.service_id` (NULL FK RESTRICT, indexed). Backfill: one service per (company, `service_group`) over SERVICE-kind plans (blank group -> Internet/Cable/Inalámbrico/DSL/Otro), type = mode of `plan_type`, `network_automation` = `bool_or`, categories = union of `service_plan_device_category`; plans get `service_id` and `service_group` = name; `plan_type` untouched. Idempotent (only plans with `service_id IS NULL`), asserts no SERVICE plan is left without a service. Deprecated and kept: `service_plan.network_automation`, `service_plan_device_category`, `service_plan.service_group`. Downgrade drops the FK column and both tables. Tests: `tests/test_service_entity.py`, `tests/pg/test_sv1_pg.py`.

@@ -56,7 +56,7 @@ matters when reading `__init__.py`:
 - `Out` schemas use `from_attributes=True` for ORM compatibility
 - Sensitive fields are excluded from `Out` schemas (e.g. `password_hash`);
   integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
-  `api_key`/`token`/`password`/`app_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks)
+  `api_key`/`token`/`password`/`app_secret`/`webhook_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks; `webhook_secret` = the Recurrente webhook signing secret, server-set by backend-erp)
 - `integration` (fg1): `IntegrationCreate` gains `provider:
   Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
@@ -375,7 +375,9 @@ any job endpoint; the stored log keeps the value (later children render it).
   `InventoryItemBase`/`Create` (backend-erp's `create_item` does
   `InventoryItem(**item_in.dict())`, so an explicit `None` would be written as
   NULL) nor on `InventoryItemUpdate` (xlsx is the only edit path).
-- `InventoryReceiveIn` — `device_type_id`, `warehouse_id`, `serials` (1..100),
+- `InventoryReceiveIn` — `device_type_id`, exactly one of `warehouse_id?` /
+  `custodian_user_id?` (enforced by backend-erp, not the schema; doc 55),
+  `serials` (1..100),
   `condition` (default NEW), `received_at?` (naive → America/Guatemala via
   `make_aware_gt`), `purchase_date?`, `cost_cents?` (≥0, per unit),
   `supplier?`/`reference?` (≤120), `notes?`, `receipt_id?` (client-generated
@@ -436,12 +438,12 @@ frontend-erp:
 Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
 
-### Payment links (6.16.0, revision `pl1_payment_link`)
+### Payment links (6.20.0, revision `pl1_payment_link`)
 
 `schemas/payment_link.py`:
 
-- `RecurrenteSettings` — the non-secret settings of a `RECURRENTE` integration, stored in its `credentials` next to `header_name` (`X-SECRET-KEY`) and `api_key` (masked by `IntegrationOut.from_orm_masked`, it is in `SENSITIVE_KEYS`). `payment_methods`: a non-empty list without duplicates of `bank_transfer` / `card`, default `["bank_transfer"]` (the company chooses what it accepts); `link_hours` 1..720, default 120 (five days, the window the gateway gives to match a transfer by hand). Unknown keys refused.
-- `PaymentLinkOut` — the office view of a `payment_link` row; nothing secret.
+- `RecurrenteSettings` — the non-secret settings of a `RECURRENTE` integration, stored in its `credentials` next to `header_name` (`X-SECRET-KEY`) and `api_key` (masked by `IntegrationOut.from_orm_masked`, it is in `SENSITIVE_KEYS`). `payment_methods`: a non-empty list without duplicates of `bank_transfer` / `card`, default `["bank_transfer", "card"]` (founder Q3, doc 59; the company chooses what it accepts). backend-erp also stores the server-set `webhook_endpoint_id` and `webhook_secret` (masked) there; clients never set them; `link_hours` 1..720, default 120 (five days, the window the gateway gives to match a transfer by hand). Unknown keys refused.
+- `PaymentLinkOut` — the office view of a `payment_link` row; nothing secret. Carries `notified_at`; never `wa_to` (PII) or `wa_integration_id`.
 
 Pinned by `tests/test_payment_link.py`.
 
