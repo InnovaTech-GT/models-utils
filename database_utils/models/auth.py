@@ -464,6 +464,12 @@ class Subscription(Base):
     period_peak_clients = Column(Integer, nullable=False, default=0, server_default="0")
     # Quoted monthly price (GTQ) replacing the tier formula; the discount still applies.
     custom_monthly_price = Column(Float, nullable=True)
+    # Doc 61 §7: per-tenant limit overrides ({"max_users": 80, ...}) winning
+    # over tier.features (utils/tier_limits.effective_limit). Superadmin-set.
+    limit_overrides = Column(JSON, nullable=True)
+    # Doc 61 §8: card saved at signup (Recurrente setup checkout); every
+    # monthly invoice is charged to it (POST /one_time_payments).
+    recurrente_payment_method_id = Column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint("discount_percent >= 0 AND discount_percent <= 100", name="ck_subscription_discount_percent"),

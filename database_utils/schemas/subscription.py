@@ -53,6 +53,9 @@ class SubscriptionWithTier(SubscriptionOut):
     tier_quote_above_clients: Optional[int] = None
     active_clients: Optional[int] = None
     estimate_total: Optional[int] = None  # cents, this period at its peak so far
+    # Doc 61 §7/§8: FULL | READ_ONLY | LOCKED, and whether a card is on file.
+    billing_access: Optional[str] = None
+    has_card: bool = False
 
 
 class SubscriptionExceptionUpdate(BaseModel):
@@ -63,5 +66,7 @@ class SubscriptionExceptionUpdate(BaseModel):
     billing_note: Optional[str] = Field(None, max_length=500)
     # Doc 61: quoted monthly price (GTQ) replacing the formula; null clears it.
     custom_monthly_price: Optional[float] = Field(None, ge=0)
+    # Doc 61 §7: per-tenant limit overrides, e.g. {"max_users": 80}; null clears.
+    limit_overrides: Optional[dict] = None
     # INCOMPLETE/CANCELED/PAST_DUE -> ACTIVE on MANUAL billing, period starting now.
     activate_manual: bool = False

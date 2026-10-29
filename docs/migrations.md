@@ -1363,9 +1363,11 @@ upgrade → downgrade → upgrade on a throwaway Postgres 16.
 
 Doc 61 (usage-based pricing), parent `sb1_billing_exceptions`. Columns `tier.included_clients`,
 `tier.extra_client_price`, `tier.quote_above_clients`, `subscription.period_peak_clients` (int NOT
-NULL server_default 0), `subscription.custom_monthly_price`, `billing_invoice.period_start`,
+NULL server_default 0), `subscription.custom_monthly_price`, `subscription.limit_overrides` (JSON),
+`subscription.recurrente_payment_method_id`, `billing_invoice.period_start`,
 `billing_invoice.period_end`, `billing_invoice.billed_clients`. **Data (one-way):** insert tier
-`Uplink` (800 / 1000 / 0.80 / 5000, MONTHLY, all modules, caps −1) when absent (re-sets its pricing
+`Uplink` (800 / 1000 / 0.80 / 5000, MONTHLY, all modules; features `max_users` 50,
+`max_concurrent_runs` 5, `client_cap_min` 1100, `client_cap_ratio` 1.1, other caps −1) when absent (re-sets its pricing
 columns after a downgrade), every other tier `is_active=false`, every `company.tier_id` and
 `subscription.tier_id` → Uplink, subscriptions `billing_cycle='MONTHLY'`. Downgrade drops the columns
 only. Rehearsed upgrade → downgrade → upgrade on a throwaway Postgres 16.

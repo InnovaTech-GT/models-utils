@@ -1,11 +1,13 @@
 """Usage-based pricing: one plan priced by active clients (doc 61).
 
 Columns: tier.included_clients / extra_client_price / quote_above_clients,
-subscription.period_peak_clients / custom_monthly_price, billing_invoice
+subscription.period_peak_clients / custom_monthly_price / limit_overrides /
+recurrente_payment_method_id, billing_invoice
 period_start / period_end / billed_clients.
 
 Data (one-way): insert tier "Uplink" (Q800 incl. 1,000 clients, Q0.80 per
-extra client, quote above 5,000, monthly, every module, no resource caps),
+extra client, quote above 5,000, monthly, every module; hard caps 50 users,
+5 concurrent runs, clients <= max(1,100, 110% of billable)),
 deactivate every other tier, move every company and subscription onto it and
 force subscriptions to MONTHLY. Downgrade drops the columns only; the tier
 move is not reverted (old tiers stay, inactive).
@@ -27,7 +29,9 @@ depends_on: Union[str, Sequence[str], None] = None
 TIER_NAME = 'Uplink'
 ALL_MODULES = ["core", "admin", "management", "automations",
                "inventory", "topologies", "provisioning"]
-FEATURES = {"max_users": -1, "max_products": -1, "max_clients": -1, "support": "Email"}
+# Doc 61 §7 hard caps (overridable per tenant via subscription.limit_overrides).
+FEATURES = {"max_users": 50, "max_products": -1, "max_clients": -1, "support": "Email",
+            "max_concurrent_runs": 5, "client_cap_min": 1100, "client_cap_ratio": 1.1}
 
 
 def upgrade() -> None:
@@ -37,6 +41,8 @@ def upgrade() -> None:
     op.add_column('subscription', sa.Column(
         'period_peak_clients', sa.Integer(), nullable=False, server_default='0'))
     op.add_column('subscription', sa.Column('custom_monthly_price', sa.Float(), nullable=True))
+    op.add_column('subscription', sa.Column('limit_overrides', sa.JSON(), nullable=True))
+    op.add_column('subscription', sa.Column('recurrente_payment_method_id', sa.String(), nullable=True))
     op.add_column('billing_invoice', sa.Column('period_start', sa.DateTime(timezone=True), nullable=True))
     op.add_column('billing_invoice', sa.Column('period_end', sa.DateTime(timezone=True), nullable=True))
     op.add_column('billing_invoice', sa.Column('billed_clients', sa.Integer(), nullable=True))
@@ -51,9 +57,10 @@ def upgrade() -> None:
     ), {"name": TIER_NAME, "features": json.dumps(FEATURES), "modules": json.dumps(ALL_MODULES)})
     # Re-upgrade after a downgrade: the row survives, its pricing columns do not.
     conn.execute(sa.text(
-        "UPDATE tier SET included_clients = 1000, extra_client_price = 0.80, quote_above_clients = 5000 "
+        "UPDATE tier SET included_clients = 1000, extra_client_price = 0.80, quote_above_clients = 5000, "
+        "                features = CAST(:features AS json) "
         "WHERE name = :name AND included_clients IS NULL"
-    ), {"name": TIER_NAME})
+    ), {"name": TIER_NAME, "features": json.dumps(FEATURES)})
     conn.execute(sa.text("UPDATE tier SET is_active = false WHERE name <> :name"), {"name": TIER_NAME})
     conn.execute(sa.text(
         "UPDATE company SET tier_id = (SELECT id FROM tier WHERE name = :name)"
@@ -67,6 +74,8 @@ def downgrade() -> None:
     op.drop_column('billing_invoice', 'billed_clients')
     op.drop_column('billing_invoice', 'period_end')
     op.drop_column('billing_invoice', 'period_start')
+    op.drop_column('subscription', 'recurrente_payment_method_id')
+    op.drop_column('subscription', 'limit_overrides')
     op.drop_column('subscription', 'custom_monthly_price')
     op.drop_column('subscription', 'period_peak_clients')
     op.drop_column('tier', 'quote_above_clients')
