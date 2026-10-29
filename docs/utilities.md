@@ -34,7 +34,7 @@ library, never the reverse).
 | `audit_utils.py` | `log_create_operation` / `log_update_operation` / `log_delete_operation` / `log_custom_operation` helpers writing `AuditLog` rows |
 | `ssrf.py` | `validate_url_no_ssrf` blocklist — shared by the integration-test endpoint and workflow `HTTP_REQUEST` steps (SEC-6) |
 | `workflow_fields.py` | Trigger-context variable/field handling for workflow steps |
-| `tier_limits.py` | Tier resource-cap enforcement |
+| `tier_limits.py` | Plan limits and billing access (doc 61). `effective_limit(sub, key)` (per-tenant `Subscription.limit_overrides` > `tier.features`; None/−1 = unlimited); `billable_clients(db, company_id)` (clients not deactivated with ≥1 non-CANCELLED service — the doc 61 billing count); `check_tier_limit(db, company_id, resource)` — `"clients"`: 402 `QUOTE_REQUIRED` at `tier.quote_above_clients` billable without a `custom_monthly_price`, 402 `CLIENT_CAP_REACHED` when non-deactivated clients ≥ max(`client_cap_min`, ⌈`client_cap_ratio` × billable⌉); `"services"`: the quote stop only; `"users"`: `max_users` (pl2 system users excluded); `billing_access(db, company_id)` → `FULL` / `READ_ONLY` (a PENDING invoice 15+ days past due) / `LOCKED` (30+ days, or subscription INCOMPLETE/CANCELED); an active 100% discount (partner) is always `FULL` unless CANCELED; `MAX_CONCURRENT_RUNS` key read by the provisioning worker |
 | `pagination_utils.py` | Pagination helpers returning `PaginatedResponse[T]` |
 | `timezone_utils.py` | `now_gt()` / `today_gt()` — America/Guatemala (UTC-6, no DST) |
 | `token_utils.py` | Token generation/validation helpers (email verification, password reset) |
