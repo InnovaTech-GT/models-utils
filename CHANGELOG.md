@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-On `develop` (Railway development), head `pa1_plan_network_automation`, not yet on `main`.
+On `develop` (Railway development), head `sv1_service_entity`, not yet on `main`.
 
 ### Added
+- **6.19.0** - Service entity (doc 58), revision `sv1_service_entity` (down `pa2_micronode_category`). Additive.
+  - New `Service` (`service`: company, unique name per company, `service_type` = existing enum `serviceplantype`, `network_automation` default false) + `service_device_category` association; `ServicePlan.service_id` (NULL FK, RESTRICT, indexed) and `ServicePlan.service`. `Service.plans`, `.allowed_device_categories`, read-only `.allowed_device_category_ids`, `.plan_count`, `.is_active` (any plan active).
+  - **ORM break:** `ServicePlan.network_automation` / `allowed_device_categories` attributes removed; `network_automation` and `allowed_device_category_ids` are now read-only properties derived from the service (True / [] when the plan has no service). The pa1 column (mapped as `_deprecated_network_automation`), `service_plan_device_category` and `service_plan.service_group` stay in the DB, deprecated, dropped by a later revision.
+  - Backfill: one service per (company, service_group) of SERVICE-kind plans (blank group -> Internet/Cable/Inalámbrico/DSL/Otro), type = mode of plan_type, automation = bool_or, categories = union; `plan_type` untouched.
+  - Schemas: `ServiceCreate/Update/Out`; `ServicePlanCreate/Update` gain `service_id` and drop `network_automation`/`allowed_device_category_ids`; `ServicePlanOut` adds `service_id` and keeps both (derived).
 - **6.18.0** - The `CPE_SWAP` canonical purpose (doc 53 §8): replace an ACTIVE service's CPE. **No Alembic revision, no schema change.**
   - `PURPOSE_CPE_SWAP = 'CPE_SWAP'` (exported from `database_utils.models`), last in `CANONICAL_PLAYBOOK_PURPOSES`; `PURPOSE_TO_STATUS[CPE_SWAP] = None` (writes no status); `purpose_allowed_for_status` special-cases it as legal **only from ACTIVE**. Not in `TEARDOWN_PURPOSES` (a bring-up). The WhatsApp bot schema refuses it as a canonical purpose automatically.
   - `TOP_DOWN_PURPOSES` gains `CPE_SWAP` (root → leaf: core → OLT → CPE); a SUCCEEDED non-dry `CPE_SWAP` run clears `path_changed_at` like an ACTIVATION. `revert_refusal` and `run_idempotency_key` unchanged (a swap run is not revertible).
