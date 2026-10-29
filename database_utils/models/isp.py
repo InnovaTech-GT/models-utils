@@ -440,15 +440,71 @@ class InsightChartType(str, enum.Enum):
 # Service catalog & subscriptions
 # ---------------------------------------------------------------------------
 
-# pa1 (doc 56): the CPE categories a plan accepts at install. DeviceCategory
-# is platform-global, so no company_id here; deleting a category in use is
-# refused (RESTRICT), deleting the plan drops its rows.
+# pa1 (doc 56): the CPE categories a plan accepted. DEPRECATED by sv1 (doc 58):
+# allowed CPEs live on the service (`service_device_category`). The table stays
+# in the DB (and metadata) for one release as rollback safety; nothing reads or
+# writes it any more. A later revision drops it.
 service_plan_device_category = Table(
     "service_plan_device_category",
     Base.metadata,
     Column("service_plan_id", Uuid, ForeignKey("service_plan.id", ondelete="CASCADE"), primary_key=True),
     Column("device_category_id", Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), primary_key=True),
 )
+
+# sv1 (doc 58): the CPE categories a service accepts at install. DeviceCategory
+# is platform-global, so no company_id; deleting a category in use is refused
+# (RESTRICT), deleting the service drops its rows. EDGE-tier only is enforced
+# by the API (CATEGORY_NOT_CPE), not here.
+service_device_category = Table(
+    "service_device_category",
+    Base.metadata,
+    Column("service_id", Uuid, ForeignKey("service.id", ondelete="CASCADE"), primary_key=True),
+    Column("device_category_id", Uuid, ForeignKey("device_category.id", ondelete="RESTRICT"), primary_key=True),
+)
+
+
+class Service(Base):
+    """sv1 (doc 58): what the tenant sells ("Internet GPON", "Cable"). Owns the
+    type, the network-automation switch and the allowed CPE categories; its
+    plans (SERVICE-kind ServicePlan rows) carry only price/speeds/params."""
+    __tablename__ = "service"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = Column(String(100), nullable=False)
+    # Existing PG enum type `serviceplantype`; service_plan.plan_type is a copy.
+    service_type = Column(Enum(ServicePlanType), nullable=False, default=ServicePlanType.FIBER)
+    # doc 56: False = the network is driven by technicians (field work orders).
+    # New services are manual; sv1 backfill sets bool_or of the group's plans.
+    network_automation = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    company = relationship("Company")
+    plans = relationship("ServicePlan", back_populates="service")
+    allowed_device_categories = relationship(
+        "DeviceCategory", secondary=service_device_category, lazy="selectin"
+    )
+
+    @property
+    def allowed_device_category_ids(self):
+        """Serialized by ServiceOut (from_attributes)."""
+        return [c.id for c in self.allowed_device_categories]
+
+    @property
+    def plan_count(self) -> int:
+        return len(self.plans)
+
+    @property
+    def is_active(self) -> bool:
+        """Derived: any plan active."""
+        return any(p.is_active for p in self.plans)
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_service_company_name"),
+    )
 
 
 class ServicePlan(Base):
@@ -467,11 +523,8 @@ class ServicePlan(Base):
     # Money-in-cents shadow column (Cycle 1 dual-write; Float `price` drops in
     # Cycle 2). Nullable, no server_default — doc 16 §1/§2.2.
     price_cents = Column(BigInteger, nullable=True)
-    # cfg2: the Figma "Servicio" grouping label ("Fibra óptica", "Cable HFC").
-    # A group's status is derived (active = any(plan.is_active)), so it owns no
-    # attributes of its own.
-    # ponytail: free-text label, no service_offering table — promote to one the
-    # day a service needs its own price/description/contract terms.
+    # cfg2 grouping label. DEPRECATED (sv1, doc 58): a copy of service.name,
+    # kept in sync by the service/plan write paths; the service is the source.
     service_group = Column(String(100), nullable=True)
     # Integer cents, like every other money column. NULL or 0 => "Gratis".
     installation_price_cents = Column(BigInteger, nullable=True)
@@ -498,11 +551,16 @@ class ServicePlan(Base):
     # NEVER exposed on Update schemas. 'c2a' = inserted by the c2a backfill.
     # Used by c2a's downgrade to delete ONLY rows it created.
     migration_source = Column(String, nullable=True)
-    # pa1 (doc 56): False = the network is cut/reconnected/removed by a
-    # technician (field work orders), never by provisioning. server_default
-    # true keeps every pre-pa1 plan automated; new plans default to False at
-    # the API schema.
-    network_automation = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # sv1 (doc 58): the owning Service (NULL only for INSTALLATION/HARDWARE).
+    service_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("service.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # pa1 column, DEPRECATED by sv1: network automation belongs to the service.
+    # Kept mapped under a private key so metadata matches the DB (and the
+    # server_default true still fills inserts); read `.network_automation`.
+    _deprecated_network_automation = Column(
+        "network_automation", Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -510,14 +568,19 @@ class ServicePlan(Base):
 
     company = relationship("Company", back_populates="service_plans")
     client_services = relationship("ClientService", back_populates="service_plan")
-    allowed_device_categories = relationship(
-        "DeviceCategory", secondary=service_plan_device_category, lazy="selectin"
-    )
+    service = relationship("Service", back_populates="plans", lazy="selectin")
+
+    @property
+    def network_automation(self) -> bool:
+        """The service's switch; a plan without a service is automated (the
+        pre-pa1 behaviour, what plan_automates falls back to)."""
+        return True if self.service is None else bool(self.service.network_automation)
 
     @property
     def allowed_device_category_ids(self):
-        """Serialized by ServicePlanOut (from_attributes)."""
-        return [c.id for c in self.allowed_device_categories]
+        """The service's allowed CPE categories; [] without a service.
+        Serialized by ServicePlanOut (from_attributes)."""
+        return [] if self.service is None else self.service.allowed_device_category_ids
 
     __table_args__ = (
         # cfg2: grouped listing + the ?service_group= filter, always company-scoped.
