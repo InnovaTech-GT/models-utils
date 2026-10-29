@@ -26,6 +26,9 @@ class SubscriptionOut(BaseModel):
     # here — superadmin-only.
     discount_percent: int = 0
     discount_until: Optional[datetime] = None
+    # Usage pricing (doc 61).
+    period_peak_clients: int = 0
+    custom_monthly_price: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,6 +47,12 @@ class SubscriptionWithTier(SubscriptionOut):
     tier_price_yearly: Optional[float] = None  # Yearly price in GTQ
     tier_billing_cycle: str  # Tier's default billing cycle
     tier_modules: Optional[list] = None  # Enabled module groups for this tier
+    # Usage pricing (doc 61), computed by auth-erp — the frontend never prices.
+    tier_included_clients: Optional[int] = None
+    tier_extra_client_price: Optional[float] = None
+    tier_quote_above_clients: Optional[int] = None
+    active_clients: Optional[int] = None
+    estimate_total: Optional[int] = None  # cents, this period at its peak so far
 
 
 class SubscriptionExceptionUpdate(BaseModel):
@@ -52,5 +61,7 @@ class SubscriptionExceptionUpdate(BaseModel):
     discount_percent: Optional[int] = Field(None, ge=0, le=100)
     discount_until: Optional[datetime] = None
     billing_note: Optional[str] = Field(None, max_length=500)
+    # Doc 61: quoted monthly price (GTQ) replacing the formula; null clears it.
+    custom_monthly_price: Optional[float] = Field(None, ge=0)
     # INCOMPLETE/CANCELED/PAST_DUE -> ACTIVE on MANUAL billing, period starting now.
     activate_manual: bool = False

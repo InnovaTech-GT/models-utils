@@ -141,6 +141,11 @@ matters when reading `__init__.py`:
 (never `billing_note`); new `SubscriptionExceptionUpdate` (superadmin PATCH:
 `discount_percent` 0–100, `discount_until`, `billing_note`, `activate_manual`);
 `BillingInvoiceOut` gains `notes`.
+- **up1 (6.22.0, doc 61)**: tier schemas + `included_clients`/`extra_client_price`/
+`quote_above_clients`; `SubscriptionOut` + `period_peak_clients`/`custom_monthly_price`;
+`SubscriptionWithTier` + the tier pricing fields, `active_clients`, `estimate_total` (cents, set by
+auth-erp); `SubscriptionExceptionUpdate.custom_monthly_price`; `BillingInvoiceOut` +
+`period_start`/`period_end`/`billed_clients`.
 - `TierPublic` gains `purchasable: bool = False` — stamped by the endpoint from
   `recurrente_price_id` presence; the raw price id is never exposed publicly
 

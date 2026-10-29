@@ -20,6 +20,10 @@ class BillingInvoiceOut(BaseModel):
     manual_payment_note: Optional[str]
     billing_reason: Optional[str]
     notes: Optional[str] = None
+    # Doc 61 (NULL on pre-61 invoices).
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    billed_clients: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

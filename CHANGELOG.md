@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-On `develop` (Railway development), head `sb1_billing_exceptions`, not yet on `main`.
+On `develop` (Railway development), head `sb1_billing_exceptions` (`up1_usage_pricing` on branch `feat/usage-pricing/models`).
 
 ### Added
+- **6.22.0** - Usage-based pricing (doc 61), revision `up1_usage_pricing` (down `sb1_billing_exceptions`). On branch `feat/usage-pricing/models`.
+  - Columns: `Tier.included_clients` / `extra_client_price` (GTQ) / `quote_above_clients` (NULL = flat tier); `Subscription.period_peak_clients` (NOT NULL default 0, highest billable count this period) / `custom_monthly_price` (quoted GTQ price replacing the formula); `BillingInvoice.period_start` / `period_end` / `billed_clients`.
+  - **Data, one-way:** inserts tier `Uplink` (Q800 incl. 1,000 clients, Q0.80/extra, quote above 5,000, MONTHLY, all modules, no resource caps), deactivates every other tier, moves every company + subscription onto it (subscriptions forced MONTHLY). Downgrade drops the columns only.
+  - Schemas: `TierBase/TierUpdate/TierPublic` + the three pricing fields; `SubscriptionOut` + `period_peak_clients`/`custom_monthly_price`; `SubscriptionWithTier` + `tier_included_clients`/`tier_extra_client_price`/`tier_quote_above_clients`/`active_clients`/`estimate_total`; `SubscriptionExceptionUpdate.custom_monthly_price`; `BillingInvoiceOut` + period/billed_clients.
 - **6.21.0** - SaaS billing exceptions + pay-by-invoice (doc 60), revision `sb1_billing_exceptions` (down `pl2_payment_link_support`). Additive. On branch `feat/saas-billing/models-exceptions` (not yet on `develop`).
   - `Subscription.discount_percent` (0–100, default 0; 100 = complimentary), `discount_until`, `billing_note`; `BillingInvoice.recurrente_checkout_id`; `BillingInvoice.status` may be `VOID`.
   - Schemas: `SubscriptionOut` + `discount_percent`/`discount_until`; new `SubscriptionExceptionUpdate`; `BillingInvoiceOut` + `notes`.

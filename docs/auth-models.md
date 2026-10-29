@@ -96,4 +96,10 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
 
 ## Environment Variables
 
+- **Usage-based pricing** (`up1_usage_pricing`, 6.22.0, doc 61): `Tier.included_clients`,
+  `extra_client_price` (GTQ/client above the included count), `quote_above_clients`
+  (informational) — NULL = flat tier; `Subscription.period_peak_clients` (highest count of
+  clients with an ACTIVE service this period, billed in arrears) and `custom_monthly_price`
+  (quoted price replacing the formula); `BillingInvoice.period_start`/`period_end`/
+  `billed_clients`. The revision moves every tenant onto the single tier `Uplink`.
 - `POSTGRES_*` / `DATABASE_URL` / `DB_URL` — database connection (via `database.py`)
