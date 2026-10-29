@@ -9,7 +9,6 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-
 RESOURCE_LIMIT_KEYS: dict[str, str] = {
     "clients": "max_clients",
     "users": "max_users",
@@ -73,6 +72,8 @@ def _count_resource(db: Session, company_id: UUID, resource: str) -> int:
         from database_utils.models.auth import User
         return db.query(User).filter(
             User.company_id == company_id,
-            User.active == True,  # noqa: E712
+            User.active == True,
+            # pl2: machine accounts ("Bot de WhatsApp") never take a seat.
+            User.is_system == False,
         ).count()
     return 0

@@ -186,6 +186,12 @@ class User(Base):
 
     company_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=True)
     is_super_admin = Column(Boolean, default=False, nullable=False)
+    # pl2: a machine account, e.g. the per-company "Bot de WhatsApp" that
+    # receives online payments. Never counted against the tier's max_users
+    # (utils/tier_limits.py) and NEVER allowed to log in (auth-erp refuses it).
+    # Not on any user-facing create/update schema on purpose: only backend
+    # code creates one. ck_user_system_not_super_admin lives in the revision.
+    is_system = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     company = relationship("Company", back_populates="users")
@@ -440,6 +446,18 @@ class Subscription(Base):
     card_last4 = Column(String, nullable=True)
     card_brand = Column(String, nullable=True)
 
+    # Per-tenant billing exceptions (doc 60, sb1), set by the superadmin.
+    # discount_percent applies to the tier list price on every invoice for a
+    # period starting before discount_until (NULL = indefinite); 100 = complimentary
+    # (partner — no invoices at all). billing_note is superadmin-only.
+    discount_percent = Column(Integer, nullable=False, default=0, server_default="0")
+    discount_until = Column(DateTime(timezone=True), nullable=True)
+    billing_note = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("discount_percent >= 0 AND discount_percent <= 100", name="ck_subscription_discount_percent"),
+    )
+
     # Relationships
     company = relationship("Company", back_populates="subscription")
     tier = relationship("Tier", back_populates="subscriptions")
@@ -492,7 +510,7 @@ class BillingInvoice(Base):
     total = Column(Integer, nullable=False)
 
     # Status
-    status = Column(String, nullable=False, default="PENDING")  # PENDING, PAID, FAILED, REFUNDED
+    status = Column(String, nullable=False, default="PENDING")  # PENDING, PAID, FAILED, REFUNDED, VOID (doc 60)
     payment_type = Column(String, default="AUTOMATIC")  # AUTOMATIC, MANUAL
 
     # Manual payment tracking
@@ -511,6 +529,9 @@ class BillingInvoice(Base):
     # Recurrente integration — second idempotency layer for webhook-recorded
     # charges (one invoice per Recurrente payment intent).
     recurrente_intent_id = Column(String, nullable=True, unique=True)
+    # Latest pay-this-invoice hosted checkout (doc 60 §4); the intent webhook
+    # matches its checkout.id back to the invoice.
+    recurrente_checkout_id = Column(String, nullable=True, index=True)
 
     # Additional details
     billing_reason = Column(String, nullable=True)  # "subscription_cycle", "subscription_create", "manual"

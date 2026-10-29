@@ -121,6 +121,18 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
         {"name": "error", "type": "string", "fk_to": None},
         {"name": "client_service_id", "type": "uuid", "fk_to": "client_service"},
     ],
+    # pl1: trigger conditions only. The engine refuses any write to a
+    # payment_link (READ_ONLY_RESOURCE_TYPES), so every field is writable=False.
+    "payment_link": [
+        {"name": "status", "type": "string", "fk_to": None, "writable": False},
+        {"name": "amount_cents", "type": "number", "fk_to": None, "writable": False},
+        {"name": "currency", "type": "string", "fk_to": None, "writable": False},
+        {"name": "review_reason", "type": "string", "fk_to": None, "writable": False},
+        {"name": "expires_at", "type": "date", "fk_to": None, "writable": False},
+        {"name": "paid_at", "type": "date", "fk_to": None, "writable": False},
+        {"name": "order_id", "type": "uuid", "fk_to": "order", "writable": False},
+        {"name": "client_id", "type": "uuid", "fk_to": "client", "writable": False},
+    ],
 }
 
 

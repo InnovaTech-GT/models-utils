@@ -56,9 +56,9 @@ matters when reading `__init__.py`:
 - `Out` schemas use `from_attributes=True` for ORM compatibility
 - Sensitive fields are excluded from `Out` schemas (e.g. `password_hash`);
   integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
-  `api_key`/`token`/`password`/`app_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks)
+  `api_key`/`token`/`password`/`app_secret`/`webhook_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks; `webhook_secret` = the Recurrente webhook signing secret, server-set by backend-erp)
 - `integration` (fg1): `IntegrationCreate` gains `provider:
-  Optional[Literal["WHATSAPP_BUSINESS"]] = None` and `enabled: bool = True`;
+  Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper
@@ -137,6 +137,10 @@ matters when reading `__init__.py`:
   (Optional, mirror the rb1 columns)
 - `TierOut` gains `recurrente_product_id`/`recurrente_price_id`/
   `recurrente_price_yearly_id` (Optional — admin-facing)
+- **sb1 (6.21.0, doc 60)**: `SubscriptionOut` gains `discount_percent`/`discount_until`
+(never `billing_note`); new `SubscriptionExceptionUpdate` (superadmin PATCH:
+`discount_percent` 0–100, `discount_until`, `billing_note`, `activate_manual`);
+`BillingInvoiceOut` gains `notes`.
 - `TierPublic` gains `purchasable: bool = False` — stamped by the endpoint from
   `recurrente_price_id` presence; the raw price id is never exposed publicly
 
@@ -437,6 +441,15 @@ frontend-erp:
 
 Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
+
+### Payment links (6.20.0, revision `pl1_payment_link`)
+
+`schemas/payment_link.py`:
+
+- `RecurrenteSettings` — the non-secret settings of a `RECURRENTE` integration, stored in its `credentials` next to `header_name` (`X-SECRET-KEY`) and `api_key` (masked by `IntegrationOut.from_orm_masked`, it is in `SENSITIVE_KEYS`). `payment_methods`: a non-empty list without duplicates of `bank_transfer` / `card`, default `["bank_transfer", "card"]` (founder Q3, doc 59; the company chooses what it accepts). backend-erp also stores the server-set `webhook_endpoint_id` and `webhook_secret` (masked) there; clients never set them; `link_hours` 1..720, default 120 (five days, the window the gateway gives to match a transfer by hand). Unknown keys refused.
+- `PaymentLinkOut` — the office view of a `payment_link` row; nothing secret. Carries `notified_at`; never `wa_to` (PII) or `wa_integration_id`.
+
+Pinned by `tests/test_payment_link.py`.
 
 ### Auth overhaul — request-schema changes (no DB migration)
 
