@@ -51,7 +51,7 @@ class SubscriptionWithTier(SubscriptionOut):
     tier_included_clients: Optional[int] = None
     tier_extra_client_price: Optional[float] = None
     tier_quote_above_clients: Optional[int] = None
-    active_clients: Optional[int] = None
+    billable_clients: Optional[int] = None  # not deactivated, >= 1 non-cancelled service
     estimate_total: Optional[int] = None  # cents, this period at its peak so far
     # Doc 61 §7/§8: FULL | READ_ONLY | LOCKED, and whether a card is on file.
     billing_access: Optional[str] = None

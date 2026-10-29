@@ -143,7 +143,7 @@ matters when reading `__init__.py`:
 `BillingInvoiceOut` gains `notes`.
 - **up1 (6.22.0, doc 61)**: tier schemas + `included_clients`/`extra_client_price`/
 `quote_above_clients`; `SubscriptionOut` + `period_peak_clients`/`custom_monthly_price`;
-`SubscriptionWithTier` + the tier pricing fields, `active_clients`, `estimate_total` (cents, set by
+`SubscriptionWithTier` + the tier pricing fields, `billable_clients`, `estimate_total` (cents, set by
 auth-erp), `billing_access`, `has_card`; `SubscriptionExceptionUpdate.custom_monthly_price` /
 `limit_overrides`; `BillingInvoiceOut` +
 `period_start`/`period_end`/`billed_clients`.
