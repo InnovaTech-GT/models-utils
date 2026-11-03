@@ -96,7 +96,7 @@ def test_cpe_swap_allowed_only_for_active(status, ok):
 
 
 def test_cpe_swap_is_canonical_and_writes_no_status():
-    assert CANONICAL_PLAYBOOK_PURPOSES[-1] == PURPOSE_CPE_SWAP == "CPE_SWAP"
+    assert PURPOSE_CPE_SWAP == "CPE_SWAP" and PURPOSE_CPE_SWAP in CANONICAL_PLAYBOOK_PURPOSES
     assert PURPOSE_TO_STATUS[PURPOSE_CPE_SWAP] is None
     assert PURPOSE_CPE_SWAP not in TEARDOWN_PURPOSES
 
@@ -164,3 +164,22 @@ def test_custom_purpose_normalized_form_also_falls_through():
 
 def test_custom_purpose_does_not_leak_into_purpose_to_status():
     assert "FIRMWARE_UPGRADE" not in PURPOSE_TO_STATUS
+
+
+# --- BOOST / BOOST_END (doc 63-workflow-engine D13) ---
+
+@pytest.mark.parametrize("purpose", ["BOOST", "BOOST_END", "boost-end"])
+@pytest.mark.parametrize("status,ok", [
+    ("ACTIVE", True), ("PENDING_INSTALL", False), ("SUSPENDED", False), ("CANCELLED", False),
+])
+def test_boost_purposes_allowed_only_for_active(purpose, status, ok):
+    assert purpose_allowed_for_status(purpose, status) is ok
+
+
+def test_boost_purposes_are_canonical_write_no_status_and_are_not_teardown():
+    from database_utils.models.isp import PURPOSE_BOOST, PURPOSE_BOOST_END
+    from database_utils.utils.provisioning_runs import TOP_DOWN_PURPOSES
+    for p in (PURPOSE_BOOST, PURPOSE_BOOST_END):
+        assert p in CANONICAL_PLAYBOOK_PURPOSES
+        assert PURPOSE_TO_STATUS[p] is None
+        assert p not in TEARDOWN_PURPOSES and p not in TOP_DOWN_PURPOSES

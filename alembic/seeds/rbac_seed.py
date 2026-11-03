@@ -111,6 +111,14 @@ PERMISSIONS_DATA = [
         # Held by the built-in CAPTIVE_PORTAL role only (isp_seed.ISP_ROLES);
         # ADMIN converges via the `*` step, never granted to humans.
         {"name": "captive_portal.access", "resource": "captive_portal", "action": "access", "description": "Portal cautivo: consultar la deuda de un servicio suspendido y registrar promesas de pago"},
+
+        # Automatizaciones (wf1_workflow_engine_v2, doc 63-workflow-engine).
+        # Install/publish need update as well as create. ADMIN converges via
+        # the `*` step; read also reaches VIEWER through VIEWER_PERMISSION_FILTER.
+        {"name": "workflows.read", "resource": "workflows", "action": "read", "description": "Ver automatizaciones, plantillas y su historial"},
+        {"name": "workflows.create", "resource": "workflows", "action": "create", "description": "Crear automatizaciones e instalar plantillas"},
+        {"name": "workflows.update", "resource": "workflows", "action": "update", "description": "Editar, publicar, activar, desactivar y probar automatizaciones"},
+        {"name": "workflows.delete", "resource": "workflows", "action": "delete", "description": "Eliminar automatizaciones sin historial"},
 ]
 
 # The built-in (global) roles. ADMIN/VIEWER are created here;

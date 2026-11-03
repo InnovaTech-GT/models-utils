@@ -97,6 +97,9 @@ class Company(Base):
     # ZeroTier netns). Set by SQL; read through
     # utils.provisioning_jobs.company_in_zone.
     provisioning_zone = Column(String(64), nullable=True)
+    # wf1 (doc 63-workflow-engine C5): the tenant's daily cap on workflow
+    # messages. NULL = the default (500). Set by superadmin only (API).
+    workflow_daily_message_cap = Column(Integer, nullable=True)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")

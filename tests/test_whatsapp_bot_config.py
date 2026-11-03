@@ -28,15 +28,17 @@ def test_menu_predeterminado_es_valido_y_trae_los_flujos_actuales():
     assert cfg.enabled is True and cfg.menu_button_text == "Ver opciones"
 
 
-def test_acepta_los_cuatro_tipos():
+def test_acepta_los_cinco_tipos():
     cfg = WhatsAppBotConfigIn(**_config([
         _info(),
         {"id": "wifi", "title": "Cambiar clave WiFi", "type": "CREATE_TASK",
          "job_kind": "MAINTENANCE", "task_name": "Cambio de clave WiFi"},
         {"id": "falla", "title": "Reportar una falla", "type": "BUILTIN", "flow": "falla"},
         {"id": "hosts", "title": "Quién está conectado", "type": "PURPOSE", "purpose": "LAN_HOSTS"},
+        {"id": "promo", "title": "Promoción", "type": "WORKFLOW", "workflow_id": str(uuid.UUID(int=7))},
     ]))
-    assert [o.type for o in cfg.options] == ["INFO", "CREATE_TASK", "BUILTIN", "PURPOSE"]
+    assert [o.type for o in cfg.options] == ["INFO", "CREATE_TASK", "BUILTIN", "PURPOSE", "WORKFLOW"]
+    assert cfg.options[4].workflow_id == uuid.UUID(int=7)
     assert cfg.options[1].requires_client is True
 
 
@@ -46,13 +48,16 @@ def test_acepta_los_cuatro_tipos():
     [_info("x"), _info("x")],                                     # ids repetidos
     [_info(title="Un título demasiado largo!!")],                 # > 24
     [_info(i="Con Espacios")],                                    # id invalido
-    [{"id": "x", "title": "X", "type": "WORKFLOW"}],              # tipo desconocido
+    [{"id": "x", "title": "X", "type": "WORKFLOW"}],              # WORKFLOW sin workflow_id
+    [{"id": "x", "title": "X", "type": "OTRO"}],                  # tipo desconocido
     [{"id": "x", "title": "X", "type": "CREATE_TASK", "job_kind": "OTRO", "task_name": "t"}],
     [{"id": "x", "title": "X", "type": "BUILTIN", "flow": "otro"}],
     [_info(extra="no permitido")],                                # campo extra
     [{"id": "x", "title": "X", "type": "PURPOSE", "purpose": "ACTIVATION"}],  # canonico
     [{"id": "x", "title": "X", "type": "PURPOSE", "purpose": "wifi"}],        # minusculas
     [{"id": "x", "title": "X", "type": "PURPOSE"}],                           # sin proposito
+    [{"id": "x", "title": "X", "type": "PURPOSE", "purpose": "BOOST"}],       # canonico (D13)
+    [{"id": "x", "title": "X", "type": "WORKFLOW", "workflow_id": "no-uuid"}],
 ])
 def test_rechaza_configs_invalidas(opciones):
     with pytest.raises(ValidationError):
