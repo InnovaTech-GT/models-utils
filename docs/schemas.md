@@ -58,7 +58,7 @@ matters when reading `__init__.py`:
   integration `credentials` are returned masked (`IntegrationOut.from_orm_masked`,
   `api_key`/`token`/`password`/`app_secret`/`webhook_secret` → `***`; `app_secret` = the tenant's Meta App Secret that signs its WhatsApp Business webhooks; `webhook_secret` = the Recurrente webhook signing secret, server-set by backend-erp)
 - `integration` (fg1): `IntegrationCreate` gains `provider:
-  Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE"]] = None` and `enabled: bool = True`;
+  Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE", "TELEGRAM_BOT"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
 - `PaginatedResponse[T]`: generic paginated wrapper

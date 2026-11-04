@@ -6,9 +6,11 @@ from datetime import datetime
 from database_utils.models.crm import IntegrationAuthType
 
 MASKED = "***"
-IntegrationProvider = Literal["WHATSAPP_BUSINESS", "RECURRENTE"]
+IntegrationProvider = Literal["WHATSAPP_BUSINESS", "RECURRENTE", "TELEGRAM_BOT"]
 # app_secret: App Secret de Meta (WhatsApp Business); firma los webhooks del tenant.
-# webhook_secret: signingSecret (Svix) del webhook de Recurrente, lo pone el servidor.
+# webhook_secret: signingSecret (Svix) del webhook de Recurrente, o el secret_token
+#   del webhook de Telegram. Lo pone el servidor en los dos casos.
+# token: el de Meta (WhatsApp) o el del bot de Telegram (BotFather).
 SENSITIVE_KEYS = {"api_key", "token", "password", "app_secret", "webhook_secret"}
 
 

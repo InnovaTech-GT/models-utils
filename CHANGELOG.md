@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `sb1_billing_exceptions` (`up1_usage_pricing` on branch `feat/usage-pricing/models`).
 
 ### Added
+- **6.23.0** - `TELEGRAM_BOT` integration provider (Nova on Telegram). No migration: `integration.provider` is a VARCHAR without CHECK.
+  - `IntegrationProvider` gains `TELEGRAM_BOT`. Credentials: `token` (BotFather, sensitive), `webhook_secret` (the webhook `secret_token`, server-set, sensitive), `bot_id` / `bot_username` (shown). `from_orm_masked` already masks both secrets through `SENSITIVE_KEYS`.
+  - Tests: `tests/test_integration_telegram.py`.
 - **6.22.1** - `OrderOut.is_future: Optional[bool] = None` (pay-ahead, doc 62; set by backend-erp annotation). Schema-only, **no Alembic revision**. On branch `feat/pay-ahead/models`.
 - **6.22.0** - Usage-based pricing (doc 61), revision `up1_usage_pricing` (down `sb1_billing_exceptions`). On branch `feat/usage-pricing/models`.
   - Columns: `Tier.included_clients` / `extra_client_price` (GTQ) / `quote_above_clients` (NULL = flat tier); `Subscription.period_peak_clients` (NOT NULL default 0, highest billable count this period) / `custom_monthly_price` (quoted GTQ price replacing the formula) / `limit_overrides` (JSON, per-tenant caps) / `recurrente_payment_method_id` (card saved at signup, auto-charged monthly); `BillingInvoice.period_start` / `period_end` / `billed_clients`.
