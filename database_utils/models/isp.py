@@ -20,7 +20,7 @@ from sqlalchemy import (
     SmallInteger, ForeignKeyConstraint, Date, Table,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship, Mapped, mapped_column, validates
+from sqlalchemy.orm import relationship, Mapped, mapped_column, validates, object_session
 
 from database_utils.database import Base
 from ..utils.timezone_utils import now_gt, make_aware_gt
@@ -91,9 +91,16 @@ PURPOSE_DEPROVISION = 'DEPROVISION'
 # Doc 53 §8.1: replace an ACTIVE service's CPE (old_cpe.* -> cpe.*). A bring-up,
 # not a teardown; writes no status.
 PURPOSE_CPE_SWAP = 'CPE_SWAP'
+# Doc 63-workflow-engine D13 (6.23.0): a temporary speed boost and its end.
+# Started only by the workflow engine's `services.boost` action (never the
+# office lifecycle surface, never the bot); ACTIVE-only, write no status.
+# BOOST gets input.extra_mb / boost_download_mbps / boost_upload_mbps /
+# expires_at; BOOST_END restores the plan speeds.
+PURPOSE_BOOST = 'BOOST'
+PURPOSE_BOOST_END = 'BOOST_END'
 CANONICAL_PLAYBOOK_PURPOSES = (
     PURPOSE_ACTIVATION, PURPOSE_SUSPENSION, PURPOSE_REACTIVATION, PURPOSE_DEPROVISION,
-    PURPOSE_CPE_SWAP,
+    PURPOSE_CPE_SWAP, PURPOSE_BOOST, PURPOSE_BOOST_END,
 )
 PLAYBOOK_PURPOSE_PATTERN = r'^[A-Z][A-Z0-9_]{0,49}$'
 
@@ -136,6 +143,8 @@ PURPOSE_TO_STATUS = {
     PURPOSE_REACTIVATION: ClientServiceStatus.ACTIVE,
     PURPOSE_DEPROVISION: ClientServiceStatus.CANCELLED,
     PURPOSE_CPE_SWAP: None,
+    PURPOSE_BOOST: None,
+    PURPOSE_BOOST_END: None,
 }
 
 # Legal status writes. CANCELLED is terminal — a cancelled service is never
@@ -175,9 +184,9 @@ def purpose_allowed_for_status(purpose, current_status) -> bool:
          `POST /client-services/{id}/reactivate` endpoint has always rejected
          this ("Only SUSPENDED services can be reactivated"); both paths share
          `_apply_reactivation`, so they must agree.
-      3. CPE_SWAP — special-cased like ACTIVATION (writes no status): legal
-         ONLY from ACTIVE (doc 53 DC1). Without the branch its None target
-         would return False forever.
+      3. CPE_SWAP, BOOST, BOOST_END — special-cased like ACTIVATION (write no
+         status): legal ONLY from ACTIVE (doc 53 DC1, doc 63-workflow-engine
+         D13). Without the branch their None target would return False forever.
       4. Any other canonical purpose — legal iff its target status is a legal
          transition out of `current_status`.
       5. A tenant-defined custom purpose (purposes are extensible free strings,
@@ -208,7 +217,7 @@ def purpose_allowed_for_status(purpose, current_status) -> bool:
         # bills a subscriber whose install never happened.
         return status == ClientServiceStatus.SUSPENDED
 
-    if key == PURPOSE_CPE_SWAP:
+    if key in (PURPOSE_CPE_SWAP, PURPOSE_BOOST, PURPOSE_BOOST_END):
         return status == ClientServiceStatus.ACTIVE
 
     if key not in PURPOSE_TO_STATUS:
@@ -737,13 +746,46 @@ class ClientService(Base):
     def _stamp_status_dates(self, key, value):
         """Domain rule enforced at the model so every writer (router, workflow
         engine UPDATE_FIELD, worker) behaves identically: first transition to
-        ACTIVE stamps activation_date; CANCELLED stamps cancelled_at."""
+        ACTIVE stamps activation_date; CANCELLED stamps cancelled_at.
+
+        Also the single emit point of the workflow v2 lifecycle events
+        (doc 63-workflow-engine §2.6): an attached instance whose status really
+        changes adds a `client_service.*` row to the workflow_event outbox, in
+        the writer's own transaction (never flushed or committed here)."""
         new_status = value.value if isinstance(value, ClientServiceStatus) else value
         if new_status == ClientServiceStatus.ACTIVE.value and self.activation_date is None:
             self.activation_date = now_gt()
         elif new_status == ClientServiceStatus.CANCELLED.value and self.cancelled_at is None:
             self.cancelled_at = now_gt()
+        session = object_session(self)
+        if session is not None:
+            with session.no_autoflush:
+                old = self.status
+            old_status = old.value if isinstance(old, ClientServiceStatus) else old
+            name = _lifecycle_event_name(old_status, new_status)
+            if name and self.company_id is not None:
+                from database_utils.utils.workflow_events import emit_business_event
+                if self.id is None:
+                    self.id = uuid.uuid4()  # pending row: the payload needs the id now
+                emit_business_event(session, self.company_id, name, {
+                    "client_service_id": self.id, "client_id": self.client_id,
+                    "from_status": old_status, "to_status": new_status,
+                }, flush=False)
         return value
+
+
+def _lifecycle_event_name(old, new):
+    """The workflow v2 event for a ClientService status write, or None."""
+    if old is None or old == new:  # creation is not a transition
+        return None
+    if new == ClientServiceStatus.ACTIVE.value:
+        return {ClientServiceStatus.PENDING_INSTALL.value: "client_service.activated",
+                ClientServiceStatus.SUSPENDED.value: "client_service.reactivated"}.get(old)
+    if new == ClientServiceStatus.SUSPENDED.value:
+        return "client_service.suspended"
+    if new == ClientServiceStatus.CANCELLED.value:
+        return "client_service.cancelled"
+    return None
 
 
 class ServiceSuspension(Base):
@@ -1589,6 +1631,11 @@ class ProvisioningRun(Base):
     triggered_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
+    # wf1 (doc 63-workflow-engine §2.4): the workflow run that opened this
+    # provisioning run (services.boost / provisioning.run_purpose). Not an FK.
+    # The RUN_CLOSED handler emits `provisioning_run.closed` at that run's
+    # depth + 1, so a "run closed -> run purpose" loop hits the depth guard.
+    workflow_execution_id = Column(Uuid, nullable=True)
 
     client_service = relationship("ClientService")
     jobs = relationship(
@@ -1768,6 +1815,81 @@ class ProvisioningEvent(Base):
               postgresql_where=text("processed_at IS NULL"),
               sqlite_where=text("processed_at IS NULL")),
     )
+
+
+class ServiceBoostStatus(str, enum.Enum):
+    STARTING = "STARTING"      # BOOST run enqueued, not closed yet
+    ACTIVE = "ACTIVE"          # device runs the boosted speed until expires_at
+    ENDING = "ENDING"          # BOOST_END run enqueued
+    ENDED = "ENDED"
+    FAILED = "FAILED"          # the BOOST run failed (end_reason START_FAILED)
+    END_FAILED = "END_FAILED"  # the BOOST_END run failed; the expiry tick retries
+
+
+class ServiceBoostEndReason(str, enum.Enum):
+    EXPIRED = "EXPIRED"
+    SUSPENDED = "SUSPENDED"
+    CANCELLED = "CANCELLED"
+    PLAN_CHANGED = "PLAN_CHANGED"
+    START_FAILED = "START_FAILED"
+
+
+# A boost in one of these blocks another on the same service (partial unique).
+OPEN_SERVICE_BOOST_STATUSES = (
+    ServiceBoostStatus.STARTING, ServiceBoostStatus.ACTIVE,
+    ServiceBoostStatus.ENDING, ServiceBoostStatus.END_FAILED,
+)
+_OPEN_BOOST_WHERE = "status IN ('STARTING', 'ACTIVE', 'ENDING', 'END_FAILED')"
+
+
+class ServiceBoost(Base):
+    """A temporary speed boost on one service (doc 63-workflow-engine D13,
+    revision wf1). Written only by backend-erp `workflows/boosts.py`: the
+    `services.boost` action inserts STARTING and opens a BOOST run; the
+    run-closed handler moves it to ACTIVE/FAILED; the worker's expiry tick
+    sends BOOST_END. At most one open boost per service: a second payment
+    extends `expires_at`, never stacks. Run ids are plain UUIDs, not FKs. The
+    CHECKs live only in the revision (house style)."""
+    __tablename__ = "service_boost"
+    __table_args__ = (
+        Index("uq_service_boost_open", "client_service_id", unique=True,
+              postgresql_where=text(_OPEN_BOOST_WHERE), sqlite_where=text(_OPEN_BOOST_WHERE)),
+        Index("ix_service_boost_due", "expires_at",
+              postgresql_where=text("status = 'ACTIVE'"), sqlite_where=text("status = 'ACTIVE'")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    client_service_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("client_service.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    extra_mb = Column(Integer, nullable=False)
+    # Snapshotted at start: the plan speed to restore and the boosted speed sent.
+    base_download_mbps = Column(Integer, nullable=True)
+    base_upload_mbps = Column(Integer, nullable=True)
+    boost_download_mbps = Column(Integer, nullable=True)
+    boost_upload_mbps = Column(Integer, nullable=True)
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    status = Column(
+        Enum(ServiceBoostStatus, native_enum=False, length=16, create_constraint=False),
+        nullable=False, default=ServiceBoostStatus.STARTING,
+    )
+    end_reason = Column(
+        Enum(ServiceBoostEndReason, native_enum=False, length=24, create_constraint=False),
+        nullable=True,
+    )
+    start_run_id = Column(Uuid, nullable=True)
+    end_run_id = Column(Uuid, nullable=True)
+    workflow_execution_id = Column(Uuid, nullable=True)
+    end_attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+
+    client_service = relationship("ClientService")
 
 
 # ---------------------------------------------------------------------------

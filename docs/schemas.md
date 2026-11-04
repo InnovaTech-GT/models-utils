@@ -445,8 +445,37 @@ frontend-erp:
   options), used when a company has no row or `enabled` is false, and for
   "restore defaults".
 
-Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
+  - `PURPOSE` — `purpose` (a tenant purpose; the canonical ones, incl.
+    `BOOST`/`BOOST_END`, are refused).
+  - `WORKFLOW` (6.23.0, doc 63-workflow-engine §8) — `workflow_id` (UUID): runs
+    a v2 workflow with a `bot.option` trigger for the client's verified
+    service. backend-erp checks ownership/trigger on save and again on every run.
+
+Later phases add option types (F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
+
+### Workflow engine v2 (6.23.0, revision `wf1_workflow_engine_v2`)
+
+New module `workflow_v2.py` (doc 63-workflow-engine), shared by backend-erp
+(`/automations` API and the WorkflowWorker), the bot endpoints and the MCP docs:
+
+- **Definition (schema 1)**: `WorkflowDefinition` (`schema` alias, `trigger`,
+  `start`, `nodes`, `edges`, `params`, `customer_reply` ≤ 2000), `TriggerDef`
+  (`type` event/date/bot, `key`, `config`), `NodeDef` (`key`
+  `^[a-z][a-z0-9_]{0,31}$`, `action`, `name?`, `config`), `EdgeDef` (`from`
+  alias, `to`, `on` completed/always, `branch` yes/no). All `extra="forbid"`.
+  Structure only: graph and catalog rules are backend-erp
+  `workflows/definition.validate`, returned as `DefinitionProblem{path, code, message}`
+  so drafts save with problems. Dump with `by_alias=True`.
+- **API I/O**: `WorkflowV2Out` / `WorkflowV2Detail` (+ `TriggerRef`,
+  `VersionRef`, `DraftRef`, `SourceTemplateRef`, `LastRunRef`, `RunCounts`),
+  `WorkflowV2CreateIn`, `WorkflowV2PatchIn`, `WorkflowVersionOut` /
+  `WorkflowVersionDetail`, `WorkflowRunOut` / `WorkflowRunDetail` /
+  `WorkflowStepRunOut`, `TemplateOut`, `TemplatePreviewIn`, `InstallIn`
+  (`activate` default false), `DraftIn`, `ParamsIn`, `TestRunIn`,
+  `MessageCapIn` (`daily_cap` 0..100000 or null).
+
+Pinned by `tests/test_workflow_v2_models.py`.
 
 ### Payment links (6.20.0, revision `pl1_payment_link`)
 

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
 from typing import Any, Dict
 from loguru import logger
 import aiosmtplib
@@ -83,6 +84,14 @@ class EmailService(ABC):
     ) -> bool:
         """Notify a join-request requester that an admin approved or rejected them."""
 
+    @abstractmethod
+    async def send_generic(
+        self, to_email: str, subject: str, html_body: str,
+        from_name: str | None = None, reply_to: str | None = None,
+    ) -> bool:
+        """Send a caller-built HTML email (workflow `messaging.send`, D14):
+        shown as `from_name` on the Uplink mailbox, replies go to `reply_to`."""
+
 
 class MockEmailService(EmailService):
     """Mock email service for development/testing - logs to console"""
@@ -157,6 +166,15 @@ class MockEmailService(EmailService):
         )
         return True
 
+    async def send_generic(
+        self, to_email: str, subject: str, html_body: str,
+        from_name: str | None = None, reply_to: str | None = None,
+    ) -> bool:
+        logger.info(
+            f"[MOCK EMAIL] '{subject}' sent to {to_email} "
+            f"(from_name={from_name}, reply_to={reply_to})"
+        )
+        return True
 
 
 class SMTPEmailService(EmailService):
@@ -173,14 +191,24 @@ class SMTPEmailService(EmailService):
         self.from_address = from_address
         self.use_tls = use_tls
 
-    async def _send(self, to_email: str, subject: str, html_body: str) -> bool:
-        message = EmailMessage()
-        message["From"] = self.from_address
-        message["To"] = to_email
-        message["Subject"] = subject
-        message.set_content(html_body, subtype="html")
-
+    async def _send(
+        self, to_email: str, subject: str, html_body: str,
+        from_name: str | None = None, reply_to: str | None = None,
+    ) -> bool:
         try:
+            # Inside the try: header values come from tenant/client data, and
+            # EmailMessage raises ValueError on a CR/LF in any of them.
+            message = EmailMessage()
+            # Always the configured mailbox address (SPF/DKIM); only the
+            # display name changes.
+            message["From"] = (formataddr((from_name, parseaddr(self.from_address)[1]))
+                               if from_name else self.from_address)
+            message["To"] = to_email
+            message["Subject"] = subject
+            if reply_to:
+                message["Reply-To"] = reply_to
+            message.set_content(html_body, subtype="html")
+
             await aiosmtplib.send(
                 message,
                 hostname=self.host,
@@ -262,3 +290,12 @@ class SMTPEmailService(EmailService):
         )
         subject = "Join request approved" if approved else "Join request declined"
         return await self._send(to_email, subject, html)
+
+    async def send_generic(
+        self, to_email: str, subject: str, html_body: str,
+        from_name: str | None = None, reply_to: str | None = None,
+    ) -> bool:
+        # The subject is template-rendered from tenant/client data: a line
+        # break would make EmailMessage refuse the header.
+        subject = " ".join(subject.splitlines())
+        return await self._send(to_email, subject, html_body, from_name=from_name, reply_to=reply_to)

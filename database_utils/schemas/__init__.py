@@ -46,3 +46,5 @@ GeneratedOrdersWithGaps.model_rebuild()
 RegeneratePeriodResponse.model_rebuild()
 # wb1: menú del bot de WhatsApp por cablera
 from .whatsapp_bot import *
+# wf1: workflow engine v2 (doc 63-workflow-engine)
+from .workflow_v2 import *

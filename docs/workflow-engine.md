@@ -16,6 +16,17 @@ The platform's core automation logic lives in this library:
 Data model reference: [workflow-models.md](workflow-models.md) and
 [isp-models.md](isp-models.md).
 
+## Legacy v1 vs engine v2 (6.23.0)
+
+`workflow_engine.py` is the **legacy v1 engine**: it only matches workflows with
+`engine_version == 1` (`find_matching_workflows`) and is removed by the C1
+cleanup of doc 63-workflow-engine. The durable v2 engine runs in backend-erp
+(`workflows/`, the WorkflowWorker process); this library owns only its schema
+([workflow-models.md](workflow-models.md)), the definition/API schemas
+(`schemas/workflow_v2.py`) and the event emit helper
+(`utils/workflow_events.py`). A v2 workflow has no trigger/step/edge rows, so
+v1 matching could not pick it up even without the filter.
+
 ## Why it lives here (import-direction constraint)
 
 backend-erp imports models-utils, **never the reverse** (documented in the

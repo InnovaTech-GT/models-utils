@@ -57,8 +57,13 @@ non-passive node on the path has a binding for the purpose).
   **`ACTIVATION → None`** and **`CPE_SWAP → None`** (6.18.0, doc 53: replacing a
   subscriber's CPE writes no status; `purpose_allowed_for_status` special-cases
   it as legal **only from ACTIVE**, and it is not in `TEARDOWN_PURPOSES`).
+  **`BOOST → None`** and **`BOOST_END → None`** (6.23.0, doc 63-workflow-engine
+  D13: a temporary speed boost and its end, started only by the workflow
+  engine's `services.boost` action; legal **only from ACTIVE**, not teardown, not
+  top-down. BOOST gets `input.extra_mb` / `boost_download_mbps` /
+  `boost_upload_mbps` / `expires_at`; BOOST_END restores the plan speeds).
   The canonical purposes are `CANONICAL_PLAYBOOK_PURPOSES = (ACTIVATION,
-  SUSPENSION, REACTIVATION, DEPROVISION, CPE_SWAP)`. `None` is deliberate: activating a service
+  SUSPENSION, REACTIVATION, DEPROVISION, CPE_SWAP, BOOST, BOOST_END)`. `None` is deliberate: activating a service
   *enqueues only*. The `PENDING_INSTALL → ACTIVE` flip is written by backend-erp's
   `recompute_install_state` once the install state reaches `INSTALLED` — i.e.
   after the provisioning job succeeds. Encoding `None` means a caller writing
@@ -136,6 +141,7 @@ nodes *are* `InventoryItem`s so there is **one catalog** and one identity.
 | `ProvisioningRun` (provisioning_run) | Cycle 10 — one service-path run: several devices, several playbooks. Snapshots the resolved `path`, the ordered `plan` and the variable `frames` at creation; children are created lazily, one at a time, leaf → root |
 | `ProvisioningJob` (provisioning_job) | Durable job queue row — `ProvisioningJobStatus`, `ProvisioningTrigger`; consumed by backend-erp's `provision-worker` process (SKIP LOCKED claiming). Cycle 10 adds `run_id`/`run_position`; **`run_id` NULL means a standalone job** (explicit-playbook, ACS reboot, connectivity probe) and nothing about those changed. Since 5.1.0 `device_lock_key` is written only by the worker's claim (producers insert it NULL) and `claim_token` (`pc1`) fences the executor — see [network-models.md](network-models.md) |
 | `ProvisioningEvent` (provisioning_event) | **6.10.0, `pw1`** — the provisioning outbox. Written by `utils/provisioning_events.emit_event` in the same transaction as the state change (`RUN_CLOSED` from `close_run`, `JOB_FINISHED` from `finish_job`, `MANUAL_WAITING` / `JOB_UPDATED` / `INSTALL_STATE_STALE` from the worker); drained in `id` order by backend-erp, which sets `processed_at` or bumps `attempts` / `last_error`. `run_id` / `job_id` carry no FK. Partial index `ix_provisioning_event_pending` on unprocessed rows |
+| `ServiceBoost` (service_boost) | **6.23.0, `wf1`** (doc 63-workflow-engine D13) — a temporary speed boost on one service: `extra_mb`, base/boost speeds snapshotted at start, `starts_at`/`expires_at`, `ServiceBoostStatus` STARTING/ACTIVE/ENDING/ENDED/FAILED/END_FAILED, `ServiceBoostEndReason` EXPIRED/SUSPENDED/CANCELLED/PLAN_CHANGED/START_FAILED, `start_run_id`/`end_run_id`/`workflow_execution_id` (not FKs), `end_attempts`. One open boost (`OPEN_SERVICE_BOOST_STATUSES`) per service (`uq_service_boost_open`); `ix_service_boost_due` is the expiry scan. Written only by backend-erp `workflows/boosts.py`. `ProvisioningRun.workflow_execution_id` (not an FK) links a run to the workflow run that opened it (loop guard) |
 
 ### Insights (Cycle 4; v2 since `iv1_insights_v2`)
 

@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (122 revisions, head: **`up1_usage_pricing`**) — plus
+`alembic/versions/` (123 revisions, head: **`wf1_workflow_engine_v2`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1371,3 +1371,26 @@ NULL server_default 0), `subscription.custom_monthly_price`, `subscription.limit
 columns after a downgrade), every other tier `is_active=false`, every `company.tier_id` and
 `subscription.tier_id` → Uplink, subscriptions `billing_cycle='MONTHLY'`. Downgrade drops the columns
 only. Rehearsed upgrade → downgrade → upgrade on a throwaway Postgres 16.
+
+## wf1_workflow_engine_v2 (6.23.0)
+
+Workflow engine v2 (doc 63-workflow-engine, plan 63a §2), parent `up1_usage_pricing`. Additive,
+hand-written (lock_timeout, IF [NOT] EXISTS). `executionstatus` gains `WAITING` and `CANCELLED`
+in an autocommit block (irreversible: downgrade keeps them). New tables `workflow_version`
+(CHECKs status / trigger_type / number >= 1, UNIQUE (workflow_id, number), partial unique
+`uq_workflow_version_draft`, `ix_workflow_version_trigger`), `automation_template` (UNIQUE
+(key, version)), `workflow_event` (bigserial outbox, partial `ix_workflow_event_pending`) and
+`service_boost` (CHECKs status / end_reason / extra_mb > 0 / end_attempts >= 0, partial unique
+`uq_service_boost_open`, partial `ix_service_boost_due`). Columns: `workflow.engine_version`
+(SMALLINT NOT NULL default 1, `ck_workflow_engine_version` 1/2), `workflow.active_version_id`
+(`fk_workflow_active_version` → `workflow_version` SET NULL, added after both tables exist),
+`source_template_key`, `source_template_version`, `template_params`, `ignored_template_version`;
+`workflow_execution` + 17 durable-run columns (`company_id` FK CASCADE backfilled from `workflow`,
+`version_id` FK SET NULL, `definition`, `dedupe_key`, …) with partial unique
+`uq_workflow_execution_dedupe` and partial `ix_workflow_execution_runnable`;
+`workflow_step_execution` + 7 columns with partial unique `uq_step_execution_node` and
+`ix_step_execution_messages`; `company.workflow_daily_message_cap`;
+`provisioning_run.workflow_execution_id`. The `workflows.*` permissions ride `rbac_seed`.
+Downgrade drops every new column and table. Rehearsed upgrade → downgrade → upgrade on a
+throwaway Postgres 16 (with a legacy workflow + execution row, checking the backfill);
+`tests/pg/test_wf1_pg.py` covers the constraints and an idempotent downgrade/upgrade.
