@@ -69,3 +69,16 @@ async def test_send_generic_without_name_or_reply_to(smtp_service):
 async def test_mock_send_generic():
     from database_utils.services.email_service import MockEmailService
     assert await MockEmailService().send_generic("c@example.com", "s", "<p>x</p>", "Co", "r@x.com") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {"from_name": "ISP\nX"},
+    {"reply_to": "r@x.com\nBcc: evil@x.com"},
+    {"to_email": "c@example.com\r\nBcc: evil@x.com"},
+])
+async def test_send_generic_returns_false_on_linebreak_header(smtp_service, kwargs):
+    args = {"to_email": "c@example.com", "subject": "s", "html_body": "<p>x</p>", **kwargs}
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        assert await smtp_service.send_generic(**args) is False
+    mock_send.assert_not_called()

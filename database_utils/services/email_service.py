@@ -195,18 +195,20 @@ class SMTPEmailService(EmailService):
         self, to_email: str, subject: str, html_body: str,
         from_name: str | None = None, reply_to: str | None = None,
     ) -> bool:
-        message = EmailMessage()
-        # Always the configured mailbox address (SPF/DKIM); only the display
-        # name changes.
-        message["From"] = (formataddr((from_name, parseaddr(self.from_address)[1]))
-                           if from_name else self.from_address)
-        message["To"] = to_email
-        message["Subject"] = subject
-        if reply_to:
-            message["Reply-To"] = reply_to
-        message.set_content(html_body, subtype="html")
-
         try:
+            # Inside the try: header values come from tenant/client data, and
+            # EmailMessage raises ValueError on a CR/LF in any of them.
+            message = EmailMessage()
+            # Always the configured mailbox address (SPF/DKIM); only the
+            # display name changes.
+            message["From"] = (formataddr((from_name, parseaddr(self.from_address)[1]))
+                               if from_name else self.from_address)
+            message["To"] = to_email
+            message["Subject"] = subject
+            if reply_to:
+                message["Reply-To"] = reply_to
+            message.set_content(html_body, subtype="html")
+
             await aiosmtplib.send(
                 message,
                 hostname=self.host,
