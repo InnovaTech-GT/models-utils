@@ -37,8 +37,10 @@ split by `workflow.engine_version`:
   `find_matching_workflows` filters `engine_version == 1`. Removed by the C1 cleanup.
 - **2 = v2.** No trigger/step/edge rows. The definition is
   `workflow_version.definition` (schema 1, see `schemas/workflow_v2.py`:
-  `{schema, trigger:{type, key, config}, start, nodes:[{key, action, name?, config}],
-  edges:[{from, to, on: completed|always, branch: yes|no?}], params, customer_reply}`).
+  `{schema, trigger:{type, key, config}, start, nodes:[{key, action, name?, config, locked?}],
+  edges:[{from, to, on: completed|always, branch?}], params, customer_reply}`; `branch` is
+  yes/no for conditions and, since wf2, any node-key shaped name such as an ask option id or
+  `timeout`; `locked` is dumped only when true).
   `workflow.active_version_id` points at the PUBLISHED version runs start from
   (FK `use_alter`, ORM `post_update` so install can flush workflow + v1 +
   pointer in one go). At most one DRAFT per workflow (`uq_workflow_version_draft`).
@@ -61,6 +63,31 @@ v2 runs extend the legacy execution tables:
   `action_key`, `attempts`, `simulated`, `input` (resolved config),
   `error_code`, `resume_at`; `ix_step_execution_messages` backs the daily
   message cap (`company.workflow_daily_message_cap`, NULL = 500).
+
+**Conversational runs (revision `wf2_conversational`, 6.24.0, doc 64 / plan 64a §2.2).**
+A bot run can wait for the client's reply:
+
+- `workflow_execution.awaited_key` — the chat the run waits on:
+  `wa:{company_id}:{integration_id}:{digits(from)}` (a chat is per WhatsApp
+  integration) or `test:{run_id}` for test runs (never matches a real chat).
+  Set only while WAITING on a reply; every other release or end clears it.
+  Partial unique `uq_workflow_execution_awaited` (WHERE `status = 'WAITING'
+  AND awaited_key IS NOT NULL`) is C1: at most one waiting run per chat; a
+  newer wait supersedes the older one. The digits of the sender are the only
+  phone data stored here (plus `context.trigger.from` of chat-started runs).
+- **Cancel marker**: `cancel_requested_at` + `cancel_code` on a run that is
+  RUNNING mid-turn; the engine's fence ends it CANCELLED with that code
+  instead of applying its next state.
+- **Outcomes as error codes**: no new `executionstatus` labels.
+  `SUPERSEDED` and `CANCELLED_BY_CLIENT` are `error_code` values on a
+  `CANCELLED` run.
+- **Outbox**: the transcript lives in `context["transcript"]`;
+  `outbox_delivered` is the highest out-entry `seq` the gateway acknowledged.
+  Its own column because the executor's fence rewrites `context` wholesale.
+- `workflow_step_execution.messages_sent` — real outbound chat/email messages
+  the step produced (asks, re-asks, core-step texts). The C5 daily cap sums
+  it over the company's steps by `started_at` (partial
+  `ix_step_execution_sent` WHERE `messages_sent > 0`).
 
 **Event outbox** (`workflow_event`, a copy of `provisioning_event`): core code
 calls `utils/workflow_events.emit_business_event(db, company_id, name, payload)`

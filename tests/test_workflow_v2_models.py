@@ -46,6 +46,36 @@ def _version(wf, number=1, status=WorkflowVersionStatus.PUBLISHED):
 def test_revision_chain():
     wf1 = load("versions/wf1_workflow_engine_v2.py", "wf1_workflow_engine_v2")
     assert wf1.revision == "wf1_workflow_engine_v2" and wf1.down_revision == "up1_usage_pricing"
+    wf2 = load("versions/wf2_conversational.py", "wf2_conversational")
+    assert wf2.revision == "wf2_conversational" and wf2.down_revision == "wf1_workflow_engine_v2"
+
+
+def test_wf2_defaults(db):
+    wf = _workflow(db, engine_version=2)
+    run = WorkflowExecution(workflow=wf, trigger_event={})
+    step = WorkflowStepExecution(execution=run, node_key="a")
+    db.add_all([run, step])
+    db.flush()
+    db.expire_all()
+    run, step = db.get(WorkflowExecution, run.id), db.get(WorkflowStepExecution, step.id)
+    assert run.outbox_delivered == 0 and run.awaited_key is None and run.cancel_requested_at is None
+    assert run.cancel_code is None and step.messages_sent == 0
+
+
+def test_one_waiting_run_per_chat(db):
+    wf = _workflow(db, engine_version=2)
+    key = "wa:co:int:50255550000"
+
+    def run(status, k=key):
+        return WorkflowExecution(workflow=wf, trigger_event={}, status=status, awaited_key=k)
+
+    db.add_all([run(ExecutionStatus.WAITING), run(ExecutionStatus.CANCELLED),
+                run(ExecutionStatus.RUNNING), run(ExecutionStatus.WAITING, None),
+                run(ExecutionStatus.WAITING, None)])
+    db.flush()
+    db.add(run(ExecutionStatus.WAITING))
+    with pytest.raises(IntegrityError):
+        db.flush()
 
 
 def test_install_flush_sets_active_version_in_one_go(db):

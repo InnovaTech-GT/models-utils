@@ -11,22 +11,28 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from database_utils.models.workflow import ExecutionStatus, WorkflowVersionStatus
 
 __all__ = [
     "NODE_KEY_PATTERN",
+    "BotMessage",
+    "ChatOption",
+    "ConversationEntry",
     "DefinitionProblem",
     "DraftIn",
     "DraftRef",
     "EdgeDef",
+    "HandOff",
     "InstallIn",
     "LastRunRef",
     "MessageCapIn",
     "NodeDef",
     "ParamsIn",
     "RunCounts",
+    "RunReplyIn",
+    "RunTurnOut",
     "SourceTemplateRef",
     "TemplateOut",
     "TemplatePreviewIn",
@@ -68,6 +74,17 @@ class NodeDef(_Strict):
     action: str = Field(min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=120)
     config: dict[str, Any] = Field(default_factory=dict)
+    # wf2 (D21): a protected core step from a template; only the action's
+    # editable keys may change. Omitted from dumps when false, so a phase 1
+    # definition's canonical dump is unchanged.
+    locked: bool = False
+
+    @model_serializer(mode="wrap")
+    def _omit_unlocked(self, handler):
+        data = handler(self)
+        if not self.locked:
+            data.pop("locked", None)
+        return data
 
 
 class EdgeDef(_Strict):
@@ -75,7 +92,9 @@ class EdgeDef(_Strict):
     to: str
     # completed (default): follow only when the step COMPLETED; always: also on SKIPPED.
     on: Literal["completed", "always"] = "completed"
-    branch: Literal["yes", "no"] | None = None  # condition nodes only
+    # The source step's branch: yes/no (condition), an ask option id,
+    # answered/invalid/timeout, verified, ... Which names exist is the catalog's call.
+    branch: str | None = Field(default=None, pattern=NODE_KEY_PATTERN)
 
 
 class WorkflowDefinition(_Strict):
@@ -193,6 +212,73 @@ class WorkflowStepRunOut(BaseModel):
     output: Any | None = None
     error_code: str | None = None
     error: str | None = None
+    branch: str | None = None  # result.branch of a branching step (wf2)
+    messages_sent: int = 0
+
+
+# --- conversations (wf2, doc 64 / plan 64a §2.4) ---
+
+MessageKind = Literal["text", "options", "buttons"]
+
+
+class ChatOption(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+
+
+class ConversationEntry(BaseModel):
+    """One line of `context.transcript`, as the run history shows it."""
+    seq: int
+    dir: Literal["out", "in"]
+    node_key: str | None = None
+    kind: MessageKind = "text"
+    text: str
+    options: list[ChatOption] | None = None
+    at: datetime
+    redacted: bool = False
+
+
+class BotMessage(BaseModel):
+    """One outbound chat message for the gateway to render."""
+    type: MessageKind = "text"
+    text: str
+    button: str | None = None
+    options: list[ChatOption] | None = None
+
+
+class HandOff(BaseModel):
+    receipt_link_id: str | None = None
+    flow: Literal["ya_pague", "menu", "agente"] | None = None
+
+
+class RunTurnOut(BaseModel):
+    """A conversational turn: the bot endpoints and the test-reply endpoint.
+    `handled=False` (nothing waits on the chat) carries no run."""
+    handled: bool = True
+    run_id: UUID | None = None
+    status: ExecutionStatus | None = None
+    finished: bool = False
+    ok: bool = False
+    awaiting: bool = False
+    wait_seconds: int | None = None
+    pending: bool = False
+    seq: int = 0  # highest out-entry seq in `messages`; the gateway acks it next call
+    messages: list[BotMessage] = Field(default_factory=list)
+    hand_off: HandOff | None = None
+
+
+class RunReplyIn(_Strict):
+    """A client's answer: free text or an option id, exactly one."""
+    text: str | None = Field(default=None, min_length=1, max_length=1000)
+    # 65 = rendered interactive id "{node_key}.{option_id}" (32 + 1 + 32)
+    option_id: str | None = Field(default=None, min_length=1, max_length=65)
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        if (self.text is None) == (self.option_id is None):
+            raise ValueError("send exactly one of text or option_id")
+        return self
 
 
 class WorkflowRunOut(BaseModel):
@@ -216,6 +302,8 @@ class WorkflowRunDetail(WorkflowRunOut):
     trigger: dict[str, Any] | None = None
     steps: list[WorkflowStepRunOut] = Field(default_factory=list)
     definition: dict[str, Any] | None = None  # the run's frozen snapshot
+    conversation: list[ConversationEntry] = Field(default_factory=list)
+    awaiting: bool = False  # WAITING on a client reply
 
 
 # --- templates ---
