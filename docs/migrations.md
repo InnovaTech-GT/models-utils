@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (123 revisions, head: **`wf1_workflow_engine_v2`**) — plus
+`alembic/versions/` (124 revisions, head: **`wf2_conversational`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1394,3 +1394,18 @@ in an autocommit block (irreversible: downgrade keeps them). New tables `workflo
 Downgrade drops every new column and table. Rehearsed upgrade → downgrade → upgrade on a
 throwaway Postgres 16 (with a legacy workflow + execution row, checking the backfill);
 `tests/pg/test_wf1_pg.py` covers the constraints and an idempotent downgrade/upgrade.
+
+## wf2_conversational (6.24.0)
+
+Conversational workflows (doc 64, plan 64a §2), parent `wf1_workflow_engine_v2`. Additive,
+hand-written (lock_timeout, IF [NOT] EXISTS), no backfill (server defaults cover existing
+rows). `workflow_execution` + `awaited_key` VARCHAR(160), `cancel_requested_at` TIMESTAMPTZ,
+`cancel_code` VARCHAR(32), `outbox_delivered` INTEGER NOT NULL DEFAULT 0;
+`workflow_step_execution` + `messages_sent` SMALLINT NOT NULL DEFAULT 0. Indexes: partial
+unique `uq_workflow_execution_awaited (awaited_key) WHERE status = 'WAITING' AND awaited_key
+IS NOT NULL` (C1, one waiting run per chat) and partial `ix_step_execution_sent (started_at)
+WHERE messages_sent > 0` (C5 cap sum). **No enum change**: the new outcomes are `error_code`
+values (`SUPERSEDED`, `CANCELLED_BY_CLIENT`) on a `CANCELLED` run. Downgrade drops the five
+columns (and with them both indexes). Rehearsed upgrade → downgrade -1 → upgrade on a
+throwaway Postgres 16; `tests/pg/test_wf2_pg.py` covers the defaults, the partial unique and
+an idempotent downgrade/upgrade.

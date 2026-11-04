@@ -474,8 +474,31 @@ New module `workflow_v2.py` (doc 63-workflow-engine), shared by backend-erp
   `WorkflowStepRunOut`, `TemplateOut`, `TemplatePreviewIn`, `InstallIn`
   (`activate` default false), `DraftIn`, `ParamsIn`, `TestRunIn`,
   `MessageCapIn` (`daily_cap` 0..100000 or null).
+- **Conversational workflows (6.24.0, revision `wf2_conversational`, doc 64 /
+  plan 64a §2.3-2.4)**:
+  - `EdgeDef.branch` is any `NODE_KEY_PATTERN` name (was yes/no): ask option
+    ids, `answered`/`invalid`/`timeout`, `verified`/`not_verified`, …; which
+    names a step has is the backend catalog's rule.
+  - `NodeDef.locked` (bool, default false): a protected core step (D21). A
+    model serializer drops it from every dump when false, so a phase 1
+    definition (and `templates.canonical` of the phase 1 templates) dumps
+    exactly as before. No `schema` bump.
+  - `WorkflowStepRunOut` + `branch` (from `result.branch`) and
+    `messages_sent`; `WorkflowRunDetail` + `conversation:
+    list[ConversationEntry]` and `awaiting`.
+  - `ConversationEntry {seq, dir out|in, node_key?, kind text|options|buttons,
+    text, options?: [ChatOption], at, redacted}`; `ChatOption {id, title,
+    description?}`.
+  - `BotMessage {type text|options|buttons, text, button?, options?}` — one
+    outbound chat message for the gateway.
+  - `RunTurnOut {handled, run_id?, status?, finished, ok, awaiting,
+    wait_seconds?, pending, seq, messages, hand_off?: HandOff{receipt_link_id?,
+    flow? ya_pague|menu|agente}}` — the bot turn endpoints and the test-reply
+    endpoint. `handled=False` (nothing waits on the chat) carries no run; `seq`
+    is the highest out-entry seq in `messages`, acked by the gateway next call.
+  - `RunReplyIn {text? 1..1000, option_id? ≤64}`, exactly one set.
 
-Pinned by `tests/test_workflow_v2_models.py`.
+Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.py`.
 
 ### Payment links (6.20.0, revision `pl1_payment_link`)
 

@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-On `develop` (Railway development), head `up1_usage_pricing` (`wf1_workflow_engine_v2` on branch `feat/workflows-v2/models`).
+On `develop` (Railway development), head `wf1_workflow_engine_v2`; `wf2_conversational` is not composed yet.
 
 ### Added
+- **6.24.0** – conversational workflows (doc 64 / plan 64a §2): revision `wf2_conversational` (down `wf1_workflow_engine_v2`). Additive, no backfill, full downgrade.
+  - `workflow_execution` + `awaited_key` VARCHAR(160) (the chat a run waits on, `wa:{company}:{integration}:{digits}` / `test:{run_id}`; partial UNIQUE `uq_workflow_execution_awaited` WHERE `status = 'WAITING' AND awaited_key IS NOT NULL`: one waiting run per chat, C1), `cancel_requested_at` + `cancel_code` VARCHAR(32) (cancel marker for a run mid-turn), `outbox_delivered` INTEGER NOT NULL default 0 (highest acknowledged transcript seq).
+  - `workflow_step_execution` + `messages_sent` SMALLINT NOT NULL default 0 (C5 cap sum; partial `ix_step_execution_sent` on `started_at` WHERE `messages_sent > 0`).
+  - No enum change: `SUPERSEDED` / `CANCELLED_BY_CLIENT` are `error_code` values on a `CANCELLED` run.
+  - `schemas/workflow_v2.py`: `EdgeDef.branch` widened from yes/no to any `NODE_KEY_PATTERN` name (ask option ids, `answered`/`invalid`/`timeout`, `verified`, …); `NodeDef.locked` (default false, omitted from dumps when false, so phase 1 definitions dump unchanged); `WorkflowStepRunOut` + `branch`, `messages_sent`; `WorkflowRunDetail` + `conversation`, `awaiting`; new `ChatOption`, `ConversationEntry`, `BotMessage`, `HandOff`, `RunTurnOut` (`handled=False` carries no run), `RunReplyIn` (exactly one of `text` / `option_id`).
+  - **Consumers:** re-pin backend-erp, auth-erp and provisioning-worker together.
 - **6.23.0** - Workflow engine v2 tables (doc 63-workflow-engine, plan 63a §2), revision `wf1_workflow_engine_v2` (down `up1_usage_pricing`). Additive. On branch `feat/workflows-v2/models`.
   - `executionstatus` gains `WAITING` and `CANCELLED` (autocommit block; irreversible, kept on downgrade).
   - `workflow` + `engine_version` (SMALLINT NOT NULL default 1, CHECK 1/2; legacy rows = 1), `active_version_id` (FK `workflow_version` SET NULL, `use_alter`; ORM `active_version` uses `post_update`, so install's single flush works), `source_template_key`, `source_template_version`, `template_params`, `ignored_template_version`.

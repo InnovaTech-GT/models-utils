@@ -4,7 +4,9 @@
   defined by workflow_trigger / workflow_step / workflow_step_edge rows.
 - engine_version = 2: the durable engine (backend-erp `workflows/`), defined by
   versioned JSON in workflow_version.definition; its runs extend
-  workflow_execution / workflow_step_execution. Revision wf1_workflow_engine_v2.
+  workflow_execution / workflow_step_execution. Revision wf1_workflow_engine_v2;
+  wf2_conversational adds the reply wait (awaited_key), cancel marker, outbox
+  ack and per-step message count (doc 64).
 """
 from sqlalchemy import (
     Column, String, Boolean, JSON, DateTime, ForeignKey, Enum, Uuid, Float,
@@ -221,6 +223,17 @@ class WorkflowExecution(Base):
     customer_message = Column(Text, nullable=True)  # C4 bot reply
     error_code = Column(String(48), nullable=True)
 
+    # --- conversational runs (wf2, doc 64 / plan 64a §2.2) ---
+    # The chat this run waits on: wa:{company}:{integration}:{digits(from)} or
+    # test:{run_id}. Set only while WAITING on a reply; NULL otherwise.
+    awaited_key = Column(String(160), nullable=True)
+    # Cancel marker for a run RUNNING mid-turn: its next fence ends it
+    # CANCELLED with cancel_code (SUPERSEDED / CANCELLED_BY_CLIENT).
+    cancel_requested_at = Column(DateTime(timezone=True), nullable=True)
+    cancel_code = Column(String(32), nullable=True)
+    # Highest context.transcript seq the gateway acknowledged (the outbox).
+    outbox_delivered = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
     __table_args__ = (
         Index("uq_workflow_execution_dedupe", "workflow_id", "dedupe_key", unique=True,
               postgresql_where=text("dedupe_key IS NOT NULL"),
@@ -228,6 +241,10 @@ class WorkflowExecution(Base):
         Index("ix_workflow_execution_runnable", "resume_at",
               postgresql_where=text("status IN ('PENDING', 'WAITING') AND definition IS NOT NULL"),
               sqlite_where=text("status IN ('PENDING', 'WAITING') AND definition IS NOT NULL")),
+        # C1: at most one run waits on a chat.
+        Index("uq_workflow_execution_awaited", "awaited_key", unique=True,
+              postgresql_where=text("status = 'WAITING' AND awaited_key IS NOT NULL"),
+              sqlite_where=text("status = 'WAITING' AND awaited_key IS NOT NULL")),
     )
 
     # Relationships
@@ -262,6 +279,8 @@ class WorkflowStepExecution(Base):
     input = Column(JSON, nullable=True)  # the resolved config
     error_code = Column(String(48), nullable=True)
     resume_at = Column(DateTime(timezone=True), nullable=True)
+    # wf2: outbound chat/email messages this step produced (C5 cap sums it).
+    messages_sent = Column(SmallInteger, nullable=False, default=0, server_default=text("0"))
 
     __table_args__ = (
         Index("uq_step_execution_node", "execution_id", "node_key", unique=True,
@@ -269,6 +288,9 @@ class WorkflowStepExecution(Base):
               sqlite_where=text("node_key IS NOT NULL")),
         # The C5 message-cap count.
         Index("ix_step_execution_messages", "action_key", "completed_at"),
+        Index("ix_step_execution_sent", "started_at",
+              postgresql_where=text("messages_sent > 0"),
+              sqlite_where=text("messages_sent > 0")),
     )
 
     execution_id: Mapped[uuid.UUID] = mapped_column(
