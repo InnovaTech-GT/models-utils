@@ -496,7 +496,7 @@ New module `workflow_v2.py` (doc 63-workflow-engine), shared by backend-erp
     flow? ya_pague|menu|agente}}` — the bot turn endpoints and the test-reply
     endpoint. `handled=False` (nothing waits on the chat) carries no run; `seq`
     is the highest out-entry seq in `messages`, acked by the gateway next call.
-  - `RunReplyIn {text? 1..1000, option_id? ≤64}`, exactly one set.
+  - `RunReplyIn {text? 1..1000, option_id? ≤65}`, exactly one set (65 fits the rendered interactive id `{node_key}.{option_id}`, 32+1+32).
 
 Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.py`.
 

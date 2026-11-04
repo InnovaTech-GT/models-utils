@@ -271,7 +271,8 @@ class RunTurnOut(BaseModel):
 class RunReplyIn(_Strict):
     """A client's answer: free text or an option id, exactly one."""
     text: str | None = Field(default=None, min_length=1, max_length=1000)
-    option_id: str | None = Field(default=None, min_length=1, max_length=64)
+    # 65 = rendered interactive id "{node_key}.{option_id}" (32 + 1 + 32)
+    option_id: str | None = Field(default=None, min_length=1, max_length=65)
 
     @model_validator(mode="after")
     def _exactly_one(self):

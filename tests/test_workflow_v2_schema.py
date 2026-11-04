@@ -53,8 +53,10 @@ def test_locked_true_is_dumped():
 def test_reply_needs_exactly_one():
     assert RunReplyIn(text="hola").option_id is None
     assert RunReplyIn(option_id="si").text is None
+    composite = "k" * 32 + "." + "o" * 32  # rendered "{node_key}.{option_id}"
+    assert RunReplyIn(option_id=composite).option_id == composite
     for bad in ({}, {"text": "a", "option_id": "si"}, {"text": ""}, {"text": "x" * 1001},
-                {"option_id": "x" * 65}, {"text": "a", "extra": 1}):
+                {"option_id": "x" * 66}, {"text": "a", "extra": 1}):
         with pytest.raises(ValidationError):
             RunReplyIn.model_validate(bad)
 
