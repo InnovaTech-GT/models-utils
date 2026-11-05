@@ -14,6 +14,7 @@ from database_utils.models.isp import CANONICAL_PLAYBOOK_PURPOSES, PLAYBOOK_PURP
 
 __all__ = [
     "BUILTIN_FLOWS", "WhatsAppBotOption", "InfoOption", "CreateTaskOption", "BuiltinOption", "PurposeOption",
+    "WorkflowOption",
     "WhatsAppBotConfigIn", "WhatsAppBotConfigOut", "default_whatsapp_bot_config",
 ]
 
@@ -68,8 +69,18 @@ class PurposeOption(_OptionBase):
         return v
 
 
+class WorkflowOption(_OptionBase):
+    """Corre una automatización v2 (engine_version=2) con disparador
+    `bot.option` para el servicio verificado del cliente (doc
+    63-workflow-engine §8). El backend revisa en cada corrida que el workflow
+    siga activo y disparado por el bot."""
+    type: Literal["WORKFLOW"]
+    workflow_id: UUID
+
+
 WhatsAppBotOption = Annotated[
-    Union[InfoOption, CreateTaskOption, BuiltinOption, PurposeOption], Field(discriminator="type")
+    Union[InfoOption, CreateTaskOption, BuiltinOption, PurposeOption, WorkflowOption],
+    Field(discriminator="type"),
 ]
 
 

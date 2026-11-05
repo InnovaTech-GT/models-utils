@@ -21,8 +21,88 @@ invoked by backend-erp after entity mutations.
 | `WorkflowTrigger` (workflow_trigger) | Event trigger — `TriggerEventType` CREATED/UPDATED/DELETED + `field_conditions` JSON |
 | `WorkflowStep` (workflow_step) | Action node — `StepActionType`: `UPDATE_FIELD`, `CREATE_ENTITY`, `HTTP_REQUEST`, `ENQUEUE_PROVISIONING`, `CREATE_ORDER`, `CREATE_TASK` (the last two added by the **irreversible** `c1e_install_actions` ALTER TYPE migration) + `action_config` JSON |
 | `WorkflowStepEdge` (workflow_step_edge) | DAG edge between steps |
-| `WorkflowExecution` (workflow_execution) | Execution instance (`ExecutionStatus`) |
+| `WorkflowExecution` (workflow_execution) | Execution instance (`ExecutionStatus`; `WAITING`/`CANCELLED` since wf1) |
 | `WorkflowStepExecution` (workflow_step_execution) | Per-step result/output |
+| `WorkflowVersion` (workflow_version) | v2: one version of a workflow's JSON definition (`WorkflowVersionStatus` DRAFT/PUBLISHED/SUPERSEDED) |
+| `AutomationTemplate` (automation_template) | v2: global template catalog, one immutable row per (key, version), seeded by backend-erp |
+| `WorkflowEvent` (workflow_event) | v2: business-event outbox drained by the WorkflowWorker |
+
+## Engine v2 (revision `wf1_workflow_engine_v2`, 6.23.0, doc 63-workflow-engine)
+
+Both engines share the `workflow` row (one list, one bot picker, one export),
+split by `workflow.engine_version`:
+
+- **1 = legacy.** Defined by `workflow_trigger`/`workflow_step`/`workflow_step_edge`
+  rows; run in-process by `utils/workflow_engine.py`, whose
+  `find_matching_workflows` filters `engine_version == 1`. Removed by the C1 cleanup.
+- **2 = v2.** No trigger/step/edge rows. The definition is
+  `workflow_version.definition` (schema 1, see `schemas/workflow_v2.py`:
+  `{schema, trigger:{type, key, config}, start, nodes:[{key, action, name?, config, locked?}],
+  edges:[{from, to, on: completed|always, branch?}], params, customer_reply}`; `branch` is
+  yes/no for conditions and, since wf2, any node-key shaped name such as an ask option id or
+  `timeout`; `locked` is dumped only when true).
+  `workflow.active_version_id` points at the PUBLISHED version runs start from
+  (FK `use_alter`, ORM `post_update` so install can flush workflow + v1 +
+  pointer in one go). At most one DRAFT per workflow (`uq_workflow_version_draft`).
+  `trigger_type`/`trigger_key` are denormalized for the consumer's match
+  (`ix_workflow_version_trigger`). Template bookkeeping on `workflow`:
+  `source_template_key`, `source_template_version` (of the ACTIVE definition),
+  `template_params`, `ignored_template_version`.
+
+v2 runs extend the legacy execution tables:
+
+- `workflow_execution`: `company_id` (backfilled), `version_id` (history only),
+  `definition` — the **frozen copy** the executor runs (NULL = legacy run),
+  `dedupe_key` (unique per workflow when set: `ev:`/`task_done:`/`date:`/`bot:`/`test:`),
+  `depth`, `is_test`, `test_options`, `context` `{trigger, steps}`, `cursor`
+  `{queue, recoveries}`, `resume_at`, `claim_token` + `heartbeat_at` (lease),
+  `client_id`/`client_service_id` (subject, not FKs), `customer_message` (bot
+  reply), `error_code`, `updated_at`. `ix_workflow_execution_runnable` is the
+  claim scan.
+- `workflow_step_execution`: `node_key` (unique per run: idempotency),
+  `action_key`, `attempts`, `simulated`, `input` (resolved config),
+  `error_code`, `resume_at`; `ix_step_execution_messages` backs the daily
+  message cap (`company.workflow_daily_message_cap`, NULL = 500).
+
+**Conversational runs (revision `wf2_conversational`, 6.24.0, doc 64 / plan 64a §2.2).**
+A bot run can wait for the client's reply:
+
+- `workflow_execution.awaited_key` — the chat the run waits on:
+  `wa:{company_id}:{integration_id}:{digits(from)}` (a chat is per WhatsApp
+  integration) or `test:{run_id}` for test runs (never matches a real chat).
+  Set only while WAITING on a reply; every other release or end clears it.
+  Partial unique `uq_workflow_execution_awaited` (WHERE `status = 'WAITING'
+  AND awaited_key IS NOT NULL`) is C1: at most one waiting run per chat; a
+  newer wait supersedes the older one. The digits of the sender are the only
+  phone data stored here (plus `context.trigger.from` of chat-started runs).
+- **Cancel marker**: `cancel_requested_at` + `cancel_code` on a run that is
+  RUNNING mid-turn; the engine's fence ends it CANCELLED with that code
+  instead of applying its next state.
+- **Outcomes as error codes**: no new `executionstatus` labels.
+  `SUPERSEDED` and `CANCELLED_BY_CLIENT` are `error_code` values on a
+  `CANCELLED` run.
+- **Outbox**: the transcript lives in `context["transcript"]`;
+  `outbox_delivered` is the highest out-entry `seq` the gateway acknowledged.
+  Its own column because the executor's fence rewrites `context` wholesale.
+- `workflow_step_execution.messages_sent` — real outbound chat/email messages
+  the step produced (asks, re-asks, core-step texts). The C5 daily cap sums
+  it over the company's steps by `started_at` (partial
+  `ix_step_execution_sent` WHERE `messages_sent > 0`).
+
+**Event outbox** (`workflow_event`, a copy of `provisioning_event`): core code
+calls `utils/workflow_events.emit_business_event(db, company_id, name, payload)`
+in the transaction that made the change (flushes, never commits; unknown names
+raise). `depth`/`source_run_id` come from the `current_depth`/`current_run_id`
+ContextVars the executor sets, for the loop guard. `EVENT_NAMES`:
+`payment.confirmed`, `client_service.activated/suspended/reactivated/cancelled`,
+`client_service.plan_changed` (internal), `task.completed`, `task.created`,
+`provisioning_run.closed`. The four `client_service.*` lifecycle events are
+emitted by `ClientService`'s `status` validator itself (every ORM writer), only
+for an attached instance whose status really changes (PENDING_INSTALL→ACTIVE
+activated, SUSPENDED→ACTIVE reactivated, →SUSPENDED, →CANCELLED).
+
+`ServiceBoost` (`service_boost`, in `models/isp.py`) is the D13 speed boost;
+see [isp-models.md](isp-models.md).
 
 ## Connections to Other Components
 

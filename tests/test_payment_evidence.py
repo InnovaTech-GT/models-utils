@@ -112,7 +112,7 @@ def test_payment_metadata_update_is_metadata_only():
 
 
 def test_order_out_annotations_default_to_none():
-    for field in ("last_payment", "period_label", "client_account"):
+    for field in ("last_payment", "period_label", "client_account", "is_future"):
         assert OrderOut.model_fields[field].default is None
     assert set(OrderLastPaymentOut.model_fields) == {
         "id", "paid_at", "method", "received_by", "received_by_name",

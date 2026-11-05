@@ -35,6 +35,15 @@ Subjects live in the module-level `_UPLINK_SUBJECTS` dict (es/en per kind,
 e.g. `"Confirma tu correo — Uplink"`); unknown locales fall back to Spanish.
 Payment/join-request emails are unchanged (English-only).
 
+**Generic email (6.23.0, doc 63-workflow-engine D14).** `send_generic(to_email,
+subject, html_body, from_name=None, reply_to=None) -> bool` (abstract; Mock
+logs, SMTP sends) carries a caller-built HTML body — the workflow engine's
+`messaging.send`. On SMTP, `From` keeps the configured mailbox address and only
+takes `from_name` as its display name (`formataddr`, so SPF/DKIM still match);
+`Reply-To` is set when `reply_to` is given, so client replies reach the ISP
+rather than Uplink's mailbox. Line breaks in `subject` are folded to spaces.
+A custom `EmailService` subclass must implement it.
+
 ## Templates (`database_utils/templates/email/`)
 
 Locale resolution in `render_email`: for `confirmation.html` + `locale="en"`
@@ -74,6 +83,7 @@ package.
 
 ## Connections to Other Components
 
+- **backend-erp WorkflowWorker**: `send_generic` from `messaging.send`
 - **auth-erp**: primary consumer — invitation, verification
   (`EmailVerificationToken`), and password reset (`PasswordResetToken`) flows;
   routers pass the request's `locale` through to the send methods; see

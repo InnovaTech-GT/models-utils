@@ -75,6 +75,9 @@ class OrderOut(OrderBase):
     # backend-erp (utils/dates). NOT a computed_field: models-utils has no
     # localized month table and inventing one here would fork it.
     period_label: Optional[str] = None
+    # Pay-ahead (doc 62): True when this is an unpaid-or-paid RECURRING charge whose period
+    # has not started yet. Set by backend-erp annotation; None = not computed.
+    is_future: Optional[bool] = None
     # The owning client's account rollup, reusing PR 3's ClientAccountOut
     # (master plan §2.2: extend the one account shape, never declare a
     # second). The Pagos table reads .state and .overdue_cents for the

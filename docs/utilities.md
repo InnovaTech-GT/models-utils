@@ -17,7 +17,8 @@ library, never the reverse).
 
 | Module | Purpose |
 |------|---------|
-| `workflow_engine.py` (58 KB) | Trigger matching + async DAG execution (`check_workflow_triggers`, `execute_workflow`, `execute_step`) — see [workflow-engine.md](workflow-engine.md) |
+| `workflow_events.py` (6.23.0) | Workflow v2 outbox: `emit_business_event(db, company_id, name, payload, *, flush=True)` adds a `workflow_event` row (ValueError on a name outside `EVENT_NAMES`; payload via `serialize_for_audit`; depth / source run from the `current_depth` / `current_run_id` ContextVars; never commits). Also called by `ClientService.status`'s validator with `flush=False` — see [workflow-models.md](workflow-models.md) |
+| `workflow_engine.py` (58 KB) | **Legacy v1** (`engine_version == 1` only; removed by the C1 cleanup). Trigger matching + async DAG execution (`check_workflow_triggers`, `execute_workflow`, `execute_step`) — see [workflow-engine.md](workflow-engine.md) |
 | `network_graph.py` | The **only** place the company plant tree is walked (Cycle 10, doc 35 §3) — see below |
 | `provisioning_resolution.py` | Resolves a service's configuration path, its per-node playbooks and its variable frames (moved down from backend-erp in Cycle 3; **rewritten in Cycle 10** to traverse the graph instead of matching a topology chain) — see below |
 | `provisioning_runs.py` | Opens and advances a multi-device `ProvisioningRun` (Cycle 10, doc 35 §5; **engine v2**, doc 42: phase-major plan, whole-run rollback, `close_run` emitting `RUN_CLOSED` (outbox, 6.10.0), revert, rollback retry, per-run secrets) — see below |

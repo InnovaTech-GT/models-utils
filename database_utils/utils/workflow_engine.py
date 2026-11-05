@@ -1,5 +1,9 @@
 # utils/workflow_engine.py
 """
+LEGACY v1 workflow engine (engine_version = 1) — removed by the C1 cleanup of
+doc 63-workflow-engine. The v2 engine lives in backend-erp `workflows/`; this
+module only ever matches engine_version = 1 rows.
+
 Workflow engine: trigger matching and asynchronous DAG execution.
 
 Called from CRUD routers after audit logging to fire matching workflows.
@@ -179,6 +183,7 @@ def find_matching_workflows(
         .filter(
             Workflow.company_id == company_id,
             Workflow.is_active == True,
+            Workflow.engine_version == 1,
             WorkflowTrigger.resource_type == resource_type,
             WorkflowTrigger.event_type == event_type,
         )

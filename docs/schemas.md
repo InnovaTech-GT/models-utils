@@ -445,8 +445,60 @@ frontend-erp:
   options), used when a company has no row or `enabled` is false, and for
   "restore defaults".
 
-Later phases add option types (F2 `WORKFLOW`, F3 `CHANGE_PLAN`) to the union.
+  - `PURPOSE` — `purpose` (a tenant purpose; the canonical ones, incl.
+    `BOOST`/`BOOST_END`, are refused).
+  - `WORKFLOW` (6.23.0, doc 63-workflow-engine §8) — `workflow_id` (UUID): runs
+    a v2 workflow with a `bot.option` trigger for the client's verified
+    service. backend-erp checks ownership/trigger on save and again on every run.
+
+Later phases add option types (F3 `CHANGE_PLAN`) to the union.
 Pinned by `tests/test_whatsapp_bot_config.py`.
+
+### Workflow engine v2 (6.23.0, revision `wf1_workflow_engine_v2`)
+
+New module `workflow_v2.py` (doc 63-workflow-engine), shared by backend-erp
+(`/automations` API and the WorkflowWorker), the bot endpoints and the MCP docs:
+
+- **Definition (schema 1)**: `WorkflowDefinition` (`schema` alias, `trigger`,
+  `start`, `nodes`, `edges`, `params`, `customer_reply` ≤ 2000), `TriggerDef`
+  (`type` event/date/bot, `key`, `config`), `NodeDef` (`key`
+  `^[a-z][a-z0-9_]{0,31}$`, `action`, `name?`, `config`), `EdgeDef` (`from`
+  alias, `to`, `on` completed/always, `branch` yes/no). All `extra="forbid"`.
+  Structure only: graph and catalog rules are backend-erp
+  `workflows/definition.validate`, returned as `DefinitionProblem{path, code, message}`
+  so drafts save with problems. Dump with `by_alias=True`.
+- **API I/O**: `WorkflowV2Out` / `WorkflowV2Detail` (+ `TriggerRef`,
+  `VersionRef`, `DraftRef`, `SourceTemplateRef`, `LastRunRef`, `RunCounts`),
+  `WorkflowV2CreateIn`, `WorkflowV2PatchIn`, `WorkflowVersionOut` /
+  `WorkflowVersionDetail`, `WorkflowRunOut` / `WorkflowRunDetail` /
+  `WorkflowStepRunOut`, `TemplateOut`, `TemplatePreviewIn`, `InstallIn`
+  (`activate` default false), `DraftIn`, `ParamsIn`, `TestRunIn`,
+  `MessageCapIn` (`daily_cap` 0..100000 or null).
+- **Conversational workflows (6.24.0, revision `wf2_conversational`, doc 64 /
+  plan 64a §2.3-2.4)**:
+  - `EdgeDef.branch` is any `NODE_KEY_PATTERN` name (was yes/no): ask option
+    ids, `answered`/`invalid`/`timeout`, `verified`/`not_verified`, …; which
+    names a step has is the backend catalog's rule.
+  - `NodeDef.locked` (bool, default false): a protected core step (D21). A
+    model serializer drops it from every dump when false, so a phase 1
+    definition (and `templates.canonical` of the phase 1 templates) dumps
+    exactly as before. No `schema` bump.
+  - `WorkflowStepRunOut` + `branch` (from `result.branch`) and
+    `messages_sent`; `WorkflowRunDetail` + `conversation:
+    list[ConversationEntry]` and `awaiting`.
+  - `ConversationEntry {seq, dir out|in, node_key?, kind text|options|buttons,
+    text, options?: [ChatOption], at, redacted}`; `ChatOption {id, title,
+    description?}`.
+  - `BotMessage {type text|options|buttons, text, button?, options?}` — one
+    outbound chat message for the gateway.
+  - `RunTurnOut {handled, run_id?, status?, finished, ok, awaiting,
+    wait_seconds?, pending, seq, messages, hand_off?: HandOff{receipt_link_id?,
+    flow? ya_pague|menu|agente}}` — the bot turn endpoints and the test-reply
+    endpoint. `handled=False` (nothing waits on the chat) carries no run; `seq`
+    is the highest out-entry seq in `messages`, acked by the gateway next call.
+  - `RunReplyIn {text? 1..1000, option_id? ≤65}`, exactly one set (65 fits the rendered interactive id `{node_key}.{option_id}`, 32+1+32).
+
+Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.py`.
 
 ### Payment links (6.20.0, revision `pl1_payment_link`)
 
