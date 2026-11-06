@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Boolean, JSON, DateTime, Date, ForeignKey, Enum, text, Uuid, Float, SmallInteger, Text,
-    Index, CheckConstraint, UniqueConstraint
+    Index, CheckConstraint, UniqueConstraint, func
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -666,6 +666,12 @@ class Integration(Base):
     # or "TELEGRAM_BOT" (schemas.integration.IntegrationProvider).
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     provider = Column(String, nullable=True)
+    # ch1: menu_enabled=false keeps the channel silent for unsolicited messages
+    # (doc 65 D38). is_default is only written by an explicit "use as default";
+    # the backend computes the effective default (flagged enabled row, else the
+    # oldest enabled one of the type).
+    menu_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -673,6 +679,58 @@ class Integration(Base):
 
     # Relationships
     company = relationship("Company", back_populates="integrations")
+
+
+class IntegrationInterest(Base):
+    """ii1 (doc 65 D33): a tenant's "Me interesa" on a coming-soon provider, or a
+    "Sugerir" (provider NULL + note). One row per (company, type, provider); a
+    repeat click bumps updated_at and keeps created_at."""
+    __tablename__ = "integration_interest"
+    __table_args__ = (
+        Index("uq_integration_interest", "company_id", "type", func.coalesce(text("provider"), ""), unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    provider = Column(String(32), nullable=True)
+    type = Column(String(16), nullable=False)
+    note = Column(String(500), nullable=True)
+
+
+class ClientChat(Base):
+    """ch1 (doc 65 §6.4): the chat (WhatsApp number / Telegram chat_id) a client
+    verified from, per Conversation integration. A household chat may link to
+    several clients, hence UNIQUE (client_id, integration_id, address)."""
+    __tablename__ = "client_chat"
+    __table_args__ = (
+        Index("uq_client_chat", "client_id", "integration_id", "address", unique=True),
+        Index("ix_client_chat_address", "integration_id", "address"),
+        Index("ix_client_chat_company_client", "company_id", "client_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("client.id", ondelete="CASCADE"), nullable=False
+    )
+    integration_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("integration.id", ondelete="CASCADE"), nullable=False
+    )
+    address = Column(String(64), nullable=False)
+    username = Column(String(64), nullable=True)  # Telegram public @, for t.me links
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # --- uplink-mobile integration (2026-08-18) -------------------------------

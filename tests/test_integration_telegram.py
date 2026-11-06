@@ -1,4 +1,4 @@
-"""TELEGRAM_BOT como proveedor de integracion (6.23.0)."""
+"""TELEGRAM_BOT como proveedor de integracion (6.25.0)."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
