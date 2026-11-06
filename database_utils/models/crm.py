@@ -662,7 +662,8 @@ class Integration(Base):
     # BASIC_AUTH:    {"username": "admin", "password": "..."}
     # fg1: disabled integrations keep their credentials but are refused by
     # every consumer (provisioning job create + worker). provider = optional
-    # well-known tag for branded UI cards (today only "WHATSAPP_BUSINESS").
+    # well-known tag for branded UI cards: "WHATSAPP_BUSINESS", "RECURRENTE"
+    # or "TELEGRAM_BOT" (schemas.integration.IntegrationProvider).
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     provider = Column(String, nullable=True)
 
