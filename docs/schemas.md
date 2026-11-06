@@ -61,6 +61,8 @@ matters when reading `__init__.py`:
   Optional[Literal["WHATSAPP_BUSINESS", "RECURRENTE", "TELEGRAM_BOT"]] = None` and `enabled: bool = True`;
   `IntegrationUpdate` gains both as Optional (None = unchanged — so `provider`
   can't be cleared via PATCH); `IntegrationOut` exposes `provider`/`enabled`
+- doc 65 integration types (6.25.0): `IntegrationType = Literal[CONVERSATION, PAYMENTS, EMAIL, HTTP]`; `IntegrationOut` + `menu_enabled: bool = True` and `is_default: bool = False` (raw flag); `IntegrationUpdate` + `menu_enabled`/`is_default` (Optional); `IntegrationCreate` + `menu_enabled` (None = true); `IntegrationInterestIn` (extra=forbid; `type`, free `provider` <= 32, `note` <= 500; needs a provider or a non-blank note), `IntegrationInterestOut` (flat superadmin rows with `company_name`/`user_name`), `ClientChatOut` (`integration_id`, `provider`, `username`, `verified_at`, `last_inbound_at`; no address)
+- doc 65 workflow v2 edits: `WorkflowDefinition.schema` is `Literal[1, 2]` (default 1); `DefinitionProblem.severity` `error|warning` (default error); `TestRunIn.channel` `whatsapp|telegram|None`; `TemplateOut.requires` dict (default `{}`)
 - `PaginatedResponse[T]`: generic paginated wrapper
 - `order_item.product_id` is gone (`ld1_legacy_drop`); `OrderItemBase.service_plan_id`
   is required

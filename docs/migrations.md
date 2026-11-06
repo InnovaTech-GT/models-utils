@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (124 revisions, head: **`wf2_conversational`**) — plus
+`alembic/versions/` (126 revisions, head: **`ch1_client_chat`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1409,3 +1409,30 @@ values (`SUPERSEDED`, `CANCELLED_BY_CLIENT`) on a `CANCELLED` run. Downgrade dro
 columns (and with them both indexes). Rehearsed upgrade → downgrade -1 → upgrade on a
 throwaway Postgres 16; `tests/pg/test_wf2_pg.py` covers the defaults, the partial unique and
 an idempotent downgrade/upgrade.
+
+## ii1_integration_interest (6.25.0)
+
+Integration demand (doc 65 D33), parent `wf2_conversational`. Additive, hand-written
+(lock_timeout, IF [NOT] EXISTS). New `integration_interest` (id, created_at, updated_at,
+`company_id` FK CASCADE, `user_id` FK SET NULL, `provider` VARCHAR(32) NULL, `type`
+VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_interest
+(company_id, type, (COALESCE(provider, '')))`: one row per company and provider, one
+"Sugerir" row (provider NULL) per company and type. The backend upserts with `ON CONFLICT`
+on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
+backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
+runs the real upsert and an idempotent downgrade/upgrade.
+
+## ch1_client_chat (6.25.0)
+
+Client chats and integration flags (doc 65 §6.4, D38, D39), parent `ii1_integration_interest`.
+Additive, hand-written, no backfill. `integration` + `is_default` BOOLEAN NOT NULL DEFAULT
+false (only written by an explicit "use as default"; the backend computes the effective
+default: the flagged enabled row of the type, else the oldest enabled one) and `menu_enabled`
+BOOLEAN NOT NULL DEFAULT true (false = the channel stays silent for unsolicited messages).
+New `client_chat` (id, created_at, updated_at, `company_id`/`client_id`/`integration_id` FKs
+CASCADE, `address` VARCHAR(64) (WhatsApp digits / Telegram chat_id), `username` VARCHAR(64)
+NULL (Telegram public @), `verified_at`, `last_inbound_at`). Unique `uq_client_chat
+(client_id, integration_id, address)` (a household chat may link to several clients), plus
+`ix_client_chat_address (integration_id, address)` and `ix_client_chat_company_client
+(company_id, client_id)`. Downgrade drops the table and both columns.
+`tests/pg/test_ch1_pg.py` runs the real upsert, the cascades and an idempotent round trip.

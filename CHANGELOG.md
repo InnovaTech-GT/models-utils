@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-On `develop` (Railway development), head `wf1_workflow_engine_v2`; `wf2_conversational` is not composed yet.
+On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
-- **6.25.0** (v1.7.0, doc 65) - `TELEGRAM_BOT` integration provider (Nova on Telegram). No migration: `integration.provider` is a VARCHAR without CHECK.
+- **6.25.0** (v1.7.0, doc 65) - integration types: `TELEGRAM_BOT` provider, integration interest, client chats, default/menu flags. Two additive revisions, no backfill, full downgrades. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - `ii1_integration_interest` (down `wf2_conversational`): new `integration_interest` + `IntegrationInterest` model; unique `(company_id, type, COALESCE(provider,''))`.
+  - `ch1_client_chat` (down ii1): `integration.is_default` (default false) and `integration.menu_enabled` (default true); new `client_chat` + `ClientChat` model, unique `(client_id, integration_id, address)`.
+  - Schemas: `IntegrationType`, `IntegrationInterestIn/Out`, `ClientChatOut`, `is_default`/`menu_enabled` on `IntegrationOut/Update/Create`; `WorkflowDefinition.schema` accepts 1 or 2, `DefinitionProblem.severity`, `TestRunIn.channel`, `TemplateOut.requires`.
+  - `TELEGRAM_BOT` integration provider (Nova on Telegram). No migration for it: `integration.provider` is a VARCHAR without CHECK.
   - `IntegrationProvider` gains `TELEGRAM_BOT`. Credentials: `token` (BotFather, sensitive), `webhook_secret` (the webhook `secret_token`, server-set, sensitive), `bot_id` / `bot_username` (shown). `from_orm_masked` already masks both secrets through `SENSITIVE_KEYS`.
   - Tests: `tests/test_integration_telegram.py`.
 - **6.24.0** – conversational workflows (doc 64 / plan 64a §2): revision `wf2_conversational` (down `wf1_workflow_engine_v2`). Additive, no backfill, full downgrade.
