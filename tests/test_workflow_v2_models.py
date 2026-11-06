@@ -179,7 +179,7 @@ def test_definition_schema_round_trip_and_structure():
     d = WorkflowDefinition.model_validate({**DEF, "edges": [{"from": "a", "to": "b", "branch": "yes"}]})
     dumped = d.model_dump(by_alias=True)
     assert dumped["schema"] == 1 and dumped["edges"][0]["from"] == "a" and dumped["edges"][0]["on"] == "completed"
-    for bad in ({**DEF, "schema": 2}, {**DEF, "nodes": [{"key": "Bad Key", "action": "x"}]},
+    for bad in ({**DEF, "schema": 3}, {**DEF, "nodes": [{"key": "Bad Key", "action": "x"}]},
                 {**DEF, "extra": 1}, {**DEF, "trigger": {"type": "cron", "key": "x"}}):
         with pytest.raises(ValidationError):
             WorkflowDefinition.model_validate(bad)

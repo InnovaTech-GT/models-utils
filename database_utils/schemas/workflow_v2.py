@@ -99,7 +99,7 @@ class EdgeDef(_Strict):
 
 class WorkflowDefinition(_Strict):
     """Dump with `model_dump(by_alias=True)` (keys `schema`, `from`)."""
-    schema_version: Literal[1] = Field(default=1, alias="schema")
+    schema_version: Literal[1, 2] = Field(default=1, alias="schema")
     trigger: TriggerDef
     start: str | None = None  # None only on a trigger-only draft
     nodes: list[NodeDef] = Field(default_factory=list)
@@ -112,6 +112,7 @@ class DefinitionProblem(BaseModel):
     path: str
     code: str
     message: str
+    severity: Literal["error", "warning"] = "error"
 
 
 # --- workflows ---
@@ -318,6 +319,7 @@ class TemplateOut(BaseModel):
     changelog: list[dict[str, Any]] = Field(default_factory=list)
     installed_workflow_ids: list[UUID] = Field(default_factory=list)
     definition: dict[str, Any] | None = None  # GET /templates/{key} only
+    requires: dict[str, Any] = Field(default_factory=dict)  # e.g. {"types": ["CONVERSATION"]}
 
 
 class TemplatePreviewIn(_Strict):
@@ -344,6 +346,7 @@ class TestRunIn(_Strict):
     trigger_overrides: dict[str, Any] | None = None
     inputs: dict[str, Any] | None = None
     send_to_me: bool = False
+    channel: Literal["whatsapp", "telegram"] | None = None
 
 
 class MessageCapIn(_Strict):

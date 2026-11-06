@@ -14,6 +14,8 @@ from database_utils.schemas.workflow_v2 import (
     WorkflowDefinition,
     WorkflowRunDetail,
 )
+from database_utils.schemas.workflow_v2 import DefinitionProblem, TemplateOut
+from database_utils.schemas.workflow_v2 import TestRunIn as RunIn
 
 DEF = {"schema": 1, "trigger": {"type": "bot", "key": "chat", "config": {}}, "start": "ask",
        "nodes": [{"key": "ask", "action": "messaging.ask", "config": {"text": "hi"}},
@@ -73,3 +75,23 @@ def test_turn_and_detail_defaults():
         RunTurnOut.model_validate({"hand_off": {"flow": "elsewhere"}})
     d = WorkflowRunDetail(id=uuid.uuid4(), status="COMPLETED")
     assert d.conversation == [] and d.awaiting is False
+
+
+def test_schema_2_round_trips_and_3_is_refused():
+    d = WorkflowDefinition.model_validate({**DEF, "schema": 2})
+    assert d.model_dump(by_alias=True, mode="json")["schema"] == 2
+    with pytest.raises(ValidationError):
+        WorkflowDefinition.model_validate({**DEF, "schema": 3})
+    no_schema = {k: v for k, v in DEF.items() if k != "schema"}
+    assert WorkflowDefinition.model_validate(no_schema).schema_version == 1
+
+
+def test_problem_severity_testrun_channel_template_requires():
+    assert DefinitionProblem(path="a", code="b", message="c").severity == "error"
+    assert DefinitionProblem(path="a", code="b", message="c", severity="warning").severity == "warning"
+    with pytest.raises(ValidationError):
+        DefinitionProblem(path="a", code="b", message="c", severity="info")
+    assert RunIn(channel="telegram").channel == "telegram"
+    with pytest.raises(ValidationError):
+        RunIn(channel="sms")
+    assert TemplateOut(key="k", version=1, name={}, category="c").requires == {}
