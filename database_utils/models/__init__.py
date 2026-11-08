@@ -29,6 +29,8 @@ from .crm import (
     TaskAssignee,
     Integration,
     IntegrationAuthType,
+    IntegrationInterest,
+    ClientChat,
     # uplink-mobile integration
     UploadedFile,
     UploadedFileOwnerType,
@@ -167,6 +169,8 @@ __all__ = [
     "TaskAssignee",
     "Integration",
     "IntegrationAuthType",
+    "IntegrationInterest",
+    "ClientChat",
     # uplink-mobile integration
     "UploadedFile",
     "UploadedFileOwnerType",
