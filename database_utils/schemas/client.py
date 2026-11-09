@@ -17,7 +17,11 @@ from .user import UserOut
 # balance would be a second source of truth that goes stale the moment a
 # payment lands. Money is integer cents, like every other amount.
 class ClientAccountOut(BaseModel):
-    state: Literal["CURRENT", "OVERDUE", "SUSPENSION_RISK"]
+    # SUSPENSION_RISK = auto-suspension ON and an ACTIVE service at the dunning
+    # threshold (backend-erp reuses services/dunning's predicate).
+    state: Literal["CURRENT", "OVERDUE", "SUSPENSION_RISK", "SUSPENDED"]
+    # SUSPENDED only: the SuspensionReason value of the open suspension.
+    suspended_reason: Optional[str] = None
     overdue_cents: int = 0
     # ACTIVE orders with payment_status PENDING|PARTIAL.
     pending_orders: int = 0

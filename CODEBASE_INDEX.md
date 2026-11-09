@@ -50,7 +50,7 @@ Key enums: `OrderStatus`, `OrderType`, `PaymentStatus`, `PaymentKind`, `PaymentM
 
 ### Schemas (`schemas/` — 39 modules, Pydantic v2; `__init__.py` star-imports + `model_rebuild()`)
 
-client, company, custom_field, invoice, notification, order, order_item, payment,
+client (`ClientAccountOut.state` CURRENT/OVERDUE/SUSPENSION_RISK/SUSPENDED + `suspended_reason`, 6.25.1), company, custom_field, invoice, notification, order, order_item, payment,
 permission, requests (Login + flat company-only Signup), role, task,
 task_template, user, workflow, integration, service_plan,
 client_service, inventory, playbook, tier, billing_due, mobile_integration,

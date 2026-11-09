@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
+### Changed
+- **6.25.1** (demo-UX, 2026-11-09) - `ClientAccountOut.state` gains `SUSPENDED`, plus optional `suspended_reason` (the `SuspensionReason` value of the open suspension). Schema only, no Alembic revision. `SUSPENSION_RISK` now means auto-suspension ON + an ACTIVE service at the dunning threshold (computed by backend-erp). Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_client_dpi_deactivation.py::test_account_state_suspended_with_reason`.
+
 ### Added
 - **6.25.0** (v1.7.0, doc 65) - integration types: `TELEGRAM_BOT` provider, integration interest, client chats, default/menu flags. Two additive revisions, no backfill, full downgrades. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
   - `ii1_integration_interest` (down `wf2_conversational`): new `integration_interest` + `IntegrationInterest` model; unique `(company_id, type, COALESCE(provider,''))`.
