@@ -18,6 +18,8 @@ schema is what makes "read-only" structural instead of a guard someone can
 forget. An `http://` value there would turn every CWMP POST into a bodyless GET
 at Railway's edge, and a CPE pointed at a dead URL has no remote fix.
 """
+import ipaddress
+
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from typing import Optional
 from uuid import UUID
@@ -45,6 +47,21 @@ class ProvisioningSettingsUpdate(BaseModel):
     # received the credential locks those CPEs out, and the ACS cannot fix it
     # because fixing it requires a session.
     acs_auth_required: Optional[bool] = None
+    # doc 67: ONU management range for EDGE telnet; "" / null clears it (feature off).
+    edge_mgmt_cidr: Optional[str] = None
+
+    @field_validator("edge_mgmt_cidr")
+    @classmethod
+    def validate_edge_mgmt_cidr(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        try:
+            net = ipaddress.IPv4Network(v.strip(), strict=True)
+        except ValueError:
+            net = None
+        if net is None or not net.is_private:
+            raise ValueError("edge_mgmt_cidr must be a private IPv4 network, e.g. 10.90.0.0/16")
+        return str(net)
 
     @model_validator(mode="after")
     def reject_null_on_not_null_columns(self):
@@ -109,6 +126,7 @@ class ProvisioningSettingsOut(BaseModel):
     proxy_kind: str
     proxy_address: Optional[str] = None
     gateway_host: Optional[str] = None
+    edge_mgmt_cidr: Optional[str] = None
     # Read-only (see the module docstring).
     acs_base_url: Optional[str] = None
     acs_auth_required: bool = False
