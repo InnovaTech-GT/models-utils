@@ -134,6 +134,16 @@ def test_account_rollup_shape():
         assert name in ClientServiceBillingOut.model_fields
 
 
+def test_account_state_suspended_with_reason():
+    # Demo-UX (2026-11-09): the card shows four states; SUSPENDED carries the
+    # SuspensionReason of the open suspension.
+    acc = ClientAccountOut(state="SUSPENDED", suspended_reason="NON_PAYMENT")
+    assert acc.suspended_reason == "NON_PAYMENT"
+    assert ClientAccountOut(state="CURRENT").suspended_reason is None
+    with pytest.raises(ValueError):
+        ClientAccountOut(state="BOGUS")
+
+
 def test_service_summary_is_the_small_shape():
     assert set(ClientServiceSummaryOut.model_fields) == {
         "id", "plan_name", "plan_type", "status"

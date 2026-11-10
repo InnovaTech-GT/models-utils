@@ -511,6 +511,10 @@ Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.
 
 Pinned by `tests/test_payment_link.py`.
 
+### Client account state (6.25.1, no DB migration)
+
+`schemas/client.py`: `ClientAccountOut.state` (computed by backend-erp, never stored) is one of `CURRENT` («Al día»), `OVERDUE` («Pago pendiente»), `SUSPENSION_RISK` («Riesgo de suspensión»: auto-suspension ON and an ACTIVE service at the dunning `min_overdue_orders` threshold, same predicate as backend-erp `services/dunning`) and `SUSPENDED` («Suspendido»). `suspended_reason: Optional[str]` carries the `SuspensionReason` value of the open suspension, set only for `SUSPENDED`. Pinned by `tests/test_client_dpi_deactivation.py`.
+
 ### Auth overhaul — request-schema changes (no DB migration)
 
 Company-only signup with locale-aware transactional email:
