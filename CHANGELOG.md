@@ -23,6 +23,13 @@ On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat`
   - Tests: `tests/test_edge_telnet.py`, `tests/test_et1_edge_telnet.py`, additions in `test_playbook_drivers.py`, `test_playbook_schema_v2.py`, `test_provisioning_run_v2.py`.
 
 ### Changed
+- **6.25.2** (v1.7.4, playbook inputs, 2026-11-10) - Schema and pure-code only, no Alembic revision. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - `playbook_template.input_problem(var, value)` -> `MISSING_INPUT` / `INVALID_INPUT` / None (required-without-default, `min_length`/`max_length`; a «input.k» stand-in counts as missing).
+  - `resolve_variables(..., *, dry_run=False)`: a dry run fills a missing required TEXT input with `«input.<key>»` (NUMBER/BOOLEAN still missing); a live call treats a provided stand-in as missing and applies `input_problem` to every provided value (`''` for a required input -> the key; outside `min_length`/`max_length` -> `"<key>: INVALID_INPUT"`), so a standalone job or workflow mode B is judged like a run. `dry_run_playbook` passes `dry_run=True`.
+  - `_plan_checks` refuses a live run whose declared inputs fail `input_problem` with `ResolutionError("MISSING_INPUT"|"INVALID_INPUT", errors=[{code, key, playbook_id, detail}])`, before any write. `create_run` judges its shared frame (incl. `extra_variables`); `preflight_run` gains `provided=`.
+  - `PlaybookVariable.min_length` / `max_length` (TEXT only, 1..64, min <= max).
+  - `ProvisioningJobOut.variables` is masked with `mask_secrets`.
+  - Tests: `test_namespaced_variables.py` (stand-ins, `input_problem`, the live `input_problem` backstop, `dry_run_playbook`), `test_playbook_schema_v2.py` (length limits, variables mask), `test_provisioning_run_v2.py` (inputs at `create_run` / `preflight_run`).
 - **6.25.1** (demo-UX, 2026-11-09) - `ClientAccountOut.state` gains `SUSPENDED`, plus optional `suspended_reason` (the `SuspensionReason` value of the open suspension). Schema only, no Alembic revision. `SUSPENSION_RISK` now means auto-suspension ON + an ACTIVE service at the dunning threshold (computed by backend-erp). Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
   - Tests: `tests/test_client_dpi_deactivation.py::test_account_state_suspended_with_reason`.
 

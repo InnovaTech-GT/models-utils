@@ -33,7 +33,7 @@ Design and plan: workspace `docs/superpowers/specs/2026-10-15-provisioning-worke
 
 | Module | Moved from (backend-erp) | Public surface |
 |---|---|---|
-| `playbook_template.py` | `provisioning/renderer.py` (all of it) | `TOKEN_SHAPE`, `TemplateError`, `Expr`, `FILTERS`, `parse_body`, `find_variables`, `find_template_errors`, `render_string`, `render_value`, `resolve_variables`, `mask_secrets`; re-exports `input_key`, `INPUT_NAMESPACE`, `is_secret_name`, `_SECRET_HINTS` |
+| `playbook_template.py` | `provisioning/renderer.py` (all of it) | `TOKEN_SHAPE`, `TemplateError`, `Expr`, `FILTERS`, `parse_body`, `find_variables`, `find_template_errors`, `render_string`, `render_value`, `resolve_variables` (`dry_run=` since 6.25.2), `input_problem` (6.25.2), `mask_secrets`; re-exports `input_key`, `INPUT_NAMESPACE`, `is_secret_name`, `_SECRET_HINTS` |
 | `playbook_render.py` | the render half of `provisioning/executor.py`, plus all of `provisioning/redaction.py` and `provisioning/guided.py` | render: `_render_step`, `_leftover_tokens`, `_render_text`, `_render_regex` (RE2, imported lazily), `_threshold`, `_prepare_checks`, `RenderError` (alias `_RenderError`), `_render_target_item`; captures: `_gate_capture`, `merge_captures` (alias `_merge_captures`), `_placeholders`; manual: `is_secret_field`, `_render_manual`; redaction: `redact_secrets`; guided: `GUIDED`, `should_pause`, `render_preview`, `is_pause_entry`, `without_pause`; preview: `_shows_probe`, `dry_run_playbook`, `_NOT_SIMULATED`, `_NOT_SHIPPED_DRIVERS` |
 | `provisioning_codes.py` | `Codes`, `NON_RETRYABLE_CODES` from `provisioning/errors.py` | the failure-code vocabulary. Stages, `RETRYABLE`, `is_transient` and `classify_connect_error` stay with the worker |
 | `playbook_drivers.py` | `services/playbook_drivers.py`, without `reject_driver_mismatch` and fastapi | `DRIVER_NOT_ALLOWED_FOR_TARGET`, `EDITOR_DRIVERS`, `ALLOWED_BY_TIER`, `allowed_drivers`, `ping_probe`, `driver_options`, `mismatches` |
@@ -122,6 +122,53 @@ session with the ACS at once, and GenieACS runs every task queued for it.
 
 The request shape is defined by the worker driver, not validated here.
 
+## 6.25.2: playbook inputs
+
+A playbook's `variables` are the inputs a caller supplies (`{{input.<key>}}`),
+for example the customer's new Wi-Fi password from the bot.
+
+**Declaring an input.** `PlaybookVariable` is `{key, label, type, required,
+default, min_length, max_length}`. `min_length` / `max_length` are optional,
+TEXT only, `1 <= min_length <= max_length <= 64` (64 is backend's SAFE_TEXT
+cap). A WPA2 passphrase is declared with `min_length: 8, max_length: 63`.
+Because they are modelled, both survive the playbook POST/PATCH `model_dump`.
+
+**Judging a value.** `input_problem(var, value)` (pure, in
+`playbook_template`) returns `MISSING_INPUT` when the value is `None`, `""`
+or its dry-run stand-in and the variable is required with no default;
+`INVALID_INPUT` when the text is shorter than `min_length` or longer than
+`max_length`; otherwise `None`. backend-erp's `clean_input` calls the same
+function, so the bot and run creation agree.
+
+**Live runs are refused at run creation.** `_plan_checks` runs
+`input_problem` over every declared variable on the plan's snapshotted
+definitions, judged on the run's shared frame (`extra_variables` included,
+bare or `input.`-namespaced keys). On a problem it raises
+`ResolutionError(code, ..., errors=[{code, key, playbook_id, detail}])`, one
+entry per key, `code` = the first entry's. This happens before the ACS
+registration ensure, so nothing is written. `create_run` passes its shared
+frame; `preflight_run(..., provided=)` takes the caller's inputs (a live
+preflight without them refuses a plan that declares a required input).
+Callers map it to 422 like any resolution failure. A standalone job (no run)
+still fails in the worker (and backend `POST /jobs` refuses it), because a
+live `resolve_variables` applies `input_problem` to every provided value: an
+empty required input is reported by its key, a value outside
+`min_length`/`max_length` as `"<key>: INVALID_INPUT"`.
+
+**Dry runs get stand-ins.** `resolve_variables(definition, provided,
+dry_run=True)` fills a missing required TEXT input (type unset counts as
+TEXT) with `«input.<key>»`, which has no braces, so the leftover-token guard
+passes. NUMBER and BOOLEAN inputs stay missing, so they need a `default` to be
+simulated. `dry_run_playbook` and the worker's executor pass `dry_run`; a dry
+run never refuses on inputs. In a live call a provided value equal to its
+stand-in counts as missing, so a stand-in can never reach a device.
+
+**Masking is name-based.** A variable's value is masked (`***`) in
+`ProvisioningJobOut.variables`, in `log.variables` and redacted from rendered
+steps only when its key contains `password`, `secret`, `token`, `key` or
+`credential` (`is_secret_name`). A customer secret must be named that way
+(`wifi_password`, not `wifi_clave`). There is no declared `sensitive` flag.
+
 ## 6.26.0: telnet on EDGE devices and best-effort steps (doc 67)
 
 ONU CATV on/off over telnet. The whole feature is **inert unless the tenant
@@ -169,7 +216,9 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
 | File | Covers |
 |---|---|
 | `tests/test_template_filters.py` | The renderer half of backend's test: filters, security, static/runtime errors, the guard, the hash-locked shared fixture `tests/fixtures/playbook_filters.json` (byte-identical to backend-erp's and frontend-erp's copies) |
-| `tests/test_namespaced_variables.py` | The doc-33 grammar, `input.*`, the leftover-token guard |
+| `tests/test_namespaced_variables.py` | The doc-33 grammar, `input.*`, the leftover-token guard; 6.25.2: dry-run stand-ins, the live stand-in and `input_problem` backstop, `dry_run_playbook` on the CGG WIFI_PASSWORD definition, the `input_problem` table |
+| `tests/test_provisioning_run_v2.py` (inputs) | 6.25.2: a live `create_run` missing / with an invalid input raises `MISSING_INPUT` / `INVALID_INPUT` with no run or job rows; a valid input lands in `frames.shared`; a dry run needs none; `preflight_run(provided=)` |
+| `tests/test_playbook_schema_v2.py` (inputs) | 6.25.2: `min_length`/`max_length` refusals, the WIFI_PASSWORD variable keeps both through `model_dump`, `ProvisioningJobOut.variables` masked |
 | `tests/test_redaction.py` | `redact_secrets`. The executor-integration and `secret_safe_audit` cases stay in backend-erp |
 | `tests/test_playbook_drivers.py` | The tier matrix, `ping_probe`, `driver_options`, `mismatches` (incl. the EDGE telnet gate). The 422 wrapper cases stay in backend-erp |
 | `tests/test_edge_telnet.py` | `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity`, `edge_telnet_ready`, `edge_telnet_step_problem` |

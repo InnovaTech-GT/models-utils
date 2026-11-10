@@ -87,11 +87,13 @@ from database_utils.schemas.playbook import (
 from database_utils.utils import crypto
 from database_utils.utils.acs_bootstrap import acs_values, reads_acs
 from database_utils.utils.provisioning_gates import ProvisioningGateError, run_gate_failures
+from database_utils.utils.playbook_template import input_problem
 from database_utils.utils.provisioning_events import RUN_CLOSED, emit_event
 from database_utils.utils.provisioning_resolution import (
     ResolutionError,
     ResolvedNode,
     ResolvedProvisioning,
+    input_key,
     resolve_provisioning,
 )
 from database_utils.utils.timezone_utils import make_aware_gt, now_gt
@@ -362,12 +364,28 @@ def _queue_child(db: Session, run: ProvisioningRun, position: int) -> Optional[P
     return job
 
 
+def _input_errors(definitions: Dict[str, Dict[str, Any]], provided: Dict[str, Any]):
+    """input_problem over every declared variable on the plan, one entry per key."""
+    errors: Dict[str, Dict[str, Any]] = {}
+    for pid, d in definitions.items():
+        for var in d.get("variables") or []:
+            key = var.get("key")
+            code = input_problem(var, provided.get(input_key(key), provided.get(key)))
+            if code and key not in errors:
+                errors[key] = {"code": code, "key": key, "playbook_id": pid,
+                               "detail": f"input '{key}' is {'missing' if code == 'MISSING_INPUT' else 'invalid'}"}
+    return list(errors.values())
+
+
 def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedProvisioning,
-                 purpose: str, *, ensure: bool):
+                 purpose: str, *, ensure: bool, provided: Optional[Dict[str, Any]] = None,
+                 dry_run: bool = False):
     """(ordered, definitions, secret_specs) plus every plan-wide refusal that
     needs the snapshotted definitions: SECRET_SPEC_CONFLICT,
-    OUTPUT_KEY_CONFLICT (§9.4) and, when a definition reads {{acs.*}}, the
-    ACS checks of §9.7 (ensure=True also ensures the CPE's registration)."""
+    OUTPUT_KEY_CONFLICT (§9.4), a live run's MISSING_INPUT / INVALID_INPUT
+    (input_problem over `provided`; a dry run gets «input.k» stand-ins
+    instead) and, when a definition reads {{acs.*}}, the ACS checks of §9.7
+    (ensure=True also ensures the CPE's registration)."""
     ordered = order_for_purpose(list(resolved.steps), purpose)
     definitions: Dict[str, Dict[str, Any]] = {}
     for node in ordered:
@@ -376,6 +394,10 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
             pb = db.get(Playbook, node.playbook_id)
             definitions[pid] = normalize_definition(dict((pb.definition if pb else None) or {}))
     secret_specs = _collect_specs(ordered, definitions)
+    if not dry_run:
+        errors = _input_errors(definitions, provided or {})
+        if errors:
+            raise ResolutionError(errors[0]["code"], "playbook inputs refused", errors=errors)
     if reads_acs(definitions.values()):
         cpe = next((n for n in resolved.path if n.position == 0), None)
         # The values are checked and discarded: the worker reloads them.
@@ -385,13 +407,17 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
 
 
 def preflight_run(db: Session, client_service: ClientService, resolved: ResolvedProvisioning,
-                  purpose: str, dry_run: bool = False) -> None:
+                  purpose: str, dry_run: bool = False,
+                  provided: Optional[Dict[str, Any]] = None) -> None:
     """create_run's plan-wide refusals with NO write (doc 42 §9.4, §9.7), for
     a caller that must refuse before it mutates anything (the lifecycle
     endpoints write the service status before they open the run). Raises the
     same ResolutionError codes create_run would, SECRETS_KEY_UNAVAILABLE
-    included."""
-    _o, _d, secret_specs = _plan_checks(db, client_service, resolved, purpose, ensure=False)
+    included, and MISSING_INPUT / INVALID_INPUT judged on `provided` (the
+    caller's extra_variables; a live preflight without them refuses a plan
+    that declares a required input)."""
+    _o, _d, secret_specs = _plan_checks(db, client_service, resolved, purpose, ensure=False,
+                                        provided=provided or {}, dry_run=dry_run)
     if secret_specs and not dry_run:
         _encrypt_secrets(uuid.uuid4(), client_service.company_id, {})
 
@@ -434,8 +460,10 @@ def create_run(
 
     Raises ResolutionError even when `resolution` is passed: the plan-wide
     checks need the snapshotted definitions, so SECRET_SPEC_CONFLICT,
-    OUTPUT_KEY_CONFLICT and SECRETS_KEY_UNAVAILABLE come from here, not from
-    resolve_provisioning. Callers map it to 422 like a resolution failure.
+    OUTPUT_KEY_CONFLICT, SECRETS_KEY_UNAVAILABLE and a live run's
+    MISSING_INPUT / INVALID_INPUT (declared inputs judged on the shared frame,
+    extra_variables included; errors[] names each key) come from here, not
+    from resolve_provisioning. Callers map it to 422 like a resolution failure.
 
     A definition that reads {{acs.*}} (doc 42 §9.7) also raises
     ACS_NOT_CONFIGURED / ACS_SERIAL_CLAIMED / ACS_VALUE_UNSAFE, and a non-dry
@@ -463,7 +491,8 @@ def create_run(
         shared.update(extra_variables)
 
     ordered, definitions, secret_specs = _plan_checks(
-        db, client_service, resolved, purpose, ensure=not dry_run)
+        db, client_service, resolved, purpose, ensure=not dry_run,
+        provided=shared, dry_run=dry_run)
 
     bring_up = purpose not in TEARDOWN_PURPOSES
     plan: List[Dict[str, Any]] = []

@@ -244,7 +244,8 @@ def gate_capture_items(values: Iterable[Any],
 
 def _placeholders(definition: dict) -> Dict[str, str]:
     """Dry run (doc 42 §9.5): «capture.k» / «secret.k» / «acs.k» — no braces, so the
-    leftover guard passes; nothing is generated or encrypted."""
+    leftover guard passes; nothing is generated or encrypted. A missing required
+    TEXT input's «input.k» comes from resolve_variables(dry_run=True)."""
     out = {}
     for key in PHASE_KEYS.values():
         for s in definition.get(key) or []:
@@ -422,7 +423,7 @@ def dry_run_playbook(definition: dict, variables: Optional[Dict[str, Any]], *,
     dry-run job or run does (canon C7, doc 42 §9.2). `category_tier` /
     `purpose` (a binding of the playbook) enable CPE_NETWORK_PRECONDITION."""
     definition = normalize_definition(dict(definition or {})) or {}
-    resolved, missing_required = resolve_variables(definition, variables)
+    resolved, missing_required = resolve_variables(definition, variables, dry_run=True)
     resolved.update(_placeholders(definition))
     steps_report: List[dict] = []
     all_missing: List[str] = list(missing_required)

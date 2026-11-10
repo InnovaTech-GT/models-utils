@@ -1,6 +1,8 @@
 """Playbook format v2 (doc 42 §4, §10.1, §14.1): phases, session, captures,
 secrets, outputs, the legacy normalizer and the save-time rules."""
 import copy
+from datetime import datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +11,8 @@ from database_utils.schemas.playbook import (
     SESSION_PROBE_STEP,
     PlaybookDefinition,
     PlaybookOut,
+    PlaybookVariable,
+    ProvisioningJobOut,
     job_steps,
     mask_log_outputs,
     normalize_definition,
@@ -621,3 +625,36 @@ def test_legacy_on_failure_list_still_converted_but_warn_string_is_not():
     out = normalize_definition(comp)
     assert "on_failure" not in out["configuration"][0]
     assert out["rollback"][0]["undoes"] == "a"
+
+# ----------------------------------------------------- input length limits (6.25.2)
+
+_WIFI_VAR = {"key": "wifi_password", "label": "tu nueva clave WiFi", "type": "TEXT",
+             "required": True, "default": None, "min_length": 8, "max_length": 63}
+
+
+@pytest.mark.parametrize("bad", [
+    {"type": "NUMBER", "min_length": 1},
+    {"min_length": 10, "max_length": 8},
+    {"max_length": 65},
+    {"min_length": 0},
+])
+def test_input_length_limits_are_refused(bad):
+    with pytest.raises(ValidationError):
+        PlaybookVariable.model_validate(_WIFI_VAR | bad)
+
+
+def test_the_wifi_password_input_keeps_its_limits():
+    definition = {"variables": [_WIFI_VAR],
+                  "configuration": [{"name": "set-wifi-password", "driver": "tr069",
+                                     "request": {"op": "setParameterValues", "parameters": {
+                                         "p": ["{{input.wifi_password}}", "xsd:string"]}}}]}
+    dumped = PlaybookDefinition.model_validate(definition).model_dump()["variables"][0]
+    assert (dumped["min_length"], dumped["max_length"]) == (8, 63)
+
+
+def test_job_out_masks_secret_variables():
+    job = ProvisioningJobOut.model_validate({
+        "id": uuid4(), "company_id": uuid4(), "playbook_id": uuid4(), "status": "QUEUED",
+        "attempts": 0, "max_attempts": 3, "triggered_by": "USER", "created_at": datetime.now(),
+        "variables": {"input.wifi_password": "Prueba2026!", "input.vlan": 10}})
+    assert job.variables == {"input.wifi_password": "***", "input.vlan": 10}
