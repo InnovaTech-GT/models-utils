@@ -830,3 +830,90 @@ def test_no_retry_while_the_previous_run_rolls_back(db, csr):
     assert run.phase == "ROLLBACK"
     again, created = create_or_get_run(db, csr.service, PURPOSE_ACTIVATION)
     assert not created and again.id == run.id
+
+
+# --- doc 67: best-effort (on_failure "warn") steps and run.warnings ---
+
+CATV = {"name": "catv", "label": "CATV", "driver": "telnet", "on_failure": "warn",
+        "hint": "Cable sigue encendido", "template": "config catv disable\nconfig save\nreboot",
+        "expect_disconnect": True}
+
+
+def test_needs_probe_ignores_warn_only_cli_steps():
+    assert pr._needs_probe({"configuration": [CATV]}, cpe_not_up_yet=False) is False
+    assert pr._needs_probe({"configuration": [_cli("x")]}, cpe_not_up_yet=False) is True
+
+
+def test_ran_steps_skips_warned_at_connect_or_render():
+    job = ProvisioningJob(log={"steps": [{"name": "catv", "status": "WARNED",
+                                          "detail": {"stage": "connect"}}]})
+    assert ran_steps(job) == []
+    job.log = {"steps": [{"name": "catv", "status": "WARNED", "detail": {"stage": "render"}}]}
+    assert ran_steps(job) == []
+    job.log = {"steps": [{"name": "catv", "status": "WARNED", "detail": {"stage": "command"}}]}
+    assert ran_steps(job) == ["catv"]
+
+
+@pytest.fixture()
+def suspension(db, csr):
+    csr.playbooks["onu-suspension"].definition = {"configuration": [CATV]}
+    csr.playbooks["olt-suspension"].definition = {
+        "configuration": [{"name": "noop", "driver": "simulator", "template": "ok"}]}
+    csr.playbooks["router-suspension"].definition = {
+        "configuration": [_cli("cut", driver="ssh")],
+        "rollback": [_cli("uncut", driver="ssh", undoes="cut")]}
+    db.flush()
+    return csr
+
+
+def test_warn_only_suspension_plan_has_no_probe(db, suspension):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    assert ("PRECONDITIONS", "onu") not in _shape(run)
+
+
+def test_advance_run_merges_child_warnings_and_succeeds(db, suspension):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    job = _children(db, run)[0]
+    while job is not None:
+        if run.plan[job.run_position]["category_key"] == "onu":
+            warned = {"name": "catv", "status": "WARNED",
+                      "detail": {"stage": "connect", "code": "WRONG_DEVICE"}}
+            job = _settle(db, job, steps=[warned], warnings=[
+                {"code": "WRONG_DEVICE", "step": "catv", "label": "CATV",
+                 "hint": "Cable sigue encendido", "error": "identity mismatch"}])
+        else:
+            job = _settle(db, job)
+    assert run.status == S.SUCCEEDED
+    [w] = run.warnings
+    assert w["code"] == "WRONG_DEVICE" and w["item_id"] == str(suspension.cpe.id)
+    assert w["device_label"] and w["position"] is not None
+
+
+def test_no_warnings_by_default(db, csr):
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    _drive(db, run)
+    assert run.status == S.SUCCEEDED and run.warnings is None
+
+
+@pytest.mark.parametrize("onu_entry, warned", [
+    ({"name": "catv", "status": "SUCCEEDED"}, True),
+    ({"name": "catv", "status": "WARNED", "detail": {"stage": "command"}}, True),
+    ({"name": "catv", "status": "WARNED", "detail": {"stage": "connect"}}, False),
+])
+def test_suspension_router_failure_rolls_back_despite_onu_warn_step(db, suspension, onu_entry, warned):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    job = _children(db, run)[0]
+    while job is not None and run.plan[job.run_position]["phase"] != "ROLLBACK":
+        e = run.plan[job.run_position]
+        if e["category_key"] == "onu" and e["phase"] == "CONFIGURATION":
+            job = _settle(db, job, steps=[onu_entry])
+        elif e["category_key"] == "router" and e["phase"] == "CONFIGURATION":
+            job = _settle(db, job, S.FAILED, steps=[_entry("cut", "FAILED")])
+        else:
+            job = _settle(db, job)
+    assert [e["item_id"] for e in run.plan if e["phase"] == "ROLLBACK"] == [str(suspension.core.id)]
+    assert ((run.frames or {}).get("rollback") or {}).get("no_rollback") == []
+    _settle(db, job)
+    assert run.status == S.ROLLED_BACK
+    codes = [w["code"] for w in run.warnings or []]
+    assert codes == (["WARN_STEP_NOT_UNDONE"] if warned else [])

@@ -60,6 +60,23 @@ class Codes:
     CAPTURE_UNSAFE = "CAPTURE_UNSAFE"
     THRESHOLD_VIOLATED = "THRESHOLD_VIOLATED"
     REGEX_UNSUPPORTED = "REGEX_UNSUPPORTED"
+    # --- EDGE telnet (doc 67, ONU CATV on/off) ---
+    # The ONU has no ACS registration (retryable: it may not be linked yet).
+    CPE_NOT_IN_ACS = "CPE_NOT_IN_ACS"
+    # ConnectionRequestURL's _lastInform still stale after a summon (retryable).
+    EDGE_HOST_STALE = "EDGE_HOST_STALE"
+    # The resolved host is not an IPv4 inside the tenant's edge_mgmt_cidr: never dialed.
+    EDGE_HOST_OUT_OF_RANGE = "EDGE_HOST_OUT_OF_RANGE"
+    # The identity read after login does not match the target item: nothing else sent.
+    WRONG_DEVICE = "WRONG_DEVICE"
+    # Device type / tenant not set up for EDGE telnet (edge_telnet_ready False).
+    EDGE_TELNET_NOT_CONFIGURED = "EDGE_TELNET_NOT_CONFIGURED"
+    # An EDGE telnet step without on_failure "warn" (always best effort).
+    EDGE_TELNET_REQUIRES_WARN = "EDGE_TELNET_REQUIRES_WARN"
+    # session.enable / config_mode on EDGE telnet: never send an enable secret to an ONU.
+    EDGE_TELNET_NO_ENABLE = "EDGE_TELNET_NO_ENABLE"
+    # Run-warning code only: a best-effort step applied in a run that rolled back.
+    WARN_STEP_NOT_UNDONE = "WARN_STEP_NOT_UNDONE"
 
 
 # Standalone and legacy jobs (doc 42 §8.2.7): today's restart-from-step-0

@@ -80,6 +80,7 @@ from database_utils.schemas.playbook import (
     NO_UNDO_DRIVERS,
     SECRET_ALPHABET,
     SESSION_PROBE_STEP,
+    WARN_STEP,
     job_steps,
     normalize_definition,
 )
@@ -130,6 +131,8 @@ STRANDED_RUN_EXPIRED = "STRANDED_RUN_EXPIRED"
 ROLLBACK_INCOMPLETE = "ROLLBACK_INCOMPLETE"
 REVERTED = "REVERTED"
 NO_ROLLBACK_DEFINED = "NO_ROLLBACK_DEFINED"
+# Run-warning code (doc 67): a best-effort step applied in a run that rolled back.
+WARN_STEP_NOT_UNDONE = "WARN_STEP_NOT_UNDONE"
 
 # Guided runs (doc 50): bounds of run.guided_timeout_seconds, the deadline of
 # each guided pause. ClientServiceProvisionIn validates the same range.
@@ -228,10 +231,12 @@ def _device_label(node: ResolvedNode) -> str:
 
 
 def _needs_probe(definition: Dict[str, Any], cpe_not_up_yet: bool) -> bool:
-    """The implicit preflight session probe (doc 42 §6.4)."""
+    """The implicit preflight session probe (doc 42 §6.4). A best-effort CLI
+    step (on_failure "warn", doc 67) never implies it: a hard probe on an
+    offline ONU would fail the whole run, which the warn step exists to avoid."""
     if cpe_not_up_yet:
         return False
-    if not any(s.get("driver") in CLI_DRIVERS
+    if not any(s.get("driver") in CLI_DRIVERS and s.get("on_failure") != WARN_STEP
                for key in ("configuration", "verification")
                for s in definition.get(key) or []):
         return False
@@ -583,6 +588,33 @@ def _merge_outputs(run: ProvisioningRun, job: ProvisioningJob, entry: Dict[str, 
     run.outputs = merged
 
 
+def _add_warnings(run: ProvisioningRun, rows: List[Dict[str, Any]]) -> None:
+    """Append run warnings, last writer per (item_id, step) (doc 67 §4.5)."""
+    if not rows:
+        return
+    merged = list(run.warnings or [])
+    for row in rows:
+        merged = [w for w in merged
+                  if (w.get("item_id"), w.get("step")) != (row.get("item_id"), row.get("step"))]
+        merged.append(row)
+    run.warnings = merged
+
+
+def _merge_warnings(run: ProvisioningRun, job: ProvisioningJob, entry: Dict[str, Any]) -> None:
+    """job.log.warnings (best-effort steps that WARNED) -> run.warnings, rows
+    {code, step, label, hint, error, item_id, device_label, position}."""
+    _add_warnings(run, [
+        dict(w) | {"item_id": entry["item_id"], "device_label": entry.get("device_label"),
+                   "position": job.run_position}
+        for w in (job.log or {}).get("warnings") or [] if isinstance(w, dict)
+    ])
+
+
+def _warn_names(definition: Dict[str, Any]) -> set:
+    return {s.get("name") for s in definition.get("configuration") or []
+            if s.get("on_failure") == WARN_STEP}
+
+
 def _last_entries(job: ProvisioningJob) -> Dict[str, Dict[str, Any]]:
     """Last step-log entry per step name (a retried or resumed step appends)."""
     last: Dict[str, Dict[str, Any]] = {}
@@ -601,8 +633,8 @@ def ran_steps(job: ProvisioningJob) -> List[str]:
     whatever its final outcome; plus the step interrupted by a crash
     (`log.interrupted_step`, the step NAME backend-erp's _finish copies from
     the journal before stripping it, doc 42 §8.3). An entry SKIPPED or FAILED
-    at stage `connect` / `render` sent nothing. The session probe never
-    counts."""
+    at stage `connect` / `render` sent nothing, and so did a best-effort step
+    WARNED at those stages (doc 67). The session probe never counts."""
     ran: List[str] = []
     for e in (job.log or {}).get("steps") or []:
         if not isinstance(e, dict):
@@ -611,7 +643,7 @@ def ran_steps(job: ProvisioningJob) -> List[str]:
         if name is None or name == SESSION_PROBE_STEP or name in ran or e.get("status") == "SKIPPED":
             continue
         stage = (e.get("detail") or {}).get("stage")
-        if e.get("status") == "FAILED" and stage in ("connect", "render"):
+        if e.get("status") in ("FAILED", "WARNED") and stage in ("connect", "render"):
             continue
         ran.append(name)
     name = (job.log or {}).get("interrupted_step")
@@ -662,7 +694,10 @@ def _plan_rollback(db: Session, run: ProvisioningRun, items: Optional[Iterable[s
     """(touched, entries, no_rollback) for the run's CONFIGURATION children
     (doc 42 §7.1): touched = items with a non-empty ran_steps, in reverse
     configuration order; entries = the ROLLBACK plan entries to append;
-    no_rollback = touched items that changed the device but have no rollback."""
+    no_rollback = touched items that changed the device but have no rollback.
+    Best-effort steps (on_failure "warn", doc 67) are never undone, so they
+    are left out of ran_steps here: a device whose only ran steps are warn
+    steps is not touched."""
     wanted = None if items is None else {str(i) for i in items}
     plan = run.plan or []
     cfg = [j for j in _children(db, run)
@@ -673,11 +708,12 @@ def _plan_rollback(db: Session, run: ProvisioningRun, items: Optional[Iterable[s
         entry = plan[job.run_position]
         if wanted is not None and entry["item_id"] not in wanted:
             continue
-        ran = ran_steps(job)
+        d = definition_for(run, entry["playbook_id"])
+        warn = _warn_names(d)
+        ran = [n for n in ran_steps(job) if n not in warn]
         if not ran:
             continue
         touched.append(entry["item_id"])
-        d = definition_for(run, entry["playbook_id"])
         rollback = d.get("rollback") or []
         if not rollback:
             drivers = {s.get("name"): s.get("driver") for s in d.get("configuration") or []}
@@ -764,12 +800,36 @@ def _enter_rollback(db: Session, run: ProvisioningRun, code: str, error: Optiona
     (c) otherwise phase ROLLBACK and the first entry is queued."""
     _set_cause(run, code, error)
     touched, entries, no_rollback = _plan_rollback(db, run)
+    _warn_not_undone(db, run)
     if not touched:
         close_run(db, run, ProvisioningJobStatus.CANCELLED if cancelled
                   else ProvisioningJobStatus.FAILED)
         return None
     _record_rollback(run, entries, no_rollback)
     return _close_after_rollback_planned(db, run, entries, no_rollback)
+
+
+def _warn_not_undone(db: Session, run: ProvisioningRun) -> None:
+    """A run that rolls back after a best-effort step ran: that step is not
+    undone (doc 67), so the office gets a WARN_STEP_NOT_UNDONE run warning."""
+    plan = run.plan or []
+    rows = []
+    for job in _children(db, run):
+        entry = plan[job.run_position] if job.run_position < len(plan) else {}
+        if entry.get("phase") != PHASE_CONFIGURATION:
+            continue
+        cfg = {s.get("name"): s for s in
+               definition_for(run, entry["playbook_id"]).get("configuration") or []}
+        for name in ran_steps(job):
+            step = cfg.get(name) or {}
+            if step.get("on_failure") != WARN_STEP:
+                continue
+            rows.append({"code": WARN_STEP_NOT_UNDONE, "step": name,
+                         "label": step.get("label") or name, "hint": step.get("hint"),
+                         "error": "best-effort step applied; it is not undone by the rollback",
+                         "item_id": entry["item_id"], "device_label": entry.get("device_label"),
+                         "position": job.run_position})
+    _add_warnings(run, rows)
 
 
 def _finish_rollback(db: Session, run: ProvisioningRun) -> None:
@@ -908,6 +968,7 @@ def advance_run(db: Session, job: ProvisioningJob) -> Optional[ProvisioningJob]:
         return _advance_legacy(db, run, job)
 
     _merge_outputs(run, job, entry)
+    _merge_warnings(run, job, entry)
     ok = job.status in TERMINAL_OK
     cancelled = job.status == ProvisioningJobStatus.CANCELLED
 
