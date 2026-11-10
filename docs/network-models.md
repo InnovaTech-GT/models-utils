@@ -475,7 +475,7 @@ The replacement is two orthogonal columns on the tenant singleton
 | `dial_target` | `device` \| `gateway` | whose address do we dial — the DEVICE's own `mgmt_host`, or the tenant gateway that `dst-nat`s to it |
 | `proxy_kind` | `none` \| `socks5` | is there a hop in front of that address, and of what sort |
 | `proxy_address` | `host:port`, NULL | the SOCKS5 listener; **required** when `proxy_kind='socks5'` (`ck_provisioning_settings_proxy_address`) |
-| `edge_mgmt_cidr` | private IPv4 network, NULL | et1 (doc 67): the ONU management range an EDGE telnet host must fall in (e.g. `10.90.0.0/16`), validated strict + private by `ProvisioningSettingsUpdate`; `""` clears. **NULL = EDGE telnet off**: no driver option, validation or run changes |
+| `edge_mgmt_cidr` | private IPv4 network, NULL | et1 (doc 67): the ONU management range an EDGE telnet host must fall in (e.g. `10.90.0.0/16`), validated strict + inside RFC 1918 (10/8, 172.16/12, 192.168/16; loopback, link-local, 0/8, CGNAT refused) by `ProvisioningSettingsUpdate`; `""` clears. **NULL = EDGE telnet off**: no driver option, validation or run changes |
 | `gateway_host` | String, NULL | the gateway's address on the path WE dial; **required** when `dial_target='gateway'` (`ck_provisioning_settings_gateway_host`). Deliberately `String`, not `INET`: a ZeroTier value is RFC1918 and a public one may be a DDNS hostname, so no routability assertion is possible or wanted. The per-device external port stays `inventory_item.nat_port` |
 
 Four combinations, five scenarios, no schema change needed for a sixth:

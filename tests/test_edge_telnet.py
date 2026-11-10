@@ -11,6 +11,11 @@ def test_host_in_cidr():
     for bad in ("onu.local", "fe80::1", "", None, "10.90.3.7:7547"):
         assert not host_in_cidr(bad, "10.90.0.0/16")
     assert not host_in_cidr("10.90.3.7", None)
+    # A wide CIDR already stored in the DB cannot widen the dial range.
+    for host, cidr in (("127.0.0.1", "127.0.0.0/8"), ("0.0.0.0", "0.0.0.0/8"),
+                       ("169.254.169.254", "169.254.0.0/16"), ("224.0.0.1", "0.0.0.0/0")):
+        assert not host_in_cidr(host, cidr)
+    assert host_in_cidr("192.168.1.10", "0.0.0.0/0")
 
 
 def test_oui_of():

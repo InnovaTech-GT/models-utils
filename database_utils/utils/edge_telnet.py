@@ -19,13 +19,27 @@ EDGE_TELNET_PORT = 23
 _HEX = re.compile(r"[^0-9A-F]")
 _HEX6 = re.compile(r"[0-9A-F]{6}")
 
+# The only space ONU management may live in (RFC 1918). `is_private` alone also
+# admits loopback, 0.0.0.0/8, link-local (cloud metadata) and 192.0.0.0/24, and
+# the dial host comes from the CPE's own ConnectionRequestURL.
+EDGE_MGMT_SPACE = tuple(ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
+
+def edge_mgmt_network_ok(net: ipaddress.IPv4Network) -> bool:
+    """True when `net` lies entirely inside RFC 1918 space."""
+    return any(net.subnet_of(space) for space in EDGE_MGMT_SPACE)
+
 
 def host_in_cidr(host: Optional[str], cidr: Optional[str]) -> bool:
-    """True only for an IPv4 literal inside `cidr` (no hostname, no port, no v6)."""
+    """True only for an RFC 1918 IPv4 literal inside `cidr` (no hostname, no
+    port, no v6). The host check is independent of `cidr`, so a CIDR already
+    stored in the DB cannot widen the dial range to loopback/link-local."""
     if not host or not cidr:
         return False
     try:
-        return ipaddress.IPv4Address(host) in ipaddress.IPv4Network(cidr, strict=False)
+        addr = ipaddress.IPv4Address(host)
+        return (addr in ipaddress.IPv4Network(cidr, strict=False)
+                and any(addr in space for space in EDGE_MGMT_SPACE))
     except ValueError:
         return False
 

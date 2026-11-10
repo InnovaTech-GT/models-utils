@@ -11,6 +11,7 @@ On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat`
 
 ### Added
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
+  - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.
   - `playbook_drivers`: EDGE allows `telnet` in the pure matrix; `driver_options(..., edge_telnet_ok=False)` / `mismatches(..., edge_telnet_ok=False)` gate it (`EDGE_TELNET_NOT_CONFIGURED`), and an EDGE telnet step must be `on_failure: "warn"` (`EDGE_TELNET_REQUIRES_WARN`) with no `session.enable` / `config_mode` (`EDGE_TELNET_NO_ENABLE`). Every `mismatches` entry gains `reason`.
   - `Codes`: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE`, `EDGE_HOST_OUT_OF_RANGE`, `WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`, `EDGE_TELNET_NO_ENABLE`, `WARN_STEP_NOT_UNDONE` (`NON_RETRYABLE_CODES` unchanged).

@@ -26,6 +26,7 @@ from uuid import UUID
 from datetime import datetime
 
 from database_utils.models.isp import DIAL_TARGETS, PROXY_KINDS
+from database_utils.utils.edge_telnet import edge_mgmt_network_ok
 
 
 # Update fields whose provisioning_settings column is NOT NULL.
@@ -59,8 +60,9 @@ class ProvisioningSettingsUpdate(BaseModel):
             net = ipaddress.IPv4Network(v.strip(), strict=True)
         except ValueError:
             net = None
-        if net is None or not net.is_private:
-            raise ValueError("edge_mgmt_cidr must be a private IPv4 network, e.g. 10.90.0.0/16")
+        if net is None or not edge_mgmt_network_ok(net):
+            raise ValueError("edge_mgmt_cidr must be an RFC 1918 IPv4 network "
+                             "(inside 10/8, 172.16/12 or 192.168/16), e.g. 10.90.0.0/16")
         return str(net)
 
     @model_validator(mode="after")

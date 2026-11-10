@@ -22,7 +22,9 @@ def test_edge_mgmt_cidr_validation():
     assert ProvisioningSettingsUpdate(edge_mgmt_cidr="10.90.0.0/16").edge_mgmt_cidr == "10.90.0.0/16"
     assert ProvisioningSettingsUpdate(edge_mgmt_cidr="").edge_mgmt_cidr is None
     assert ProvisioningSettingsUpdate(edge_mgmt_cidr=None).edge_mgmt_cidr is None
-    for bad in ("10.90.1.0/16", "8.8.8.0/24", "fd00::/8", "nope"):   # non-strict, public, v6, junk
+    for bad in ("10.90.1.0/16", "8.8.8.0/24", "fd00::/8", "nope",   # non-strict, public, v6, junk
+                "127.0.0.0/8", "0.0.0.0/8", "169.254.0.0/16", "192.0.0.0/24",  # is_private but not RFC 1918
+                "100.64.0.0/10", "0.0.0.0/0", "10.0.0.0/7"):
         with pytest.raises(ValidationError):
             ProvisioningSettingsUpdate(edge_mgmt_cidr=bad)
     assert "edge_mgmt_cidr" in ProvisioningSettingsOut.model_fields

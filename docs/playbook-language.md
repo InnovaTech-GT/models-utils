@@ -142,7 +142,9 @@ bind/edit validation and run is unchanged.
   `config_mode` (`EDGE_TELNET_NO_ENABLE`). `edge_telnet_step_problem` is the
   shared check. Every `mismatches` entry has a `reason` (None for the plain
   tier mismatch).
-- Helpers: `host_in_cidr`, `oui_of`, `identity_matches` (MAC tail = GPON
+- Helpers: `host_in_cidr` (the host must also be RFC 1918, whatever the CIDR,
+  so a wide stored CIDR cannot reach loopback/link-local), `edge_mgmt_network_ok`
+  (`EDGE_MGMT_SPACE` = 10/8, 172.16/12, 192.168/16), `oui_of`, `identity_matches` (MAC tail = GPON
   serial tail; OUI = ACS device id prefix when known), `extract_identity`
   (re2), `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.
 
