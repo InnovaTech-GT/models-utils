@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
+### Added
+- **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
+  - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.
+  - `playbook_drivers`: EDGE allows `telnet` in the pure matrix; `driver_options(..., edge_telnet_ok=False)` / `mismatches(..., edge_telnet_ok=False)` gate it (`EDGE_TELNET_NOT_CONFIGURED`), and an EDGE telnet step must be `on_failure: "warn"` (`EDGE_TELNET_REQUIRES_WARN`) with no `session.enable` / `config_mode` (`EDGE_TELNET_NO_ENABLE`). Every `mismatches` entry gains `reason`.
+  - `Codes`: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE`, `EDGE_HOST_OUT_OF_RANGE`, `WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`, `EDGE_TELNET_NO_ENABLE`, `WARN_STEP_NOT_UNDONE` (`NON_RETRYABLE_CODES` unchanged).
+  - `PlaybookStep.on_failure: "warn"` (configuration/verification; may use `wait_until` in configuration; never undone, a rollback `undoes` it is refused) and `expect_disconnect` (ssh/telnet, configuration/verification). `normalize_definition` keeps the string `"warn"` on a legacy shape. `ROLLBACK_EMPTY` ignores warn steps.
+  - Runs: `advance_run` merges `job.log.warnings` into `run.warnings` (last writer per `(item_id, step)`); `_needs_probe` ignores warn CLI steps; `ran_steps` skips a WARNED entry at stage `connect`/`render`; rollback planning leaves warn steps out (never undone) and adds a `WARN_STEP_NOT_UNDONE` run warning when one ran.
+  - Schemas: `DeviceType*` `identity_command` / `identity_regex` (one group, re2-safe); `ProvisioningSettingsUpdate/Out.edge_mgmt_cidr` (strict private IPv4, `""` clears).
+  - Not in this release (founder scope cut 2026-11-10): `run_if`, the catv template tokens, the internet-only ACTIVATION plan flag.
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_edge_telnet.py`, `tests/test_et1_edge_telnet.py`, additions in `test_playbook_drivers.py`, `test_playbook_schema_v2.py`, `test_provisioning_run_v2.py`.
+
 ### Changed
 - **6.25.1** (demo-UX, 2026-11-09) - `ClientAccountOut.state` gains `SUSPENDED`, plus optional `suspended_reason` (the `SuspensionReason` value of the open suspension). Schema only, no Alembic revision. `SUSPENSION_RISK` now means auto-suspension ON + an ACTIVE service at the dunning threshold (computed by backend-erp). Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
   - Tests: `tests/test_client_dpi_deactivation.py::test_account_state_suspended_with_reason`.
