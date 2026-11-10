@@ -450,7 +450,9 @@ def resolve_variables(
     `dry_run` fills a missing required TEXT input with the stand-in
     «input.<key>» so a simulation renders; NUMBER/BOOLEAN inputs stay missing
     (they need a default to be simulated). In a live call a provided value
-    equal to its stand-in counts as missing.
+    equal to its stand-in counts as missing, and a provided value that
+    input_problem refuses ('' for a required input, outside min/max_length)
+    joins the list too — bare key for MISSING_INPUT, "<key>: INVALID_INPUT".
     Returns (resolved, missing_required_keys)."""
     provided = dict(provided or {})
     resolved: Dict[str, Any] = {}
@@ -463,10 +465,12 @@ def resolve_variables(
             for k in (key, namespaced):
                 if provided.get(k) == f"«{namespaced}»":
                     del provided[k]
-        if key in provided:
-            resolved[namespaced] = provided[key]
-        elif namespaced in provided:
-            resolved[namespaced] = provided[namespaced]
+        if key in provided or namespaced in provided:
+            value = provided[key] if key in provided else provided[namespaced]
+            resolved[namespaced] = value
+            code = None if dry_run else input_problem(var, value)
+            if code:  # same judgement as run creation ('' / length limits)
+                missing.append(key if code == "MISSING_INPUT" else f"{key}: {code}")
         elif var.get("default") is not None:
             resolved[namespaced] = var["default"]
         elif var.get("required"):

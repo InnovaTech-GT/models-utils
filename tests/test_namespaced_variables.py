@@ -190,6 +190,17 @@ class TestDryRunStandIns:
         assert missing == ["wifi_password"]
         assert STAND_IN not in resolved.values()
 
+    @pytest.mark.parametrize("value,expected", [
+        ("", ["wifi_password"]),
+        ("abc", ["wifi_password: INVALID_INPUT"]),
+        ("x" * 64, ["wifi_password: INVALID_INPUT"]),
+        ("Prueba2026!", []),
+    ])
+    @pytest.mark.parametrize("key", ["wifi_password", "input.wifi_password"])
+    def test_a_live_call_judges_provided_inputs_like_run_creation(self, key, value, expected):
+        _resolved, missing = resolve_variables(CGG_WIFI, {key: value})
+        assert missing == expected
+
     def test_dry_run_playbook_renders_the_stand_in(self):
         report = dry_run_playbook(CGG_WIFI, {})
         assert report["valid"] is True

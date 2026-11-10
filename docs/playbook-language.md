@@ -150,7 +150,10 @@ registration ensure, so nothing is written. `create_run` passes its shared
 frame; `preflight_run(..., provided=)` takes the caller's inputs (a live
 preflight without them refuses a plan that declares a required input).
 Callers map it to 422 like any resolution failure. A standalone job (no run)
-still fails in the worker, where `resolve_variables` reports the key missing.
+still fails in the worker (and backend `POST /jobs` refuses it), because a
+live `resolve_variables` applies `input_problem` to every provided value: an
+empty required input is reported by its key, a value outside
+`min_length`/`max_length` as `"<key>: INVALID_INPUT"`.
 
 **Dry runs get stand-ins.** `resolve_variables(definition, provided,
 dry_run=True)` fills a missing required TEXT input (type unset counts as
@@ -171,7 +174,7 @@ steps only when its key contains `password`, `secret`, `token`, `key` or
 | File | Covers |
 |---|---|
 | `tests/test_template_filters.py` | The renderer half of backend's test: filters, security, static/runtime errors, the guard, the hash-locked shared fixture `tests/fixtures/playbook_filters.json` (byte-identical to backend-erp's and frontend-erp's copies) |
-| `tests/test_namespaced_variables.py` | The doc-33 grammar, `input.*`, the leftover-token guard; 6.25.2: dry-run stand-ins, the live stand-in backstop, `dry_run_playbook` on the CGG WIFI_PASSWORD definition, the `input_problem` table |
+| `tests/test_namespaced_variables.py` | The doc-33 grammar, `input.*`, the leftover-token guard; 6.25.2: dry-run stand-ins, the live stand-in and `input_problem` backstop, `dry_run_playbook` on the CGG WIFI_PASSWORD definition, the `input_problem` table |
 | `tests/test_provisioning_run_v2.py` (inputs) | 6.25.2: a live `create_run` missing / with an invalid input raises `MISSING_INPUT` / `INVALID_INPUT` with no run or job rows; a valid input lands in `frames.shared`; a dry run needs none; `preflight_run(provided=)` |
 | `tests/test_playbook_schema_v2.py` (inputs) | 6.25.2: `min_length`/`max_length` refusals, the WIFI_PASSWORD variable keeps both through `model_dump`, `ProvisioningJobOut.variables` masked |
 | `tests/test_redaction.py` | `redact_secrets`. The executor-integration and `secret_safe_audit` cases stay in backend-erp |
