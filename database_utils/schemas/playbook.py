@@ -100,6 +100,7 @@ def normalize_purpose(v: str) -> str:
 PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual",
                     "connection_request"}
 _VAR_TYPES = {"TEXT", "NUMBER", "BOOLEAN"}
+MAX_INPUT_LENGTH = 64  # backend's SAFE_TEXT cap
 
 
 class PlaybookVariable(BaseModel):
@@ -108,6 +109,24 @@ class PlaybookVariable(BaseModel):
     type: str = "TEXT"
     required: bool = False
     default: Optional[Any] = None
+    # TEXT only; enforced by input_problem at run creation and in the bot's
+    # clean_input. The cap is SAFE_TEXT's 64 (a WPA2 passphrase is 8-63).
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _lengths(self):
+        if self.min_length is None and self.max_length is None:
+            return self
+        if self.type != "TEXT":
+            raise ValueError("min_length/max_length apply to TEXT variables only")
+        if self.min_length is not None and self.min_length < 1:
+            raise ValueError("min_length must be at least 1")
+        if self.max_length is not None and not 1 <= self.max_length <= MAX_INPUT_LENGTH:
+            raise ValueError(f"max_length must be 1-{MAX_INPUT_LENGTH}")
+        if None not in (self.min_length, self.max_length) and self.min_length > self.max_length:
+            raise ValueError("min_length cannot exceed max_length")
+        return self
 
     @field_validator("key")
     @classmethod
@@ -1224,3 +1243,10 @@ class ProvisioningJobOut(BaseModel):
     @classmethod
     def _mask_outputs(cls, log):
         return mask_log_outputs(log)
+
+    @field_validator("variables")
+    @classmethod
+    def _mask_variables(cls, v):
+        # Lazy: playbook_template -> provisioning_resolution imports this module.
+        from database_utils.utils.playbook_template import mask_secrets
+        return mask_secrets(v) if isinstance(v, dict) else v

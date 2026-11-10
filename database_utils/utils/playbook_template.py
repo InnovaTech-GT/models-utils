@@ -416,8 +416,22 @@ def render_value(value: Any, variables: Dict[str, Any]) -> Tuple[Any, List[str]]
 _RESERVED_PREFIXES = ("computed.", "capture.", "secret.", "acs.")
 
 
+def input_problem(var: dict, value: Any) -> Optional[str]:
+    """MISSING_INPUT / INVALID_INPUT / None for one declared variable's value.
+
+    Pure: run creation (_plan_checks) and backend's clean_input share it, so
+    an input is judged the same way wherever it enters. A dry-run stand-in
+    («input.k») is never a live value."""
+    if value is None or value == "" or value == f"«{input_key(var.get('key'))}»":
+        return "MISSING_INPUT" if var.get("required") and var.get("default") is None else None
+    length = len(str(value))
+    if length < (var.get("min_length") or 0) or length > (var.get("max_length") or length):
+        return "INVALID_INPUT"
+    return None
+
+
 def resolve_variables(
-    definition: dict, provided: Optional[Dict[str, Any]]
+    definition: dict, provided: Optional[Dict[str, Any]], *, dry_run: bool = False
 ) -> Tuple[Dict[str, Any], List[str]]:
     """Merge provided values over declared defaults.
 
@@ -429,16 +443,26 @@ def resolve_variables(
     evaluated over the merged values and its results land as
     `computed.<key>`, read by templates as a plain lookup. A computed failure
     or a missing operand joins the missing list, so the job fails before its
-    first step, dry runs included — the resolver already refused it once at
-    run creation; this is the backstop for jobs created any other way.
+    first step, dry runs included. At run creation the resolver already
+    refused a computed failure and _plan_checks (input_problem) refused a
+    missing or invalid input; this is the backstop for jobs created any
+    other way (a standalone job, workflow mode B).
+    `dry_run` fills a missing required TEXT input with the stand-in
+    «input.<key>» so a simulation renders; NUMBER/BOOLEAN inputs stay missing
+    (they need a default to be simulated). In a live call a provided value
+    equal to its stand-in counts as missing.
     Returns (resolved, missing_required_keys)."""
-    provided = provided or {}
+    provided = dict(provided or {})
     resolved: Dict[str, Any] = {}
     missing: List[str] = []
     declared = definition.get("variables") or []
     for var in declared:
         key = var.get("key")
         namespaced = input_key(key)
+        if not dry_run:  # a stand-in can never be a live value
+            for k in (key, namespaced):
+                if provided.get(k) == f"«{namespaced}»":
+                    del provided[k]
         if key in provided:
             resolved[namespaced] = provided[key]
         elif namespaced in provided:
@@ -446,7 +470,10 @@ def resolve_variables(
         elif var.get("default") is not None:
             resolved[namespaced] = var["default"]
         elif var.get("required"):
-            missing.append(key)
+            if dry_run and (var.get("type") or "TEXT") == "TEXT":
+                resolved[namespaced] = f"«{namespaced}»"
+            else:
+                missing.append(key)
     # Pass through extra provided values (the resolver's namespaced system
     # variables, and anything a caller injected directly) — except computed.*:
     # only evaluate_all below may produce those, so a caller can never place a

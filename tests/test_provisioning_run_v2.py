@@ -32,7 +32,11 @@ from database_utils.models.isp import (
 from database_utils.schemas.playbook import SESSION_PROBE_STEP
 from database_utils.utils import provisioning_runs as pr
 from database_utils.utils.provisioning_events import RUN_CLOSED
-from database_utils.utils.provisioning_resolution import ResolutionError, ResolvedNode
+from database_utils.utils.provisioning_resolution import (
+    ResolutionError,
+    ResolvedNode,
+    resolve_provisioning,
+)
 from database_utils.utils.provisioning_runs import (
     RunNotRevertible,
     advance_run,
@@ -42,6 +46,7 @@ from database_utils.utils.provisioning_runs import (
     create_run,
     decrypt_run_secrets,
     order_for_purpose,
+    preflight_run,
     ran_steps,
     repair_stranded_runs,
     retry_rollback,
@@ -655,6 +660,69 @@ def test_secret_spec_conflict(db, csr, keks):
     with pytest.raises(ResolutionError) as exc:
         create_run(db, csr.service, PURPOSE_ACTIVATION)
     assert exc.value.code == "SECRET_SPEC_CONFLICT"
+
+
+# ------------------------------------------------------------------- inputs (6.25.2)
+
+def _input_onu(csr):
+    """The ONU's playbook declares the CGG WIFI_PASSWORD input; returns its id."""
+    pb = csr.playbooks["onu-activation"]
+    pb.definition = ONU | {"variables": [
+        {"key": "wifi_password", "type": "TEXT", "required": True,
+         "min_length": 8, "max_length": 63}]}
+    return str(pb.id)
+
+
+def _count(db, model):
+    return db.execute(sa.select(sa.func.count()).select_from(model)).scalar()
+
+
+def test_a_live_run_missing_a_required_input_is_refused_before_any_write(db, csr):
+    pid = _input_onu(csr)
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        create_run(db, csr.service, PURPOSE_ACTIVATION)
+    assert exc.value.code == "MISSING_INPUT"
+    assert exc.value.errors[0] == {"code": "MISSING_INPUT", "key": "wifi_password",
+                                   "playbook_id": pid,
+                                   "detail": "input 'wifi_password' is missing"}
+    assert _count(db, ProvisioningRun) == 0 and _count(db, ProvisioningJob) == 0
+
+
+def test_a_live_run_with_an_invalid_input_is_refused(db, csr):
+    _input_onu(csr)
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        create_run(db, csr.service, PURPOSE_ACTIVATION,
+                   extra_variables={"input.wifi_password": "abc"})
+    assert exc.value.errors[0]["code"] == "INVALID_INPUT"
+    assert _count(db, ProvisioningRun) == 0
+
+
+def test_a_live_run_with_a_valid_input_opens(db, csr):
+    _input_onu(csr)
+    db.flush()
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION,
+                     extra_variables={"input.wifi_password": "Prueba2026!"})
+    assert run.frames["shared"]["input.wifi_password"] == "Prueba2026!"
+
+
+def test_a_dry_run_needs_no_inputs(db, csr):
+    _input_onu(csr)
+    db.flush()
+    assert create_run(db, csr.service, PURPOSE_ACTIVATION, dry_run=True).id
+
+
+def test_preflight_judges_the_provided_inputs(db, csr):
+    _input_onu(csr)
+    db.flush()
+    resolved = resolve_provisioning(db, csr.service, PURPOSE_ACTIVATION)
+    with pytest.raises(ResolutionError) as exc:
+        preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION, provided=None)
+    assert exc.value.code == "MISSING_INPUT"
+    preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION,
+                  provided={"input.wifi_password": "Prueba2026!"})
+    preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION, dry_run=True)
 
 
 # ------------------------------------------------------------------- dry run
