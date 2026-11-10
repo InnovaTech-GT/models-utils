@@ -32,7 +32,11 @@ from database_utils.models.isp import (
 from database_utils.schemas.playbook import SESSION_PROBE_STEP
 from database_utils.utils import provisioning_runs as pr
 from database_utils.utils.provisioning_events import RUN_CLOSED
-from database_utils.utils.provisioning_resolution import ResolutionError, ResolvedNode
+from database_utils.utils.provisioning_resolution import (
+    ResolutionError,
+    ResolvedNode,
+    resolve_provisioning,
+)
 from database_utils.utils.provisioning_runs import (
     RunNotRevertible,
     advance_run,
@@ -42,6 +46,7 @@ from database_utils.utils.provisioning_runs import (
     create_run,
     decrypt_run_secrets,
     order_for_purpose,
+    preflight_run,
     ran_steps,
     repair_stranded_runs,
     retry_rollback,
@@ -657,6 +662,69 @@ def test_secret_spec_conflict(db, csr, keks):
     assert exc.value.code == "SECRET_SPEC_CONFLICT"
 
 
+# ------------------------------------------------------------------- inputs (6.25.2)
+
+def _input_onu(csr):
+    """The ONU's playbook declares the CGG WIFI_PASSWORD input; returns its id."""
+    pb = csr.playbooks["onu-activation"]
+    pb.definition = ONU | {"variables": [
+        {"key": "wifi_password", "type": "TEXT", "required": True,
+         "min_length": 8, "max_length": 63}]}
+    return str(pb.id)
+
+
+def _count(db, model):
+    return db.execute(sa.select(sa.func.count()).select_from(model)).scalar()
+
+
+def test_a_live_run_missing_a_required_input_is_refused_before_any_write(db, csr):
+    pid = _input_onu(csr)
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        create_run(db, csr.service, PURPOSE_ACTIVATION)
+    assert exc.value.code == "MISSING_INPUT"
+    assert exc.value.errors[0] == {"code": "MISSING_INPUT", "key": "wifi_password",
+                                   "playbook_id": pid,
+                                   "detail": "input 'wifi_password' is missing"}
+    assert _count(db, ProvisioningRun) == 0 and _count(db, ProvisioningJob) == 0
+
+
+def test_a_live_run_with_an_invalid_input_is_refused(db, csr):
+    _input_onu(csr)
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        create_run(db, csr.service, PURPOSE_ACTIVATION,
+                   extra_variables={"input.wifi_password": "abc"})
+    assert exc.value.errors[0]["code"] == "INVALID_INPUT"
+    assert _count(db, ProvisioningRun) == 0
+
+
+def test_a_live_run_with_a_valid_input_opens(db, csr):
+    _input_onu(csr)
+    db.flush()
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION,
+                     extra_variables={"input.wifi_password": "Prueba2026!"})
+    assert run.frames["shared"]["input.wifi_password"] == "Prueba2026!"
+
+
+def test_a_dry_run_needs_no_inputs(db, csr):
+    _input_onu(csr)
+    db.flush()
+    assert create_run(db, csr.service, PURPOSE_ACTIVATION, dry_run=True).id
+
+
+def test_preflight_judges_the_provided_inputs(db, csr):
+    _input_onu(csr)
+    db.flush()
+    resolved = resolve_provisioning(db, csr.service, PURPOSE_ACTIVATION)
+    with pytest.raises(ResolutionError) as exc:
+        preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION, provided=None)
+    assert exc.value.code == "MISSING_INPUT"
+    preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION,
+                  provided={"input.wifi_password": "Prueba2026!"})
+    preflight_run(db, csr.service, resolved, PURPOSE_ACTIVATION, dry_run=True)
+
+
 # ------------------------------------------------------------------- dry run
 
 def test_a_dry_run_walks_every_phase_without_branching(db, csr):
@@ -762,3 +830,90 @@ def test_no_retry_while_the_previous_run_rolls_back(db, csr):
     assert run.phase == "ROLLBACK"
     again, created = create_or_get_run(db, csr.service, PURPOSE_ACTIVATION)
     assert not created and again.id == run.id
+
+
+# --- doc 67: best-effort (on_failure "warn") steps and run.warnings ---
+
+CATV = {"name": "catv", "label": "CATV", "driver": "telnet", "on_failure": "warn",
+        "hint": "Cable sigue encendido", "template": "config catv disable\nconfig save\nreboot",
+        "expect_disconnect": True}
+
+
+def test_needs_probe_ignores_warn_only_cli_steps():
+    assert pr._needs_probe({"configuration": [CATV]}, cpe_not_up_yet=False) is False
+    assert pr._needs_probe({"configuration": [_cli("x")]}, cpe_not_up_yet=False) is True
+
+
+def test_ran_steps_skips_warned_at_connect_or_render():
+    job = ProvisioningJob(log={"steps": [{"name": "catv", "status": "WARNED",
+                                          "detail": {"stage": "connect"}}]})
+    assert ran_steps(job) == []
+    job.log = {"steps": [{"name": "catv", "status": "WARNED", "detail": {"stage": "render"}}]}
+    assert ran_steps(job) == []
+    job.log = {"steps": [{"name": "catv", "status": "WARNED", "detail": {"stage": "command"}}]}
+    assert ran_steps(job) == ["catv"]
+
+
+@pytest.fixture()
+def suspension(db, csr):
+    csr.playbooks["onu-suspension"].definition = {"configuration": [CATV]}
+    csr.playbooks["olt-suspension"].definition = {
+        "configuration": [{"name": "noop", "driver": "simulator", "template": "ok"}]}
+    csr.playbooks["router-suspension"].definition = {
+        "configuration": [_cli("cut", driver="ssh")],
+        "rollback": [_cli("uncut", driver="ssh", undoes="cut")]}
+    db.flush()
+    return csr
+
+
+def test_warn_only_suspension_plan_has_no_probe(db, suspension):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    assert ("PRECONDITIONS", "onu") not in _shape(run)
+
+
+def test_advance_run_merges_child_warnings_and_succeeds(db, suspension):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    job = _children(db, run)[0]
+    while job is not None:
+        if run.plan[job.run_position]["category_key"] == "onu":
+            warned = {"name": "catv", "status": "WARNED",
+                      "detail": {"stage": "connect", "code": "WRONG_DEVICE"}}
+            job = _settle(db, job, steps=[warned], warnings=[
+                {"code": "WRONG_DEVICE", "step": "catv", "label": "CATV",
+                 "hint": "Cable sigue encendido", "error": "identity mismatch"}])
+        else:
+            job = _settle(db, job)
+    assert run.status == S.SUCCEEDED
+    [w] = run.warnings
+    assert w["code"] == "WRONG_DEVICE" and w["item_id"] == str(suspension.cpe.id)
+    assert w["device_label"] and w["position"] is not None
+
+
+def test_no_warnings_by_default(db, csr):
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION)
+    _drive(db, run)
+    assert run.status == S.SUCCEEDED and run.warnings is None
+
+
+@pytest.mark.parametrize("onu_entry, warned", [
+    ({"name": "catv", "status": "SUCCEEDED"}, True),
+    ({"name": "catv", "status": "WARNED", "detail": {"stage": "command"}}, True),
+    ({"name": "catv", "status": "WARNED", "detail": {"stage": "connect"}}, False),
+])
+def test_suspension_router_failure_rolls_back_despite_onu_warn_step(db, suspension, onu_entry, warned):
+    run = create_run(db, suspension.service, PURPOSE_SUSPENSION)
+    job = _children(db, run)[0]
+    while job is not None and run.plan[job.run_position]["phase"] != "ROLLBACK":
+        e = run.plan[job.run_position]
+        if e["category_key"] == "onu" and e["phase"] == "CONFIGURATION":
+            job = _settle(db, job, steps=[onu_entry])
+        elif e["category_key"] == "router" and e["phase"] == "CONFIGURATION":
+            job = _settle(db, job, S.FAILED, steps=[_entry("cut", "FAILED")])
+        else:
+            job = _settle(db, job)
+    assert [e["item_id"] for e in run.plan if e["phase"] == "ROLLBACK"] == [str(suspension.core.id)]
+    assert ((run.frames or {}).get("rollback") or {}).get("no_rollback") == []
+    _settle(db, job)
+    assert run.status == S.ROLLED_BACK
+    codes = [w["code"] for w in run.warnings or []]
+    assert codes == (["WARN_STEP_NOT_UNDONE"] if warned else [])

@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (126 revisions, head: **`ch1_client_chat`**) — plus
+`alembic/versions/` (127 revisions, head: **`et1_edge_telnet`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1421,6 +1421,16 @@ VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_inter
 on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
+
+## et1_edge_telnet (6.26.0)
+
+Telnet on EDGE devices (doc 67, ONU CATV on/off), parent `ch1_client_chat`. Additive,
+hand-written, nullable, no backfill: `device_type.identity_command` VARCHAR(100) and
+`identity_regex` VARCHAR(256) (the identity read after an EDGE telnet login; the regex's one
+group is the MAC), `provisioning_settings.edge_mgmt_cidr` VARCHAR(43) (the ONU management
+range; NULL = EDGE telnet off, so the feature is inert for every existing tenant) and
+`provisioning_run.warnings` JSON (best-effort step warnings). Downgrade drops the four columns
+`IF EXISTS`. `tests/test_et1_edge_telnet.py` pins the chain, the columns and the validators.
 
 ## ch1_client_chat (6.25.0)
 

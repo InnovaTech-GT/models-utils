@@ -990,6 +990,12 @@ class DeviceType(Base):
     # 'generic_telnet'. Free string on purpose (netmiko's platform list is an
     # open set that grows with netmiko releases — never CHECK-bound it).
     cli_platform = Column(String(50), nullable=True)
+    # doc 67 (et1_edge_telnet): the identity read an EDGE telnet session runs
+    # after login and before any command (e.g. 'show status'), and the regex
+    # whose single group is the device MAC compared with the item's serial.
+    # Both NULL = EDGE telnet is not offered for this device type.
+    identity_command = Column(String(100), nullable=True)
+    identity_regex = Column(String(256), nullable=True)
     # --- Figma redesign PR 8 (08-inventario §2.2) -----------------------------
     # Serialized gear (ONU, router, OLT) is tracked one row per physical unit
     # with a unique serial; consumables (patch cords, fiber by the metre) are
@@ -1614,6 +1620,10 @@ class ProvisioningRun(Base):
     # Deadline of each guided pause, seconds (300-14400, validated by
     # create_run). Expiry fails the step with GUIDED_TIMEOUT + normal rollback.
     guided_timeout_seconds = Column(Integer, nullable=False, default=1800, server_default="1800")
+    # doc 67 (et1_edge_telnet): best-effort step warnings merged from the
+    # children's log.warnings (and WARN_STEP_NOT_UNDONE on a rollback), rows
+    # {code, step, label, hint, error, item_id, device_label, position}. NULL = none.
+    warnings = Column(JSON, nullable=True)
     # The outcome code (PRECONDITION_FAILED, CONFIGURATION_FAILED,
     # VERIFICATION_FAILED, CANCELLED, STRANDED_RUN_EXPIRED, ROLLBACK_INCOMPLETE,
     # REVERTED) and its human detail. Written only by close_run / the rollback
@@ -2109,6 +2119,10 @@ class ProvisioningSettings(Base):
     # DDNS hostname, so no "globally routable" assertion is possible or wanted.
     # The per-device external port is inventory_item.nat_port, unchanged.
     gateway_host = Column(String, nullable=True)
+    # doc 67 (et1_edge_telnet): the ONU management range (e.g. 10.90.0.0/16)
+    # an EDGE telnet host must fall in. NULL = EDGE telnet is OFF for the tenant
+    # (the feature is fully inert).
+    edge_mgmt_cidr = Column(String(43), nullable=True)
 
     # --- ACS config, moved off network_access (tr1_transport_axis) ----------
     # Informational ONLY and read-only in the UI: nothing in code reads it. Its

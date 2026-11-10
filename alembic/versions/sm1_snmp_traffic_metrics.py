@@ -1,7 +1,7 @@
 """SNMP traffic metrics: per-subscriber rates from the PPPoE queues
 
 Revision ID: sm1_snmp_traffic_metrics
-Revises: ch1_client_chat
+Revises: et1_edge_telnet
 Create Date: 2026-11-08
 
 Additive. client_service.pppoe_username (+ partial unique index per company,
@@ -23,7 +23,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "sm1_snmp_traffic_metrics"
-down_revision: str | Sequence[str] | None = "ch1_client_chat"
+down_revision: str | Sequence[str] | None = "et1_edge_telnet"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

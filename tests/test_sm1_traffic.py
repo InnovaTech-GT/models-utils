@@ -100,4 +100,4 @@ def test_partition_name():
 
 def test_revision_chain():
     m = load("versions/sm1_snmp_traffic_metrics.py", "sm1_snmp_traffic_metrics")
-    assert (m.revision, m.down_revision) == ("sm1_snmp_traffic_metrics", "ch1_client_chat")
+    assert (m.revision, m.down_revision) == ("sm1_snmp_traffic_metrics", "et1_edge_telnet")
