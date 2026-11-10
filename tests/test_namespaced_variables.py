@@ -11,10 +11,11 @@ Moved from backend-erp tests/provisioning/test_namespaced_variables.py (provisio
 """
 import pytest
 
-from database_utils.utils.playbook_render import _leftover_tokens, _render_step
+from database_utils.utils.playbook_render import _leftover_tokens, _render_step, dry_run_playbook
 from database_utils.utils.playbook_template import (
     find_variables,
     input_key,
+    input_problem,
     render_string,
     render_value,
     resolve_variables,
@@ -151,3 +152,72 @@ class TestLeftoverTokenGuard:
             {"request": {"body": {"s": "{{Bad_Token}}"}}}, {}, "http"
         )
         assert unresolved == ["{{Bad_Token}}"]
+
+
+# ------------------------------------------------- playbook inputs (6.25.2)
+
+KP = "InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase"
+WIFI_VAR = {"key": "wifi_password", "label": "tu nueva clave WiFi", "type": "TEXT",
+            "required": True, "default": None, "min_length": 8, "max_length": 63}
+# The dev CGG-F782CW WIFI_PASSWORD definition (v4).
+CGG_WIFI = {
+    "variables": [WIFI_VAR],
+    "configuration": [{"name": "set-wifi-password", "driver": "tr069",
+                       "request": {"op": "setParameterValues",
+                                   "parameters": {KP: ["{{input.wifi_password}}", "xsd:string"]}}}],
+}
+STAND_IN = "«input.wifi_password»"
+
+
+class TestDryRunStandIns:
+    def test_a_dry_run_stands_in_a_missing_text_input(self):
+        resolved, missing = resolve_variables(CGG_WIFI, {}, dry_run=True)
+        assert resolved["input.wifi_password"] == STAND_IN
+        assert missing == []
+
+    def test_a_missing_number_input_is_still_missing_in_a_dry_run(self):
+        definition = {"variables": [{"key": "vlan", "type": "NUMBER", "required": True}]}
+        resolved, missing = resolve_variables(definition, {}, dry_run=True)
+        assert missing == ["vlan"] and "input.vlan" not in resolved
+
+    def test_a_live_call_without_the_input_is_unchanged(self):
+        _resolved, missing = resolve_variables(CGG_WIFI, {})
+        assert missing == ["wifi_password"]
+
+    @pytest.mark.parametrize("key", ["wifi_password", "input.wifi_password"])
+    def test_a_stand_in_is_never_a_live_value(self, key):
+        resolved, missing = resolve_variables(CGG_WIFI, {key: STAND_IN})
+        assert missing == ["wifi_password"]
+        assert STAND_IN not in resolved.values()
+
+    @pytest.mark.parametrize("value,expected", [
+        ("", ["wifi_password"]),
+        ("abc", ["wifi_password: INVALID_INPUT"]),
+        ("x" * 64, ["wifi_password: INVALID_INPUT"]),
+        ("Prueba2026!", []),
+    ])
+    @pytest.mark.parametrize("key", ["wifi_password", "input.wifi_password"])
+    def test_a_live_call_judges_provided_inputs_like_run_creation(self, key, value, expected):
+        _resolved, missing = resolve_variables(CGG_WIFI, {key: value})
+        assert missing == expected
+
+    def test_dry_run_playbook_renders_the_stand_in(self):
+        report = dry_run_playbook(CGG_WIFI, {})
+        assert report["valid"] is True
+        assert report["missing_variables"] == []
+        assert STAND_IN in str(report)
+
+
+@pytest.mark.parametrize("var,value,expected", [
+    (WIFI_VAR, None, "MISSING_INPUT"),
+    (WIFI_VAR, "", "MISSING_INPUT"),
+    (WIFI_VAR, STAND_IN, "MISSING_INPUT"),
+    ({"key": "k", "required": True, "default": "x"}, "", None),
+    ({"key": "k", "required": False}, None, None),
+    (WIFI_VAR, "abc", "INVALID_INPUT"),
+    (dict(WIFI_VAR, max_length=63), "a" * 64, "INVALID_INPUT"),
+    (WIFI_VAR, "Prueba2026!", None),
+    ({"key": "vlan", "type": "NUMBER", "required": True}, 10, None),
+])
+def test_input_problem(var, value, expected):
+    assert input_problem(var, value) == expected

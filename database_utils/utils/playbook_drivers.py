@@ -18,10 +18,19 @@ importing backend services. backend-erp keeps the 422 wrapper
 The transport axis (dial_target / proxy_kind) never gates `allowed`; it only
 tells the editor whether `ping` runs as ICMP or as a TCP probe (mirrors the two
 downgrade guards in provisioning/drivers/ping.py).
+
+EDGE telnet (doc 67, ONU CATV on/off) is in the pure matrix, so the worker's
+runtime guard allows it, but `driver_options` / `mismatches` only treat it as
+allowed when the caller passes `edge_telnet_ok` (edge_telnet.edge_telnet_ready:
+identity fields, TELNET credential, tenant edge_mgmt_cidr, dial_target=device).
+Without it every option and validation is unchanged. Even when ready, an EDGE
+telnet step must be best effort and enable-free (edge_telnet_step_problem).
 """
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from database_utils.utils.edge_telnet import edge_telnet_step_problem
 
 DRIVER_NOT_ALLOWED_FOR_TARGET = "DRIVER_NOT_ALLOWED_FOR_TARGET"
 
@@ -32,7 +41,7 @@ EDITOR_DRIVERS = ("ssh", "telnet", "tr069", "ping", "http", "simulator", "manual
 _GENERAL = frozenset({"ping", "simulator"})
 ALLOWED_BY_TIER: dict[Optional[str], frozenset[str]] = {
     "CORE": frozenset({"ssh", "telnet", "snmp", "ping", "http", "simulator"}),
-    "EDGE": frozenset({"tr069", "connection_request", "ping", "http", "simulator", "manual"}),
+    "EDGE": frozenset({"telnet", "tr069", "connection_request", "ping", "http", "simulator", "manual"}),
     "CONSUMABLE": _GENERAL,
     "TOOL": _GENERAL,
     "OTHER": _GENERAL,
@@ -49,13 +58,31 @@ def ping_probe(dial_target: str, proxy_kind: str) -> str:
     return "tcp" if dial_target == "gateway" or proxy_kind == "socks5" else "icmp"
 
 
-def driver_options(tier: Optional[str], dial_target: str, proxy_kind: str) -> list[dict]:
+EDGE_TELNET_NOT_CONFIGURED = "EDGE_TELNET_NOT_CONFIGURED"
+
+
+def _gated(tier: Optional[str], edge_telnet_ok: bool) -> tuple[frozenset[str], Optional[str]]:
+    """(allowed set, reason for a gated-out telnet) for the editor/bind checks."""
     allowed = allowed_drivers(tier)
+    if tier == "EDGE" and not edge_telnet_ok:
+        return allowed - {"telnet"}, EDGE_TELNET_NOT_CONFIGURED
+    return allowed, None
+
+
+def driver_options(tier: Optional[str], dial_target: str, proxy_kind: str,
+                   edge_telnet_ok: bool = False) -> list[dict]:
+    allowed, gate = _gated(tier, edge_telnet_ok)
+
+    def reason(key: str) -> Optional[str]:
+        if key in allowed:
+            return None
+        return gate if gate and key == "telnet" else "TIER_MISMATCH"
+
     return [
         {
             "key": key,
             "allowed": key in allowed,
-            "reason": None if key in allowed else "TIER_MISMATCH",
+            "reason": reason(key),
             "probe": ping_probe(dial_target, proxy_kind) if key == "ping" else None,
         }
         for key in EDITOR_DRIVERS
@@ -75,15 +102,22 @@ def _phase_steps(definition: Any):
             yield key, index, step
 
 
-def mismatches(definition: Any, tier: Optional[str]) -> list[dict]:
-    allowed = allowed_drivers(tier)
+def mismatches(definition: Any, tier: Optional[str], edge_telnet_ok: bool = False) -> list[dict]:
+    allowed, gate = _gated(tier, edge_telnet_ok)
     out = []
     for phase, index, step in _phase_steps(definition):
         driver = step.get("driver") if isinstance(step, dict) else getattr(step, "driver", None)
         if driver not in allowed:
-            out.append({
-                "phase": phase, "step_index": index, "driver": driver, "tier": tier,
-                "allowed": sorted(allowed),
-            })
+            reason = gate if gate and driver == "telnet" else None
+        elif tier == "EDGE" and driver == "telnet":
+            reason = edge_telnet_step_problem(definition, step)
+            if reason is None:
+                continue
+        else:
+            continue
+        out.append({
+            "phase": phase, "step_index": index, "driver": driver, "tier": tier,
+            "allowed": sorted(allowed), "reason": reason,
+        })
     return out
 

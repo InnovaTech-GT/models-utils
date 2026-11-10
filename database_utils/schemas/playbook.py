@@ -20,8 +20,14 @@ the phases directly, in the founder's layout:
 
 A Step is {name, driver, template | request, validation, timeout_seconds,
 target_item_id, precondition (configuration guard), label, hint, idempotent,
-config_mode, capture, wait_until, undoes, manual}; PlaybookDefinition checks which
-phase accepts which field (PHASE_FIELD_NOT_ALLOWED).
+config_mode, capture, wait_until, undoes, manual, on_failure, expect_disconnect};
+PlaybookDefinition checks which phase accepts which field (PHASE_FIELD_NOT_ALLOWED).
+
+Best-effort steps (doc 67): `on_failure: "warn"` on a configuration or
+verification step means a failure after its retries is WARNED, not FAILED: no
+rollback, the job and run continue and SUCCEED with a run warning. A warn step
+is never undone (a rollback step may not `undoes` it). `expect_disconnect`
+(ssh/telnet) lets the LAST line close the session (e.g. `reboot`).
 
 A `driver: manual` step (doc 42d) is done by a person: `manual` holds the
 rendered instructions, display fields (secret ones revealed on demand) and an
@@ -48,7 +54,7 @@ WAIT_TOO_LONG_FOR_SHARED_DEVICE needs the binding: shared_device_wait_errors().
 """
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import (
@@ -100,6 +106,7 @@ def normalize_purpose(v: str) -> str:
 PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual",
                     "connection_request"}
 _VAR_TYPES = {"TEXT", "NUMBER", "BOOLEAN"}
+MAX_INPUT_LENGTH = 64  # backend's SAFE_TEXT cap
 
 
 class PlaybookVariable(BaseModel):
@@ -108,6 +115,24 @@ class PlaybookVariable(BaseModel):
     type: str = "TEXT"
     required: bool = False
     default: Optional[Any] = None
+    # TEXT only; enforced by input_problem at run creation and in the bot's
+    # clean_input. The cap is SAFE_TEXT's 64 (a WPA2 passphrase is 8-63).
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _lengths(self):
+        if self.min_length is None and self.max_length is None:
+            return self
+        if self.type != "TEXT":
+            raise ValueError("min_length/max_length apply to TEXT variables only")
+        if self.min_length is not None and self.min_length < 1:
+            raise ValueError("min_length must be at least 1")
+        if self.max_length is not None and not 1 <= self.max_length <= MAX_INPUT_LENGTH:
+            raise ValueError(f"max_length must be 1-{MAX_INPUT_LENGTH}")
+        if None not in (self.min_length, self.max_length) and self.min_length > self.max_length:
+            raise ValueError("min_length cannot exceed max_length")
+        return self
 
     @field_validator("key")
     @classmethod
@@ -143,6 +168,8 @@ FORWARD_PHASE_KEYS = ("preconditions", "configuration", "verification")
 SESSION_PROBE_STEP = "__session__"
 SESSION_PROBE_LABEL = "Conexión con el equipo"
 CLI_DRIVERS = frozenset({"ssh", "telnet"})
+# A step's on_failure value for a best-effort step (doc 67 §4.5).
+WARN_STEP = "warn"
 # Drivers whose step reaches a real device over the network (doc 42 §4.5).
 NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069", "connection_request"})
 # Drivers that change nothing that would need undoing (doc 42 §7.1).
@@ -490,6 +517,9 @@ class PlaybookStep(BaseModel):
     wait_until: Optional[PlaybookWaitUntil] = None
     undoes: Optional[str] = None      # rollback: runs only if that configuration step ran
     manual: Optional[PlaybookManualSpec] = None   # driver: manual only (doc 42d)
+    # --- doc 67: best effort and a session that may close on the last line ---
+    on_failure: Optional[Literal["warn"]] = None  # None = fail + roll back (today)
+    expect_disconnect: bool = False   # ssh/telnet: the last line may drop the session
 
     @field_validator("driver")
     @classmethod
@@ -546,7 +576,9 @@ class PlaybookStep(BaseModel):
             ("precondition", self.precondition is not None),
             ("idempotent", self.idempotent), ("config_mode", self.config_mode),
             ("capture", bool(self.capture)), ("wait_until", self.wait_until is not None),
-            ("target_item_id", self.target_item_id is not None)) if is_set]
+            ("target_item_id", self.target_item_id is not None),
+            ("on_failure", self.on_failure is not None),
+            ("expect_disconnect", self.expect_disconnect)) if is_set]
         if refused:
             raise ValueError(f"MANUAL_FIELD_NOT_ALLOWED: step '{self.name}': a manual step "
                              f"does not take {', '.join(refused)}")
@@ -796,7 +828,14 @@ def normalize_definition(d: Any) -> Any:
 
     out = {k: v for k, v in d.items() if k not in ("steps", "rollback")}
     steps = [s for s in steps if isinstance(s, dict)]
-    out["configuration"] = [{k: v for k, v in s.items() if k != "on_failure"} for s in steps]
+    # The v2 string on_failure "warn" (doc 67) stays on the step; any other
+    # truthy on_failure is a legacy compensation (byte-for-byte as before, so
+    # the frontend's hash-locked normalize fixture is unchanged).
+    def legacy(s):
+        return bool(s.get("on_failure")) and s.get("on_failure") != WARN_STEP
+
+    out["configuration"] = [{k: v for k, v in s.items()
+                             if not (k == "on_failure" and legacy(s))} for s in steps]
     used = {s.get("name") for s in out["configuration"]}
 
     def unique(name):
@@ -807,7 +846,7 @@ def normalize_definition(d: Any) -> Any:
         used.add(candidate)
         return candidate
 
-    if any(s.get("on_failure") for s in steps):
+    if any(legacy(s) for s in steps):
         # The old executor ran the failed step's on_failure, then the completed
         # steps' in reverse; with `undoes` the reverse walk covers the same
         # steps in the same order (the failed step is the last that "ran").
@@ -815,7 +854,7 @@ def normalize_definition(d: Any) -> Any:
             {k: v for k, v in comp.items() if k != "on_failure"}
             | {"undoes": s.get("name"), "name": unique(comp.get("name"))}
             for s in reversed(steps)
-            for comp in (s.get("on_failure") or [])
+            for comp in ((s.get("on_failure") if legacy(s) else None) or [])
             if isinstance(comp, dict)
         ]
     else:
@@ -885,7 +924,8 @@ def playbook_warnings(definition: Any, *, category_tier: Optional[str] = None,
     cfg = [s for s in d.get("configuration") or [] if isinstance(s, dict)]
     rollback = [s for s in d.get("rollback") or [] if isinstance(s, dict)]
     warnings: List[Dict[str, Any]] = []
-    if not rollback and any(s.get("driver") not in NO_UNDO_DRIVERS for s in cfg):
+    if not rollback and any(s.get("driver") not in NO_UNDO_DRIVERS
+                            and s.get("on_failure") != WARN_STEP for s in cfg):
         warnings.append({"code": "ROLLBACK_EMPTY",
                          "detail": "Esta configuración no se puede revertir"})
     for s in rollback:
@@ -972,6 +1012,7 @@ class PlaybookDefinition(BaseModel):
 
     def _validate_placement(self, phases) -> None:
         config_names = {s.name for s in self.configuration}
+        warn_names = {s.name for s in self.configuration if s.on_failure == WARN_STEP}
         session = self.session or PlaybookSession()
         for key, steps in phases:
             for s in steps:
@@ -992,11 +1033,22 @@ class PlaybookDefinition(BaseModel):
                     raise ValueError(f"{where}: 'idempotent' is configuration-only")
                 if s.capture and key == "rollback":
                     raise ValueError(f"{where}: rollback steps do not capture")
+                if s.on_failure is not None and key not in ("configuration", "verification"):
+                    raise ValueError(f"{where}: 'on_failure' is for configuration and "
+                                     "verification steps")
+                if s.expect_disconnect and (key not in ("configuration", "verification")
+                                            or s.driver not in CLI_DRIVERS):
+                    raise ValueError(f"{where}: 'expect_disconnect' is for ssh/telnet "
+                                     "configuration and verification steps")
                 if s.wait_until is not None and not (
                         key in ("preconditions", "verification")
-                        or (key == "configuration" and s.driver == "tr069")):
-                    raise ValueError(f"{where}: 'wait_until' is for preconditions, verification "
-                                     "and tr069 configuration steps")
+                        or (key == "configuration"
+                            and (s.driver == "tr069" or s.on_failure == WARN_STEP))):
+                    raise ValueError(f"{where}: 'wait_until' is for preconditions, verification, "
+                                     "tr069 and best-effort configuration steps")
+                if key == "rollback" and s.undoes in warn_names:
+                    raise ValueError(f"{where}: undoes '{s.undoes}', a best-effort step; "
+                                     "best-effort steps are never undone")
                 if s.config_mode:
                     if key not in ("configuration", "rollback") or s.driver not in CLI_DRIVERS:
                         raise ValueError(f"{where}: 'config_mode' is for ssh/telnet "
@@ -1224,3 +1276,10 @@ class ProvisioningJobOut(BaseModel):
     @classmethod
     def _mask_outputs(cls, log):
         return mask_log_outputs(log)
+
+    @field_validator("variables")
+    @classmethod
+    def _mask_variables(cls, v):
+        # Lazy: playbook_template -> provisioning_resolution imports this module.
+        from database_utils.utils.playbook_template import mask_secrets
+        return mask_secrets(v) if isinstance(v, dict) else v

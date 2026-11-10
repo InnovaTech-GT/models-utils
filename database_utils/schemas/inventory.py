@@ -231,6 +231,30 @@ _PORT_TEMPLATE_REQUIRES_SERIALIZED = (
 
 # --- DeviceType ---
 
+def _identity_command(v: Optional[str]) -> Optional[str]:
+    """doc 67: blank clears; one line, at most 100 characters (the column)."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    if len(v) > 100 or "\n" in v or "\r" in v:
+        raise ValueError("identity_command must be one line of at most 100 characters")
+    return v
+
+
+def _identity_regex(v: Optional[str]) -> Optional[str]:
+    """doc 67: blank clears; a re2-safe regex (check_regex) with exactly one
+    group, which captures the device MAC."""
+    if v is None or not v.strip():
+        return None
+    from database_utils.schemas.playbook import check_regex  # avoid an import cycle
+
+    if len(v) > 256:
+        raise ValueError("identity_regex must be at most 256 characters")
+    if check_regex(v, "identity_regex").groups != 1:
+        raise ValueError("identity_regex must have exactly one capture group (the MAC)")
+    return v
+
+
 class DeviceTypeBase(BaseModel):
     name: str
     # Cycle 3 E4: device_category.key (a plain string, server-resolved and
@@ -249,6 +273,9 @@ class DeviceTypeBase(BaseModel):
     # Cycle 7 (doc 25 §2.2): netmiko platform id for the generic CLI drivers;
     # NULL -> 'generic' / 'generic_telnet'. Free string (open netmiko set).
     cli_platform: Optional[str] = None
+    # doc 67: EDGE telnet identity read (both required to offer EDGE telnet).
+    identity_command: Optional[str] = None
+    identity_regex: Optional[str] = None
     # Figma redesign PR 8 (08-inventario §2.2): serialized gear is one row per
     # physical unit (serial required); non-serialized types are lots counted by
     # `inventory_item.quantity` and displayed in `unit` ("m", "u", "pz").
@@ -267,6 +294,16 @@ class DeviceTypeBase(BaseModel):
     @classmethod
     def check_path_role(cls, v):
         return normalize_path_role(v)
+
+    @field_validator("identity_command")
+    @classmethod
+    def check_identity_command(cls, v):
+        return _identity_command(v)
+
+    @field_validator("identity_regex")
+    @classmethod
+    def check_identity_regex(cls, v):
+        return _identity_regex(v)
 
     @model_validator(mode="after")
     def validate_ports_serialized(self) -> "DeviceTypeBase":
@@ -289,6 +326,8 @@ class DeviceTypeUpdate(BaseModel):
     default_attributes: Optional[Dict[str, Any]] = None
     provisioning_enabled: Optional[bool] = None
     cli_platform: Optional[str] = None
+    identity_command: Optional[str] = None
+    identity_regex: Optional[str] = None
     is_serialized: Optional[bool] = None
     unit: Optional[str] = None
     # An explicit null (or []) clears the template; the backend reads
@@ -306,6 +345,16 @@ class DeviceTypeUpdate(BaseModel):
     @classmethod
     def check_path_role(cls, v):
         return normalize_path_role(v)
+
+    @field_validator("identity_command")
+    @classmethod
+    def check_identity_command(cls, v):
+        return _identity_command(v)
+
+    @field_validator("identity_regex")
+    @classmethod
+    def check_identity_regex(cls, v):
+        return _identity_regex(v)
 
     @model_validator(mode="after")
     def validate_ports_serialized(self) -> "DeviceTypeUpdate":

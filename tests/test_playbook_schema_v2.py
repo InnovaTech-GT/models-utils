@@ -1,6 +1,8 @@
 """Playbook format v2 (doc 42 §4, §10.1, §14.1): phases, session, captures,
 secrets, outputs, the legacy normalizer and the save-time rules."""
 import copy
+from datetime import datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +11,8 @@ from database_utils.schemas.playbook import (
     SESSION_PROBE_STEP,
     PlaybookDefinition,
     PlaybookOut,
+    PlaybookVariable,
+    ProvisioningJobOut,
     job_steps,
     mask_log_outputs,
     normalize_definition,
@@ -543,3 +547,114 @@ def test_gate_capture_items_gates_each_item():
     assert gate_capture_items([]) == ""           # nobody connected is an answer
     assert gate_capture_items(["ok", "con espacio"]) is None   # one bad item refuses the lot
     assert len(gate_capture_items([f"h{i}" for i in range(80)]).splitlines()) == 50
+
+
+# --- doc 67: best-effort steps (on_failure "warn") and expect_disconnect ---
+
+def _cfg(**step):
+    base = {"name": "catv", "driver": "telnet", "template": "config catv disable\nreboot"}
+    return {"configuration": [base | step]}
+
+
+def test_warn_step_with_wait_until_in_configuration_is_valid():
+    d = PlaybookDefinition.model_validate(_cfg(on_failure="warn", expect_disconnect=True,
+                                               wait_until={"tries": 3, "interval_seconds": 20}))
+    s = d.configuration[0]
+    assert s.on_failure == "warn" and s.expect_disconnect
+
+
+def test_new_step_fields_default_to_today():
+    s = PlaybookDefinition.model_validate(_cfg()).configuration[0]
+    assert s.on_failure is None and s.expect_disconnect is False
+
+
+def test_wait_until_still_refused_on_a_hard_cli_configuration_step():
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(_cfg(wait_until={"tries": 3, "interval_seconds": 20}))
+
+
+def test_on_failure_only_warn():
+    with pytest.raises(ValidationError):
+        PlaybookDefinition.model_validate(_cfg(on_failure="ignore"))
+
+
+def test_on_failure_refused_in_preconditions_and_rollback():
+    for phase in ("preconditions", "rollback"):
+        d = _cfg() | {phase: [{"name": "x", "driver": "telnet", "template": "a", "on_failure": "warn"}]}
+        with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+            PlaybookDefinition.model_validate(d)
+
+
+def test_on_failure_and_expect_disconnect_refused_on_manual():
+    for extra in ({"on_failure": "warn"}, {"expect_disconnect": True}):
+        d = {"configuration": [{"name": "m", "driver": "manual",
+                                "manual": {"instructions": "do it"}} | extra]}
+        with pytest.raises(ValidationError, match="MANUAL_FIELD_NOT_ALLOWED"):
+            PlaybookDefinition.model_validate(d)
+
+
+def test_expect_disconnect_cli_only_and_not_in_rollback():
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate({"configuration": [
+            {"name": "x", "driver": "simulator", "template": "a", "expect_disconnect": True}]})
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(_cfg() | {"rollback": [
+            {"name": "r", "driver": "telnet", "template": "a", "expect_disconnect": True}]})
+
+
+def test_rollback_cannot_undo_a_warn_step():
+    d = _cfg(on_failure="warn") | {"rollback": [{"name": "r", "driver": "telnet",
+                                                  "template": "config catv enable", "undoes": "catv"}]}
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(d)
+
+
+def test_warn_only_playbook_has_no_rollback_empty_warning():
+    assert not [w for w in playbook_warnings(_cfg(on_failure="warn")) if w["code"] == "ROLLBACK_EMPTY"]
+    assert [w for w in playbook_warnings(_cfg()) if w["code"] == "ROLLBACK_EMPTY"]
+
+
+def test_legacy_on_failure_list_still_converted_but_warn_string_is_not():
+    legacy = {"steps": [{"name": "a", "driver": "simulator", "template": "x", "on_failure": "warn"}],
+              "rollback": [{"name": "r", "driver": "simulator", "template": "y"}]}
+    out = normalize_definition(legacy)
+    assert out["configuration"][0]["on_failure"] == "warn"
+    assert [r["name"] for r in out["rollback"]] == ["r"]
+    comp = {"steps": [{"name": "a", "driver": "simulator", "template": "x",
+                       "on_failure": [{"name": "u", "driver": "simulator", "template": "z"}]}]}
+    out = normalize_definition(comp)
+    assert "on_failure" not in out["configuration"][0]
+    assert out["rollback"][0]["undoes"] == "a"
+
+# ----------------------------------------------------- input length limits (6.25.2)
+
+_WIFI_VAR = {"key": "wifi_password", "label": "tu nueva clave WiFi", "type": "TEXT",
+             "required": True, "default": None, "min_length": 8, "max_length": 63}
+
+
+@pytest.mark.parametrize("bad", [
+    {"type": "NUMBER", "min_length": 1},
+    {"min_length": 10, "max_length": 8},
+    {"max_length": 65},
+    {"min_length": 0},
+])
+def test_input_length_limits_are_refused(bad):
+    with pytest.raises(ValidationError):
+        PlaybookVariable.model_validate(_WIFI_VAR | bad)
+
+
+def test_the_wifi_password_input_keeps_its_limits():
+    definition = {"variables": [_WIFI_VAR],
+                  "configuration": [{"name": "set-wifi-password", "driver": "tr069",
+                                     "request": {"op": "setParameterValues", "parameters": {
+                                         "p": ["{{input.wifi_password}}", "xsd:string"]}}}]}
+    dumped = PlaybookDefinition.model_validate(definition).model_dump()["variables"][0]
+    assert (dumped["min_length"], dumped["max_length"]) == (8, 63)
+
+
+def test_job_out_masks_secret_variables():
+    job = ProvisioningJobOut.model_validate({
+        "id": uuid4(), "company_id": uuid4(), "playbook_id": uuid4(), "status": "QUEUED",
+        "attempts": 0, "max_attempts": 3, "triggered_by": "USER", "created_at": datetime.now(),
+        "variables": {"input.wifi_password": "Prueba2026!", "input.vlan": 10}})
+    assert job.variables == {"input.wifi_password": "***", "input.vlan": 10}

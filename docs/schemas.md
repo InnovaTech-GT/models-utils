@@ -358,6 +358,12 @@ confirm, reveal, expiry) lives in backend-erp.
 sensitive output a child job wrote into `log.outputs` (before `advance_run`
 merged it into `run.outputs`), or the capture behind it, is never returned by
 any job endpoint; the stored log keeps the value (later children render it).
+`ProvisioningJobOut.variables` (6.25.2) goes through `mask_secrets`, so a
+secret-named input such as `input.wifi_password` is returned as `***`.
+
+**Playbook inputs (6.25.2).** `PlaybookVariable` gains optional `min_length`
+/ `max_length` (TEXT only, `1 <= min <= max <= 64`, `MAX_INPUT_LENGTH`).
+Enforcement and dry-run stand-ins: [playbook-language.md](playbook-language.md#6252-playbook-inputs).
 
 ### Insights v2 (1.33.0, revision `iv1_insights_v2`) — `insight` schema changes
 
