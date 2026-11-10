@@ -122,6 +122,46 @@ session with the ACS at once, and GenieACS runs every task queued for it.
 
 The request shape is defined by the worker driver, not validated here.
 
+## 6.26.0: telnet on EDGE devices and best-effort steps (doc 67)
+
+ONU CATV on/off over telnet. The whole feature is **inert unless the tenant
+sets `provisioning_settings.edge_mgmt_cidr`**: without it every driver option,
+bind/edit validation and run is unchanged.
+
+**Driver matrix** (`utils/playbook_drivers.py`, `utils/edge_telnet.py`):
+- `ALLOWED_BY_TIER["EDGE"]` gains `telnet`, so the worker's runtime guard
+  (`allowed_drivers`) accepts it.
+- `driver_options(..., edge_telnet_ok=False)` and `mismatches(..., edge_telnet_ok=False)`
+  only treat EDGE telnet as allowed when the caller passes `edge_telnet_ok`
+  (`edge_telnet_ready`: device type `cli_platform` + `identity_command` +
+  `identity_regex`, a TELNET credential bound at item/device-type level, the
+  tenant's `edge_mgmt_cidr`, `dial_target == "device"`). Otherwise the reason
+  is `EDGE_TELNET_NOT_CONFIGURED`.
+- Even when ready, an EDGE telnet step must be best effort
+  (`EDGE_TELNET_REQUIRES_WARN`) and enable-free: no `session.enable`, no
+  `config_mode` (`EDGE_TELNET_NO_ENABLE`). `edge_telnet_step_problem` is the
+  shared check. Every `mismatches` entry has a `reason` (None for the plain
+  tier mismatch).
+- Helpers: `host_in_cidr`, `oui_of`, `identity_matches` (MAC tail = GPON
+  serial tail; OUI = ACS device id prefix when known), `extract_identity`
+  (re2), `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.
+
+**Best-effort steps** (`schemas/playbook.py`):
+- `on_failure: "warn"` (configuration / verification, never `manual`): a
+  failure after its retries is `WARNED`, not FAILED. No rollback; the job and
+  the run continue and end SUCCEEDED with a run warning
+  (`provisioning_run.warnings`). A warn step may poll with `wait_until` in
+  configuration. A rollback step may not `undoes` a warn step: best-effort
+  steps are never undone. `playbook_warnings`' `ROLLBACK_EMPTY` ignores them.
+- `expect_disconnect: true` (ssh/telnet, configuration / verification): the
+  last line (e.g. `reboot`) may close the session; that counts as success.
+- `normalize_definition` keeps the string `on_failure: "warn"` on a legacy
+  `steps` shape; any other truthy `on_failure` is still a legacy compensation.
+
+New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RANGE`,
+`WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`,
+`EDGE_TELNET_NO_ENABLE`, and the run-warning code `WARN_STEP_NOT_UNDONE`.
+
 ## Tests
 
 | File | Covers |
@@ -129,7 +169,8 @@ The request shape is defined by the worker driver, not validated here.
 | `tests/test_template_filters.py` | The renderer half of backend's test: filters, security, static/runtime errors, the guard, the hash-locked shared fixture `tests/fixtures/playbook_filters.json` (byte-identical to backend-erp's and frontend-erp's copies) |
 | `tests/test_namespaced_variables.py` | The doc-33 grammar, `input.*`, the leftover-token guard |
 | `tests/test_redaction.py` | `redact_secrets`. The executor-integration and `secret_safe_audit` cases stay in backend-erp |
-| `tests/test_playbook_drivers.py` | The tier matrix, `ping_probe`, `driver_options`, `mismatches`. The 422 wrapper cases stay in backend-erp |
+| `tests/test_playbook_drivers.py` | The tier matrix, `ping_probe`, `driver_options`, `mismatches` (incl. the EDGE telnet gate). The 422 wrapper cases stay in backend-erp |
+| `tests/test_edge_telnet.py` | `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity`, `edge_telnet_ready`, `edge_telnet_step_problem` |
 | `tests/test_connectivity.py` | A gate failure raises `ProvisioningGateError` with `errors[0]` equal to the old 409 body and creates no job; device-dial vs gateway-dial playbook selection; get-or-create reuse |
 | `tests/test_finish_job.py` | Follow-on order (… `advance_run`, then the event); a failing follow-on is rolled back alone (the outcome and the later follow-ons survive); `stamp_connectivity` never touches `status` |
 | `tests/test_provisioning_events.py` | `emit_event` id derivation, refusals, no commit; `close_run` emits once, a dry run emits nothing; `finish_job` emits `JOB_FINISHED` after the final child's `RUN_CLOSED` (id order) with the full payload; a connectivity job through `finish_job` leaves an IN_STOCK core IN_STOCK |

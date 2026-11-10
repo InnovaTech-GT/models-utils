@@ -543,3 +543,81 @@ def test_gate_capture_items_gates_each_item():
     assert gate_capture_items([]) == ""           # nobody connected is an answer
     assert gate_capture_items(["ok", "con espacio"]) is None   # one bad item refuses the lot
     assert len(gate_capture_items([f"h{i}" for i in range(80)]).splitlines()) == 50
+
+
+# --- doc 67: best-effort steps (on_failure "warn") and expect_disconnect ---
+
+def _cfg(**step):
+    base = {"name": "catv", "driver": "telnet", "template": "config catv disable\nreboot"}
+    return {"configuration": [base | step]}
+
+
+def test_warn_step_with_wait_until_in_configuration_is_valid():
+    d = PlaybookDefinition.model_validate(_cfg(on_failure="warn", expect_disconnect=True,
+                                               wait_until={"tries": 3, "interval_seconds": 20}))
+    s = d.configuration[0]
+    assert s.on_failure == "warn" and s.expect_disconnect
+
+
+def test_new_step_fields_default_to_today():
+    s = PlaybookDefinition.model_validate(_cfg()).configuration[0]
+    assert s.on_failure is None and s.expect_disconnect is False
+
+
+def test_wait_until_still_refused_on_a_hard_cli_configuration_step():
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(_cfg(wait_until={"tries": 3, "interval_seconds": 20}))
+
+
+def test_on_failure_only_warn():
+    with pytest.raises(ValidationError):
+        PlaybookDefinition.model_validate(_cfg(on_failure="ignore"))
+
+
+def test_on_failure_refused_in_preconditions_and_rollback():
+    for phase in ("preconditions", "rollback"):
+        d = _cfg() | {phase: [{"name": "x", "driver": "telnet", "template": "a", "on_failure": "warn"}]}
+        with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+            PlaybookDefinition.model_validate(d)
+
+
+def test_on_failure_and_expect_disconnect_refused_on_manual():
+    for extra in ({"on_failure": "warn"}, {"expect_disconnect": True}):
+        d = {"configuration": [{"name": "m", "driver": "manual",
+                                "manual": {"instructions": "do it"}} | extra]}
+        with pytest.raises(ValidationError, match="MANUAL_FIELD_NOT_ALLOWED"):
+            PlaybookDefinition.model_validate(d)
+
+
+def test_expect_disconnect_cli_only_and_not_in_rollback():
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate({"configuration": [
+            {"name": "x", "driver": "simulator", "template": "a", "expect_disconnect": True}]})
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(_cfg() | {"rollback": [
+            {"name": "r", "driver": "telnet", "template": "a", "expect_disconnect": True}]})
+
+
+def test_rollback_cannot_undo_a_warn_step():
+    d = _cfg(on_failure="warn") | {"rollback": [{"name": "r", "driver": "telnet",
+                                                  "template": "config catv enable", "undoes": "catv"}]}
+    with pytest.raises(ValidationError, match="PHASE_FIELD_NOT_ALLOWED"):
+        PlaybookDefinition.model_validate(d)
+
+
+def test_warn_only_playbook_has_no_rollback_empty_warning():
+    assert not [w for w in playbook_warnings(_cfg(on_failure="warn")) if w["code"] == "ROLLBACK_EMPTY"]
+    assert [w for w in playbook_warnings(_cfg()) if w["code"] == "ROLLBACK_EMPTY"]
+
+
+def test_legacy_on_failure_list_still_converted_but_warn_string_is_not():
+    legacy = {"steps": [{"name": "a", "driver": "simulator", "template": "x", "on_failure": "warn"}],
+              "rollback": [{"name": "r", "driver": "simulator", "template": "y"}]}
+    out = normalize_definition(legacy)
+    assert out["configuration"][0]["on_failure"] == "warn"
+    assert [r["name"] for r in out["rollback"]] == ["r"]
+    comp = {"steps": [{"name": "a", "driver": "simulator", "template": "x",
+                       "on_failure": [{"name": "u", "driver": "simulator", "template": "z"}]}]}
+    out = normalize_definition(comp)
+    assert "on_failure" not in out["configuration"][0]
+    assert out["rollback"][0]["undoes"] == "a"
