@@ -610,6 +610,12 @@ class ClientService(Base):
     )
     activation_date = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    # sm1 (SNMP traffic): the subscriber's PPPoE username. RouterOS names the
+    # dynamic queue of a PPPoE session "<pppoe-USER>"; the snmp-poller joins a
+    # queue to its service through this column. Unique per company where set
+    # (uq_client_service_pppoe), so one queue can never be billed to two
+    # services. NULL = not a PPPoE service, or not known yet.
+    pppoe_username = Column(String(64), nullable=True)
     # Connection long-tail: {"pppoe_user": "...", "static_ip": "...", "onu_port": 2}
     # Free-form and NOT a playbook variable source — see provisioning_params
     # below for the declared, per-service parameter values.
@@ -732,6 +738,10 @@ class ClientService(Base):
         ),
         # Cycle 7 (doc 25 §2.5): services-page install-state badge filter scan.
         Index("ix_client_service_company_install_state", "company_id", "install_state"),
+        # sm1: queue name -> service lookup of the SNMP traffic ingest.
+        Index("uq_client_service_pppoe", "company_id", "pppoe_username", unique=True,
+              postgresql_where=text("pppoe_username IS NOT NULL"),
+              sqlite_where=text("pppoe_username IS NOT NULL")),
         # ba1: adoption-campaign scans + the adoption-template export
         # (services lacking adoption). Partial — adopted rows are a small
         # minority forever (uq_service_plan_product postgresql_where precedent).

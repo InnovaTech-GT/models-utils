@@ -77,10 +77,30 @@ class DunningSettings(BaseModel):
         return self
 
 
+class TrafficSettings(BaseModel):
+    """sm1: company.traffic_settings (JSON). NULL column = these defaults
+    (models.traffic.TRAFFIC_SETTINGS_DEFAULTS). A service is saturated on a
+    day when its 5-minute averages stayed over saturation_pct of the plan
+    speed for at least saturation_minutes_per_day minutes."""
+    model_config = ConfigDict(extra="forbid")
+
+    saturation_pct: int = Field(90, ge=50, le=100)
+    saturation_minutes_per_day: int = Field(30, ge=5, le=1440)
+    retention_5m_days: int = Field(7, ge=1, le=31)
+    retention_1h_days: int = Field(90, ge=7, le=400)
+    retention_1d_days: int = Field(730, ge=30, le=3650)
+
+    @model_validator(mode="after")
+    def _rollups_outlive_detail(self):
+        if not (self.retention_5m_days <= self.retention_1h_days <= self.retention_1d_days):
+            raise ValueError("retention must grow from 5m to 1h to 1d")
+        return self
+
+
 def merge_settings(stored: Optional[dict], patch: Optional[BaseModel], model: type[BaseModel]) -> dict:
     """Deep-merge a partial settings patch over the stored JSON and re-validate.
 
-    The JSON columns (`mobile_settings`, `dunning_settings`) are written by
+    The JSON columns (`mobile_settings`, `dunning_settings`, `traffic_settings`) are written by
     several pages that each send a subset of keys; replacing the column would
     reset the others to their defaults (e.g. auto_suspension_mode -> OFF).
     Only keys the client set (`exclude_unset`) are applied, so model-level
@@ -134,11 +154,13 @@ class CompanyUpdate(BaseModel):
     address: Optional[str] = None
     mobile_settings: Optional[MobileSettings] = None
     dunning_settings: Optional[DunningSettings] = None
+    traffic_settings: Optional[TrafficSettings] = None
 
 
 class CompanyOut(CompanyBase):
     id: UUID
     mobile_settings: Optional[MobileSettings] = None
     dunning_settings: Optional[DunningSettings] = None
+    traffic_settings: Optional[TrafficSettings] = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -91,6 +91,10 @@ class Company(Base):
     # promise_capacity_pct, promise_reconnect_enabled}. Validated by
     # schemas.company.DunningSettings; NULL = everything off.
     dunning_settings = Column(JSON, nullable=True)
+    # sm1 (SNMP traffic): {saturation_pct, saturation_minutes_per_day,
+    # retention_5m_days, retention_1h_days, retention_1d_days}. Validated by
+    # schemas.company.TrafficSettings; NULL = models.traffic.TRAFFIC_SETTINGS_DEFAULTS.
+    traffic_settings = Column(JSON, nullable=True)
     # pz1: which provisioning worker serves this tenant. NULL = the default
     # (Railway) worker; a value = only the worker started with that
     # PROVISIONING_ZONE (e.g. a DigitalOcean droplet inside the tenant's

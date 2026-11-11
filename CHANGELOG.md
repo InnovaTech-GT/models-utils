@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.27.0** (SNMP traffic, 2026-11-10) - Additive revision `sm1_snmp_traffic_metrics` (parent `et1_edge_telnet`): `client_service.pppoe_username` (partial unique per company, backfilled from `pppoe_user`), `company.traffic_settings` (`TrafficSettings`), `traffic_5m` RANGE-partitioned per Guatemala day (no DEFAULT partition), `traffic_1h`, `traffic_1d`, `saturation_event`; `utils/traffic_partitions.py`; `alembic/env.py` hides the daily partitions from autogenerate. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
   - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.
