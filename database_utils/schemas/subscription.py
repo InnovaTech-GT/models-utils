@@ -56,6 +56,12 @@ class SubscriptionWithTier(SubscriptionOut):
     # Doc 61 §7/§8: FULL | READ_ONLY | LOCKED, and whether a card is on file.
     billing_access: Optional[str] = None
     has_card: bool = False
+    # Doc 69, computed by auth-erp referrals (never client-side).
+    credit_balance_cents: int = 0  # usable referral credit, expired ones excluded
+    balance_due_cents: int = 0  # added to the next invoice
+    discount_active: bool = False
+    is_partner: bool = False
+    partner_since: Optional[datetime] = None
 
 
 class SubscriptionExceptionUpdate(BaseModel):
@@ -70,3 +76,5 @@ class SubscriptionExceptionUpdate(BaseModel):
     limit_overrides: Optional[dict] = None
     # INCOMPLETE/CANCELED/PAST_DUE -> ACTIVE on MANUAL billing, period starting now.
     activate_manual: bool = False
+    # Doc 69 §4.8: true grants partner (needs a discount), false revokes; None = unchanged.
+    partner: Optional[bool] = None

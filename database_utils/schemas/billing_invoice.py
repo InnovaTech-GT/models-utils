@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
@@ -24,8 +24,20 @@ class BillingInvoiceOut(BaseModel):
     period_start: Optional[datetime] = None
     period_end: Optional[datetime] = None
     billed_clients: Optional[int] = None
+    # Doc 69 §5 (all 0 on pre-rf1 invoices).
+    credit_cents: int = 0
+    previous_balance_cents: int = 0
+    carried_out_cents: int = 0
+    refunded_cents: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    @property
+    def discounted(self) -> bool:
+        """net < subtotal, net from the §5 invariant (same comparison as auth-erp price_note)."""
+        net = self.total + self.credit_cents + self.carried_out_cents - self.previous_balance_cents
+        return net < self.subtotal
 
 
 class ManualPaymentMark(BaseModel):

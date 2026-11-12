@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (127 revisions, head: **`et1_edge_telnet`**) — plus
+`alembic/versions/` (128 revisions, head: **`rf1_referral_programs`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1446,3 +1446,22 @@ NULL (Telegram public @), `verified_at`, `last_inbound_at`). Unique `uq_client_c
 `ix_client_chat_address (integration_id, address)` and `ix_client_chat_company_client
 (company_id, client_id)`. Downgrade drops the table and both columns.
 `tests/pg/test_ch1_pg.py` runs the real upsert, the cascades and an idempotent round trip.
+
+## rf1_referral_programs (6.27.0, provisional)
+
+Doc 69 (referral and partner programs on SaaS billing). Purely additive, no
+data step, no PG enum (statuses VARCHAR + CHECK, `pl1` precedent); downgrade
+drops everything it adds. Columns: `company.referral_code` (`uq_company_referral_code`),
+`subscription.partner_since` / `balance_due_cents` (`ck_subscription_balance_due_nonneg`),
+`billing_invoice.credit_cents` / `previous_balance_cents` / `carried_out_cents` /
+`refunded_cents` (each `ck_billing_invoice_<col>_nonneg`, default 0, so existing rows
+read 0), `credit_detail`, `recurrente_payment_id` (indexed). Tables: `referral`,
+`referral_reward`, `billing_reversal`, `billing_card`, `company_identity`,
+`referral_identity` with the `ON DELETE` rules of doc 69 §5 (referral and
+identity history outlive a deleted company). Each constraint is declared inside
+its `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`, so a re-run is a
+no-op. The parent `et1_edge_telnet` is provisional: at compose the
+`down_revision` is re-pointed to the head of that moment (no merge revision)
+and the version takes the next minor. `tests/test_referral_models.py` (SQLite)
+and `tests/pg/test_rf1_pg.py` (the CHECK/UNIQUE/index names on the migrated
+schema, the delete rules, the refusals, the downgrade/upgrade pair) pin it.
