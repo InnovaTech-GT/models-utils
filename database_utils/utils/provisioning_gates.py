@@ -26,6 +26,16 @@ from sqlalchemy.orm import Session
 
 from database_utils.models.isp import DeviceType, Playbook
 
+
+def playbooks_self_managed(company) -> bool:
+    """doc 70 §4: the tenant manages its own playbooks exactly when its
+    `playbook_management` status is APPROVED. Anything else (NULL, junk, a
+    non-dict, a lower-case status, no company) reads as Uplink-managed: fail
+    closed. Lives here, not in permission_utils, so the pure provisioning code
+    can use it without importing fastapi; permission_utils re-exports it."""
+    pm = getattr(company, "playbook_management", None) if company is not None else None
+    return isinstance(pm, dict) and pm.get("status") == "APPROVED"
+
 # Cycle 7 (doc 25 §5.1): per-company get-or-create connectivity probes, one per
 # protocol (and NAT variant), created by backend-erp routers/core_devices.py.
 CORE_CONNECTIVITY_PLAYBOOK_NAMES = frozenset({

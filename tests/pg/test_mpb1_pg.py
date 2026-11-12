@@ -112,3 +112,30 @@ def test_downgrade_then_upgrade_is_clean(conn):
     assert _x(conn, "SELECT count(*) FROM playbook_revision").scalar() == n
     for ix in ("ix_playbook_revision_company_created", "ix_playbook_revision_playbook"):
         assert _x(conn, "SELECT to_regclass(:i)", i=ix).scalar() == ix
+
+
+def test_viewer_regranted_read_is_still_denied(conn):
+    """A3: after `alembic upgrade head` the convergent seed re-grants the global
+    VIEWER role playbooks.read; the overlay still denies it on a managed company."""
+    from sqlalchemy.orm import Session
+
+    from database_utils.models.auth import Role, User
+    from database_utils.utils.permission_utils import PermissionChecker
+
+    assert _x(conn, "SELECT count(*) FROM role r JOIN role_permission rp ON rp.role_id = r.id "
+                    "JOIN permission p ON p.id = rp.permission_id "
+                    "WHERE r.name = 'VIEWER' AND r.company_id IS NULL AND p.name = 'playbooks.read'").scalar() == 1
+    co, uid = _company(conn), uuid.uuid4()
+    _x(conn, "INSERT INTO \"user\" (id, created_at, name, email, age, password_hash, active, email_verified, is_super_admin, "
+             "company_id) VALUES (:id, now(), 'v', :e, 30, 'x', true, true, false, :co)", id=uid, e=f"{uid}@e.com", co=co)
+    _x(conn, "INSERT INTO user_role (user_id, role_id) SELECT :u, id FROM role "
+             "WHERE name = 'VIEWER' AND company_id IS NULL", u=uid)
+    db = Session(bind=conn)
+    user = PermissionChecker.get_user_by_id_with_roles(db, uid)
+    assert user.roles[0].name == "VIEWER"
+    assert not PermissionChecker.has_permission(user, "playbooks.read")
+    assert PermissionChecker.has_permission(user, "clients.read")
+    _x(conn, "UPDATE company SET playbook_management = CAST(:pm AS JSON) WHERE id = :co",
+       pm='{"status": "APPROVED"}', co=co)
+    db.expire_all()
+    assert PermissionChecker.has_permission(PermissionChecker.get_user_by_id_with_roles(db, uid), "playbooks.read")

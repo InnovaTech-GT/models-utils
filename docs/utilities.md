@@ -28,7 +28,7 @@ library, never the reverse).
 | `playbook_template.py`, `playbook_render.py`, `provisioning_codes.py`, `playbook_drivers.py`, `genieacs_nbi.py`, `connectivity.py`, `provisioning_jobs.py`, `provisioning_events.py` | **6.9.0, provisioning worker split R1** (+ **6.10.0 R2**: `provisioning_events.emit_event` and the outbox kinds; `finish_job` emits `JOB_FINISHED`): the playbook language, the job terminal transition (`finish_job`, `fail_parked`), connectivity-job construction and the read-side GenieACS NBI helpers, moved verbatim from backend-erp so the API and the worker share them — see [playbook-language.md](playbook-language.md) |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
-| `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies |
+| `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies; the managed-playbooks overlay (6.27.0, doc 70) — see below |
 | `sessions.py` | Access-token revocation (bug-fix/access-token-revocation). `check_session(db, payload)` — called by `get_current_user` and `require_permission` (so also backend-erp's `require_all_permissions`/`require_any_permission`) — raises 401 `{"code": "SESSION_REVOKED"}` when the token's `sid` family has any `auth_refresh_token` row with `revoked_at` set (logout, refresh reuse, user deactivated, password changed/reset). `is_session_revoked(db, sid)`: one lookup on the indexed `family_id` (no migration needed), cached per process — a revoked verdict until the cache clears, a live verdict for `SESSION_CACHE_SECONDS` (30). `revoke_user_sessions(db, user_id=… \| company_id=…)` revokes every family of a user/company (caller commits) and clears this process's cache. **Revocation latency: immediate in the revoking process, ≤ 30 s in every other process/replica** (no Redis — neither backend has a shared client in models-utils). **Legacy access tokens without `sid` are accepted until they expire** (≤ 24 h web / 60 min mobile after deploy) so a deploy logs nobody out; a malformed `sid` is rejected |
 | `client_code.py` | Client short codes (cc1): `generate_client_code()` (6 chars from an alphabet without 0/O/1/I/L; kept in step with the cc1 SQL default `client_code_generate()`), `normalize_client_code()` (trim + upper-case, `^[A-Z0-9-]{1,16}$` else `ValueError`) |
 | `task_status.py` | Fixed task status rules (ts1): `derive_status(status, has_technician)` — PENDING/ASSIGNED follow whether the task has a technician, IN_PROGRESS/DONE are only set explicitly and survive technician changes; `ASSIGNMENT_STATUSES`, `OPEN_STATUSES` |
@@ -280,6 +280,7 @@ so the workflow engine can apply them too (backend-erp keeps its public names an
 | `claim_time_gate_blocked(db, company_id, device_type)` | 6.9.0, moved from backend-erp `utils/provisioning_guards.py`: `enable_gate_reason(...) is not None`, the worker's claim-time re-check (never for dry runs) |
 | `gate_failure(db, company_id, playbook, device_type, dry_run)` | None, or exactly today's 409 body: `{"code": "PROVISIONING_DISABLED", "reason"}` or `{"code": "DRY_RUN_REQUIRED", "playbook_version", "last_dry_run_version"}` (no `playbook_id`) |
 | `run_gate_failures(db, resolved, dry_run)` | One `gate_failure` per configured node of the resolved path, each + `item_id` / `playbook_id` (readiness context for backend-erp's closeout); a node whose playbook no longer exists yields `{"code": "PLAYBOOK_NOT_FOUND"}` instead of crashing |
+| `playbooks_self_managed(company)` | 6.27.0, doc 70 §4: `True` exactly when `company.playbook_management` is a dict with `status == "APPROVED"`; NULL, junk, a lower-case status or no company read as Uplink-managed (fail closed). Lives here, fastapi-free, so the pure provisioning code can use it; `permission_utils` re-exports it |
 | `ProvisioningGateError(errors)` | Raised by a live `create_run` (so by `create_or_get_run` too). Every producer goes through it: `/provision`, lifecycle, the cancel cascade, ZTP and the workflow engine's mode A. Callers map it to 409 / `ENQUEUE_FAILED` / a FAILED workflow step. Rollback, revert and rollback-retry children are not created by `create_run` and stay exempt |
 
 ### `provisioning_runs.py`
@@ -451,6 +452,25 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
 - **Pinned by** the hash-locked `tests/fixtures/playbook_expr.json` (copied to
   `frontend-erp/lib/__fixtures__/`): changing it means changing both
   implementations and both hash pins.
+
+## `permission_utils.py` — managed playbooks (6.27.0, doc 70)
+
+Every tenant's playbooks are operated by Uplink unless the company is approved for
+self-management. The overlay is the only RBAC home of that rule; role rows, the seed and
+custom roles are never touched (a custom role's `playbooks.*` rows come back to life on
+approval).
+
+| Name | Behaviour |
+|---|---|
+| `MANAGED_PERMISSIONS` | `playbooks.create` / `.read` / `.update` / `.delete` |
+| `PLAYBOOKS_MANAGED_DETAIL` | the 403 body `{"code": "PLAYBOOKS_MANAGED", "message": "Uplink administra los playbooks de esta empresa."}` |
+| `denied_permissions(user)` | `MANAGED_PERMISSIONS` for a user of a company that is not self-managed; empty for a staff actor, a company-less user (superadmin) or a self-managed company |
+| `PermissionChecker.has_permission` | denies a denied name, and `playbooks.*` while anything is denied, **before** the `*` wildcard: a tenant ADMIN loses the four names too |
+| `PermissionChecker.get_user_permissions` | a non-wildcard set minus the denied names and `playbooks.*`; `{'*'}` stays `{'*'}` (callers read the exceptions from `denied_permissions`) |
+| `PermissionChecker.get_user_by_id_with_roles` | also `joinedload(User.company)`, so the overlay costs no extra query |
+| `require_permission` | an overlay denial answers 403 `PLAYBOOKS_MANAGED_DETAIL`; every other denial keeps the generic text |
+
+`playbooks_self_managed` is defined in `provisioning_gates.py` and re-exported here.
 
 ## Related packages
 

@@ -6,9 +6,30 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, Request, Depends
 from database_utils.dependencies.auth import get_token_from_header
+from database_utils.utils.provisioning_gates import playbooks_self_managed  # noqa: F401 (re-exported)
 
 if TYPE_CHECKING:
     from database_utils.models.auth import User
+
+
+# doc 70 §4: the four names a company Uplink manages may not use, whatever its
+# roles grant (role rows are never touched; they come back on approval).
+MANAGED_PERMISSIONS = frozenset({"playbooks.create", "playbooks.read", "playbooks.update", "playbooks.delete"})
+PLAYBOOKS_MANAGED_DETAIL = {"code": "PLAYBOOKS_MANAGED",
+                            "message": "Uplink administra los playbooks de esta empresa."}
+
+
+def denied_permissions(user) -> frozenset:
+    """Permissions the user's roles may grant but the company may not use (doc 70 §4)."""
+    # getattr: duck-typed users (tests, service principals) without the ORM
+    # columns read as company-less; every real User row has both.
+    if getattr(user, "is_staff_actor", False) or getattr(user, "company_id", None) is None:
+        return frozenset()
+    return frozenset() if playbooks_self_managed(getattr(user, "company", None)) else MANAGED_PERMISSIONS
+
+
+def _overlay_denies(denied: frozenset, permission_name: str) -> bool:
+    return permission_name in denied or (permission_name == "playbooks.*" and bool(denied))
 
 
 class PermissionChecker:
@@ -26,12 +47,17 @@ class PermissionChecker:
         for role in user.roles:
             # The built-in ADMIN role gets all permissions (wildcard). Only the
             # global role counts — a tenant custom role named "ADMIN" must not.
+            # A wildcard cannot be subtracted inside a set: callers learn the
+            # overlay's exceptions from denied_permissions (doc 70 §4).
             if role.name == "ADMIN" and role.company_id is None:
                 return {'*'}  # Special wildcard permission
 
             for permission in role.permissions:
                 permissions.add(permission.name)
 
+        denied = denied_permissions(user)
+        if denied:
+            permissions -= denied | {"playbooks.*"}
         return permissions
 
     @staticmethod
@@ -40,6 +66,10 @@ class PermissionChecker:
         Check if a user has a specific permission.
         permission_name format: 'resource.action' (e.g., 'clients.read', 'orders.create')
         """
+        # doc 70 §4: the managed-playbooks overlay wins over every grant, `*` included.
+        if _overlay_denies(denied_permissions(user), permission_name):
+            return False
+
         user_permissions = PermissionChecker.get_user_permissions(user)
 
         # Check for wildcard permission (admin)
@@ -73,7 +103,8 @@ class PermissionChecker:
         from database_utils.models.auth import User, Role
 
         user = db.query(User).options(
-            joinedload(User.roles).joinedload(Role.permissions)
+            joinedload(User.roles).joinedload(Role.permissions),
+            joinedload(User.company),  # the doc 70 overlay reads it: no extra query
         ).filter(User.id == user_id).first()
 
         return user
@@ -164,6 +195,11 @@ def require_permission(permission_name: str, get_db_func):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account has been deactivated"
             )
+
+        # doc 70 §4: an overlay denial carries its own code so the UI and MCP
+        # can explain it.
+        if _overlay_denies(denied_permissions(user), permission_name):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PLAYBOOKS_MANAGED_DETAIL)
 
         # Check permission
         if not PermissionChecker.has_permission(user, permission_name):
