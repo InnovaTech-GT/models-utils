@@ -1226,6 +1226,51 @@ class PlaybookOut(PlaybookBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+
+# --- mpb1 (doc 70 §8, §5.4, §11): revisions, staff simulate, declared inputs ---
+
+class PlaybookRevisionOut(BaseModel):
+    """One playbook_revision row in a list (no definition)."""
+    id: UUID
+    playbook_id: UUID
+    playbook_name: str
+    version: int
+    action: str
+    target: Optional[Dict[str, Any]] = None
+    actor_name: Optional[str] = None
+    actor_staff: bool = False
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlaybookRevisionDetailOut(PlaybookRevisionOut):
+    """One revision with its definition and the previous revision's, for a diff."""
+    definition: Optional[Dict[str, Any]] = None
+    previous_definition: Optional[Dict[str, Any]] = None
+
+
+class PlaybookSimulateIn(BaseModel):
+    """POST /playbooks/{id}/simulate body: a dry run of the service's path."""
+    client_service_id: UUID
+    purpose: str = PURPOSE_ACTIVATION
+
+    @field_validator("purpose")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        return normalize_purpose(v)
+
+
+class DeclaredInputOut(BaseModel):
+    """One input a playbook declares (doc 70 §11), without the definition."""
+    key: str
+    label: Optional[str] = None
+    type: str
+    required: bool
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+
+
 # --- ProvisioningJob ---
 
 class ProvisioningJobCreate(BaseModel):

@@ -517,6 +517,22 @@ Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.
 
 Pinned by `tests/test_payment_link.py`.
 
+### Uplink-managed playbooks (6.27.0, revision `mpb1_managed_playbooks`, doc 70)
+
+`schemas/company.py`:
+
+- `PlaybookManagementStatus` = `PENDING` / `APPROVED` / `DENIED` / `CANCELLED` / `REVOKED`.
+- `PlaybookManagement` (`extra="forbid"`) — the stored `company.playbook_management`: `status`, `reason` (1..1000), `requested_by`, `requested_at`, `ack_version`, `decided_by`, `decided_at`, `note` (≤1000).
+- `PlaybookManagementOut` — the tenant view: `self_managed` plus the optional `status`, `reason`, `requested_at`, `decided_at`, `note`.
+- `PlaybookManagementRequestIn` — `reason` (stripped, 1..1000) and `accept_responsibility: Literal[True]` (missing or false → 422).
+- `PlaybookManagementDecisionIn` — `decision` APPROVE / DENY / REVOKE, `note` ≤1000.
+- `AdminCompanyOut(CompanyOut)` — the superadmin company view: `playbook_management_status` (UPLINK / PENDING / SELF_MANAGED, derived by auth-erp from the raw column), `playbooks_unsimulated`, `playbook_management` (a value `PlaybookManagement` rejects — partial, junk — reads as `None`, never raises) and the requester/decider names (detail only).
+- **`CompanyUpdate` and `CompanyOut` get no `playbook_management` field**: both company PATCHes `setattr` every `CompanyUpdate` field, so a tenant could otherwise approve itself.
+
+`schemas/playbook.py`: `PlaybookRevisionOut` (a revision row, no definition; `actor_name`, `actor_staff`), `PlaybookRevisionDetailOut` (+ `definition`, `previous_definition`), `PlaybookSimulateIn` (`client_service_id`, `purpose` default ACTIVATION through `normalize_purpose`), `DeclaredInputOut` (`key`, `label`, `type`, `required`, `min_length`, `max_length`).
+
+Pinned by `tests/test_mpb1_managed_playbooks.py`.
+
 ### Client account state (6.25.1, no DB migration)
 
 `schemas/client.py`: `ClientAccountOut.state` (computed by backend-erp, never stored) is one of `CURRENT` («Al día»), `OVERDUE` («Pago pendiente»), `SUSPENSION_RISK` («Riesgo de suspensión»: auto-suspension ON and an ACTIVE service at the dunning `min_overdue_orders` threshold, same predicate as backend-erp `services/dunning`) and `SUSPENDED` («Suspendido»). `suspended_reason: Optional[str]` carries the `SuspensionReason` value of the open suspension, set only for `SUSPENDED`. Pinned by `tests/test_client_dpi_deactivation.py`.

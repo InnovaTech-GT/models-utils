@@ -91,6 +91,15 @@ class Company(Base):
     # promise_capacity_pct, promise_reconnect_enabled}. Validated by
     # schemas.company.DunningSettings; NULL = everything off.
     dunning_settings = Column(JSON, nullable=True)
+    # mpb1 (doc 70 §7.1): the playbook self-management request
+    # {status PENDING|APPROVED|DENIED|CANCELLED|REVOKED, reason, requested_by,
+    #  requested_at, ack_version, decided_by, decided_at, note}, validated by
+    # schemas.company.PlaybookManagement. NULL = Uplink-managed, never asked.
+    # Self-managed exactly when status == "APPROVED"; read only through
+    # utils.provisioning_gates.playbooks_self_managed (junk fails closed).
+    # Written only by auth-erp services/playbook_management.transition, never
+    # through CompanyUpdate.
+    playbook_management = Column(JSON, nullable=True)
     # pz1: which provisioning worker serves this tenant. NULL = the default
     # (Railway) worker; a value = only the worker started with that
     # PROVISIONING_ZONE (e.g. a DigitalOcean droplet inside the tenant's
