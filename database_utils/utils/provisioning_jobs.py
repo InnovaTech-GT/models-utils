@@ -13,6 +13,7 @@ IN_STOCK/RESERVED -> INSTALLED promotion from it. The caller always commits.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import sqlalchemy as sa
@@ -31,6 +32,45 @@ from database_utils.utils.provisioning_gates import CORE_CONNECTIVITY_PLAYBOOK_N
 from database_utils.utils.provisioning_events import JOB_FINISHED, emit_event
 from database_utils.utils.provisioning_runs import advance_run, parked_step
 from database_utils.utils.timezone_utils import now_gt
+
+
+# doc 70 §6.1: the one definition of "a code", shared by the job/run schemas,
+# backend-erp's redaction and progress views, and the workflow trigger
+# sanitizer below. Never derive readable text from the raw error itself.
+_CODE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+PROVISIONING_FAILED = "PROVISIONING_FAILED"
+
+
+def error_cause(text: Optional[str]) -> Optional[str]:
+    """The code a failure text starts with: the text before the first `:`
+    (stripped) when it is code-shaped, else PROVISIONING_FAILED; None when
+    there is no error."""
+    if not text:
+        return None
+    head = text.split(":", 1)[0].strip()
+    return head if _CODE.match(head) else PROVISIONING_FAILED
+
+
+def job_error_cause(error: Optional[str], log) -> Optional[str]:
+    """A job's cause. The worker writes a step failure as
+    `job.error = "step '<name>': <entry error>"` with the real code in
+    `job.log["code"]`, so the log's code wins when it is code-shaped."""
+    code = log.get("code") if isinstance(log, dict) else None
+    if isinstance(code, str) and _CODE.match(code):
+        return code
+    return error_cause(error)
+
+
+def reduce_job_snapshot(snapshot: Optional[dict]) -> Optional[dict]:
+    """A provisioning_job workflow-trigger snapshot without `log` and
+    `variables` (rendered commands, device output, inputs) and with `error`
+    reduced to its cause. Every other column is kept (doc 70 AD14)."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    out = {k: v for k, v in snapshot.items() if k not in ("log", "variables")}
+    if "error" in snapshot:
+        out["error"] = job_error_cause(snapshot.get("error"), snapshot.get("log"))
+    return out
 
 
 def write_device_action_log(db, job: ProvisioningJob) -> None:

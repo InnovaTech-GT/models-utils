@@ -1314,8 +1314,26 @@ class ProvisioningJobOut(BaseModel):
     pending_task_ids: Optional[Any] = None      # GenieACS task ids polled on the 202 path
     heartbeat_at: Optional[datetime] = None     # canon C11: lease reaper
     device_lock_key: Optional[str] = None       # canon C11: per-device serialization key
+    # doc 70 §6.1: filled for every caller before backend-erp's projection
+    # replaces `playbook` and `error`, so a client that branches on the cause
+    # reads the code, never the text.
+    playbook_name: Optional[str] = None
+    error_cause: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _fill_name_and_cause(self) -> "ProvisioningJobOut":
+        # Only while None: FastAPI dumps a returned model and validates it
+        # again against the response model, so this runs a second time on the
+        # projected values (readable error, whitelisted log, playbook=None).
+        if self.playbook_name is None and self.playbook is not None:
+            self.playbook_name = self.playbook.name
+        if self.error_cause is None:
+            # Lazy: provisioning_jobs -> provisioning_runs imports this module.
+            from database_utils.utils.provisioning_jobs import job_error_cause
+            self.error_cause = job_error_cause(self.error, self.log)
+        return self
 
     @field_validator("log")
     @classmethod

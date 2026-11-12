@@ -41,6 +41,13 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    mutations via `asyncio.create_task`. `check_workflow_triggers` matches the
    resource type + event (`CREATED`/`UPDATED`/`DELETED`) against active
    `WorkflowTrigger` rows, including their `field_conditions` JSON.
+   **`provisioning_job` snapshots are reduced first** (6.27.0, doc 70 §6.2):
+   `provisioning_jobs.reduce_job_snapshot` drops `log` and `variables` and
+   replaces `error` with the job's cause code (`job_error_cause`), before the
+   conditions are matched and before the trigger event is stored, so a tenant
+   workflow never sees rendered commands, device output or inputs. Write a
+   condition on a job's error as `error equals PROVISIONING_FAILED` (or the
+   specific code), never on its raw text.
 2. **Execution** — `execute_workflow` walks the step DAG
    (`WorkflowStep` + `WorkflowStepEdge`), calling `execute_step` per node and
    recording `WorkflowExecution` / `WorkflowStepExecution` rows.

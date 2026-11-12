@@ -533,6 +533,14 @@ Pinned by `tests/test_payment_link.py`.
 
 Pinned by `tests/test_mpb1_managed_playbooks.py`.
 
+`ProvisioningJobOut` gains `playbook_name` and `error_cause` (doc 70 §6.1), filled by one
+`model_validator(mode="after")` **only while each is `None`**: `playbook_name` from the loaded
+`playbook`, `error_cause` = `provisioning_jobs.job_error_cause(error, log)`. Why only while
+`None`: FastAPI dumps a returned model and validates it again against the response model, so the
+validator runs a second time on backend-erp's projected values (readable `error`, whitelisted
+`log`, `playbook=None`); an unconditional assignment would turn every tenant cause into
+`PROVISIONING_FAILED` and wipe the name. Pinned by `tests/test_error_cause.py`.
+
 ### Client account state (6.25.1, no DB migration)
 
 `schemas/client.py`: `ClientAccountOut.state` (computed by backend-erp, never stored) is one of `CURRENT` («Al día»), `OVERDUE` («Pago pendiente»), `SUSPENSION_RISK` («Riesgo de suspensión»: auto-suspension ON and an ACTIVE service at the dunning `min_overdue_orders` threshold, same predicate as backend-erp `services/dunning`) and `SUSPENDED` («Suspendido»). `suspended_reason: Optional[str]` carries the `SuspensionReason` value of the open suspension, set only for `SUSPENDED`. Pinned by `tests/test_client_dpi_deactivation.py`.

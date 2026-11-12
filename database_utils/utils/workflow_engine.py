@@ -126,6 +126,12 @@ async def check_workflow_triggers(
         )
         return
 
+    if resource_type == "provisioning_job":
+        # doc 70 §6.2: a job snapshot never carries its log, variables or raw
+        # error into a tenant's workflow (conditions and templates see the cause).
+        from database_utils.utils.provisioning_jobs import reduce_job_snapshot
+        before_data, after_data = reduce_job_snapshot(before_data), reduce_job_snapshot(after_data)
+
     try:
         matched = find_matching_workflows(
             db, company_id, resource_type, event_type, before_data, after_data

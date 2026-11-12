@@ -453,6 +453,20 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
   `frontend-erp/lib/__fixtures__/`): changing it means changing both
   implementations and both hash pins.
 
+## `provisioning_jobs.py` — failure causes (6.27.0, doc 70 §6.1)
+
+"A code" has one definition, shared by `ProvisioningJobOut.error_cause`, backend-erp's
+redaction and progress views, and the workflow trigger sanitizer:
+
+| Name | Behaviour |
+|---|---|
+| `error_cause(text)` | the text before the first `:` (stripped) when it matches `^[A-Z][A-Z0-9_]*$`, else `PROVISIONING_FAILED`; `None` for no error |
+| `job_error_cause(error, log)` | the **job** cause: `log["code"]` when code-shaped, else `error_cause(error)`. The worker writes a step failure as `job.error = "step '<name>': <entry error>"` with the real code in `log["code"]`, so `error_cause(job.error)` alone would be `PROVISIONING_FAILED` for almost every step failure. A step's own code is `entry["code"] or error_cause(entry["error"])` |
+| `reduce_job_snapshot(snapshot)` | a copy without `log` and `variables`, `error` → `job_error_cause` (read before `log` is dropped); every other key kept. `workflow_engine.check_workflow_triggers` applies it to `provisioning_job` before/after data |
+
+`error_code` on the run schemas keeps its one meaning, the run **outcome**; the cause is always
+called `error_cause`. Readable text is built from the cause, never from the raw error.
+
 ## `permission_utils.py` — managed playbooks (6.27.0, doc 70)
 
 Every tenant's playbooks are operated by Uplink unless the company is approved for
