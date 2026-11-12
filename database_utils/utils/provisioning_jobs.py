@@ -26,6 +26,7 @@ from database_utils.models.isp import (
     ProvisioningJob,
     ProvisioningJobStatus,
     ProvisioningRun,
+    ProvisioningTrigger,
 )
 from database_utils.utils.provisioning_gates import CORE_CONNECTIVITY_PLAYBOOK_NAMES
 from database_utils.utils.provisioning_events import JOB_FINISHED, emit_event
@@ -48,7 +49,8 @@ def write_device_action_log(db, job: ProvisioningJob) -> None:
         return
 
     serial = (job.variables or {}).get("serial") or (job.variables or {}).get("cpe_serial")
-    actor_kind = "user" if job.triggered_by and job.triggered_by.value == "USER" else "automation"
+    # A person (in the app or through MCP) vs. everything automatic (doc 68 §3.4).
+    actor_kind = "user" if job.triggered_by in (ProvisioningTrigger.USER, ProvisioningTrigger.MCP) else "automation"
 
     db.add(DeviceActionLog(
         company_id=job.company_id,
