@@ -71,7 +71,8 @@ def test_dunning_run_mode_check(conn):
     _x(conn, ins, id=uuid.uuid4(), m="REPORT", co=co)
     with pytest.raises(sa.exc.IntegrityError):
         with conn.begin_nested():
-            _x(conn, ins, id=uuid.uuid4(), m="OFF", co=co)
+            # 'OFF' is valid since cg1 (doc 68 §1), see tests/pg/test_cg1_pg.py.
+            _x(conn, ins, id=uuid.uuid4(), m="MAYBE", co=co)
 
 
 def test_captive_portal_role_grants(conn):

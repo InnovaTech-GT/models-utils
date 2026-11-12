@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.27.0** (doc 68 §1, client groups, 2026-11-11) - Additive revision `cg1_client_groups` (parent `et1_edge_telnet`; final number and parent set at compose). No backfill: every client starts ungrouped (= the tenant's dunning settings).
+  - New `ClientGroup` (`client_group`): `name` VARCHAR(60) unique per company, `color` palette key `grey|blue|green|yellow|red` (default `grey`), `auto_suspension_mode` NULL/`OFF`/`REPORT`/`ON`, `min_overdue_orders` NULL or >= 1; CHECKs `ck_client_group_color` / `_mode` / `_min`.
+  - `client.client_group_id` (FK `client_group` ON DELETE SET NULL, index `ix_client_client_group`); `Client.client_group` is viewonly and company-scoped.
+  - `dunning_run.mode` may be `OFF` (`ck_dunning_run_mode` widened). **Not code-rollback-safe once an `OFF` run exists**: an older backend-erp 500s on `GET /dunning/runs`; the remedy SQL is in the revision docstring (founder-only on production). Downgrade maps `OFF` -> `REPORT`.
+  - Schemas: `ClientGroupColor`, `ClientGroupRef`; `client_group_id` on `ClientBase`/`ClientCreate`/`ClientUpdate`; `ClientOut.client_group`.
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_cg1_client_groups.py`, `tests/pg/test_cg1_pg.py`.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
   - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.

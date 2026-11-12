@@ -4,6 +4,7 @@ and the client schemas."""
 import uuid
 
 import pytest
+from _mi_helpers import load
 from conftest import CO_A, CO_B
 from pydantic import ValidationError
 
@@ -50,3 +51,10 @@ def test_client_schemas_carry_the_group():
     assert ref.color == "blue"
     with pytest.raises(ValidationError):
         ClientGroupRef(id=uuid.uuid4(), name="x", color="#ff0000")
+
+
+def test_cg1_revision_chain():
+    m = load("versions/cg1_client_groups.py", "cg1_client_groups")
+    # down_revision is re-pointed at compose, with this assertion
+    assert m.revision == "cg1_client_groups" and m.down_revision == "et1_edge_telnet"
+    assert len(m.revision) <= 32
