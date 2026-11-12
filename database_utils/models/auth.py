@@ -100,6 +100,12 @@ class Company(Base):
     # wf1 (doc 63-workflow-engine C5): the tenant's daily cap on workflow
     # messages. NULL = the default (500). Set by superadmin only (API).
     workflow_daily_message_cap = Column(Integer, nullable=True)
+    # rf1 (doc 69 §4.1): the code this company hands out, 6 chars generated
+    # lazily by auth-erp referrals.code_for. NULL until first asked for.
+    # Referral tables carry NO relationship here: their DB ON DELETE rules govern.
+    referral_code = Column(String(12), nullable=True)
+
+    __table_args__ = (UniqueConstraint("referral_code", name="uq_company_referral_code"),)
 
     # Relationships
     tier = relationship("Tier", back_populates="companies")
@@ -473,9 +479,14 @@ class Subscription(Base):
     # Doc 61 §8: card saved at signup (Recurrente setup checkout); every
     # monthly invoice is charged to it (POST /one_time_payments).
     recurrente_payment_method_id = Column(String, nullable=True)
+    # rf1 (doc 69 §4.8): set while the tenant is a partner (permanent discount).
+    partner_since = Column(DateTime(timezone=True), nullable=True)
+    # rf1 (doc 69 §4.3/§4.7): clawbacks + sub-Q5 remainders, added to the next bill.
+    balance_due_cents = Column(Integer, nullable=False, default=0, server_default="0")
 
     __table_args__ = (
         CheckConstraint("discount_percent >= 0 AND discount_percent <= 100", name="ck_subscription_discount_percent"),
+        CheckConstraint("balance_due_cents >= 0", name="ck_subscription_balance_due_nonneg"),
     )
 
     # Relationships
@@ -561,6 +572,20 @@ class BillingInvoice(Base):
     period_start = Column(DateTime(timezone=True), nullable=True)
     period_end = Column(DateTime(timezone=True), nullable=True)
     billed_clients = Column(Integer, nullable=True)
+    # rf1 (doc 69 §5). Invariant:
+    # total = net + previous_balance_cents - credit_cents - carried_out_cents
+    # (all 0 on pre-rf1 invoices, so net = total there).
+    credit_cents = Column(Integer, nullable=False, default=0, server_default="0")  # credits applied (free month incl.)
+    previous_balance_cents = Column(Integer, nullable=False, default=0, server_default="0")  # balance carried in
+    carried_out_cents = Column(Integer, nullable=False, default=0, server_default="0")  # sub-Q5 remainder moved out
+    credit_detail = Column(JSON, nullable=True)  # [{reward_id, cents}], read by void
+    refunded_cents = Column(Integer, nullable=False, default=0, server_default="0")  # sum of applied refunds
+    recurrente_payment_id = Column(String, nullable=True, index=True)  # on_... of a saved-card charge
+
+    __table_args__ = tuple(
+        CheckConstraint(f"{col} >= 0", name=f"ck_billing_invoice_{col}_nonneg")
+        for col in ("credit_cents", "previous_balance_cents", "carried_out_cents", "refunded_cents")
+    )
 
     # Relationships
     subscription = relationship("Subscription", back_populates="invoices")
@@ -578,3 +603,157 @@ class BillingWebhookEvent(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
 
 
+# --- rf1 (doc 69 §5): referral and partner programs --------------------------
+# Statuses are VARCHAR + CHECK (no PG enum). None of these models has an ORM
+# relationship, and Company has none to them: the DB ON DELETE rules govern,
+# so a company delete keeps the history it should. "Company gone" is a join
+# that finds no company row, never a NULL FK alone.
+
+REWARD_KINDS = ("FREE_MONTH", "REFERRER_CREDIT")
+REWARD_STATUSES = ("PENDING_APPROVAL", "APPROVED", "AVAILABLE", "USED", "REJECTED",
+                   "INELIGIBLE", "EXPIRED", "FORFEITED", "REVERSED")
+REVERSAL_KINDS = ("REFUND", "DISPUTE")
+IDENTITY_KINDS = ("NIT", "EMAIL", "PHONE")
+REFERRAL_IDENTITY_KINDS = IDENTITY_KINDS + ("CARD",)
+
+
+def _in(col, values):
+    return f"{col} IN ({', '.join(repr(v) for v in values)})"
+
+
+class Referral(Base):
+    """One referred company, captured at signup (doc 69 §4.1)."""
+    __tablename__ = "referral"
+    __table_args__ = (
+        CheckConstraint("referrer_company_id IS NULL OR referrer_company_id <> referred_company_id",
+                        name="ck_referral_not_self"),
+        UniqueConstraint("referred_company_id", name="uq_referral_referred_company_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    referrer_company_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="SET NULL"), nullable=True, index=True)
+    referred_company_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="SET NULL"), nullable=True)
+    code = Column(String(12), nullable=False)  # code used (snapshot)
+    referred_nit = Column(String, nullable=False)  # normalised snapshots
+    referred_email = Column(String, nullable=False)
+    referred_phone = Column(String, nullable=False)
+    nit_seen_before = Column(Boolean, nullable=False)
+    free_period_start = Column(DateTime(timezone=True), nullable=True)
+    referrer_paid_at = Column(DateTime(timezone=True), nullable=True)  # set by delete_company (§4.1)
+
+
+class ReferralReward(Base):
+    """FREE_MONTH (referred) or REFERRER_CREDIT (referrer); one per kind per referral (§4.2)."""
+    __tablename__ = "referral_reward"
+    __table_args__ = (
+        CheckConstraint(_in("kind", REWARD_KINDS), name="ck_referral_reward_kind"),
+        CheckConstraint(_in("status", REWARD_STATUSES), name="ck_referral_reward_status"),
+        CheckConstraint("amount_cents IS NULL OR amount_cents >= 0", name="ck_referral_reward_amount_nonneg"),
+        CheckConstraint("remaining_cents >= 0 AND remaining_cents <= COALESCE(amount_cents, 0)",
+                        name="ck_referral_reward_remaining"),
+        CheckConstraint("clawed_cents >= 0", name="ck_referral_reward_clawed_nonneg"),
+        UniqueConstraint("referral_id", "kind", name="uq_referral_reward_referral_kind"),
+        # Leading company_id also serves the plain company_id lookups.
+        Index("ix_referral_reward_company_status_expires", "company_id", "status", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    referral_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("referral.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[uuid.UUID] = mapped_column(  # beneficiary
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String(16), nullable=False)
+    status = Column(String(20), nullable=False)
+    amount_cents = Column(Integer, nullable=True)
+    remaining_cents = Column(Integer, nullable=False, default=0, server_default="0")
+    source_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("billing_invoice.id", ondelete="SET NULL"), nullable=True)
+    unlock_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("billing_invoice.id", ondelete="SET NULL"), nullable=True)
+    ineligible_reasons = Column(JSON, nullable=True)
+    decided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    decision_note = Column(Text, nullable=True)
+    unlocked_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    reversal_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("billing_reversal.id", ondelete="SET NULL"), nullable=True)
+    reversed_at = Column(DateTime(timezone=True), nullable=True)
+    forfeited_at = Column(DateTime(timezone=True), nullable=True)
+    clawed_cents = Column(Integer, nullable=False, default=0, server_default="0")
+
+
+class BillingReversal(Base):
+    """A Recurrente refund (re_...) or dispute (di_...) (§4.7). payload holds
+    customer email/name: superadmin-only."""
+    __tablename__ = "billing_reversal"
+    __table_args__ = (
+        CheckConstraint(_in("kind", REVERSAL_KINDS), name="ck_billing_reversal_kind"),
+        UniqueConstraint("gateway_id", name="uq_billing_reversal_gateway_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    kind = Column(String(8), nullable=False)
+    gateway_id = Column(String, nullable=False)
+    status = Column(String, nullable=True)
+    reason = Column(String, nullable=True)
+    amount_cents = Column(Integer, nullable=True)  # refunds only
+    invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("billing_invoice.id", ondelete="SET NULL"), nullable=True)
+    linked_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    payload = Column(JSON, nullable=True)
+    applied_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class BillingCard(Base):
+    """Every card a company saved (card history, §4.5 CARD_SHARED)."""
+    __tablename__ = "billing_card"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_method_id = Column(String, nullable=False)
+    card_key = Column(String(64), nullable=False, index=True)
+
+
+class CompanyIdentity(Base):
+    """Append-only identity history (NIT / EMAIL / PHONE, normalised); outlives the company (§4.1)."""
+    __tablename__ = "company_identity"
+    __table_args__ = (
+        CheckConstraint(_in("kind", IDENTITY_KINDS), name="ck_company_identity_kind"),
+        UniqueConstraint("company_id", "kind", "value", name="uq_company_identity_company_kind_value"),
+        Index("ix_company_identity_kind_value", "kind", "value"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="SET NULL"), nullable=True, index=True)
+    kind = Column(String(8), nullable=False)
+    value = Column(String(255), nullable=False)
+
+
+class ReferralIdentity(Base):
+    """Referrer identity snapshot at signup (+ CARD keys); outlives the referrer (§4.1)."""
+    __tablename__ = "referral_identity"
+    __table_args__ = (
+        CheckConstraint(_in("kind", REFERRAL_IDENTITY_KINDS), name="ck_referral_identity_kind"),
+        UniqueConstraint("referral_id", "kind", "value", name="uq_referral_identity_referral_kind_value"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    referral_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("referral.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String(8), nullable=False)
+    value = Column(String(255), nullable=False)

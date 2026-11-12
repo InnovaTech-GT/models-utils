@@ -31,6 +31,12 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | `PaymentMethod` (payment_method) | SaaS billing payment method |
 | `BillingInvoice` (billing_invoice) | SaaS subscription invoice |
 | `BillingWebhookEvent` (billing_webhook_event) | Recurrente webhook delivery idempotency log — `svix_id` string PK + `event_type`/`created_at` (rb1) |
+| `Referral` (referral) | rf1 (doc 69): one referred company, captured at signup. `referrer_company_id` / `referred_company_id` FK company **SET NULL** (`referred_company_id` UNIQUE, `ck_referral_not_self`), `code` snapshot, normalised `referred_nit`/`referred_email`/`referred_phone` snapshots, `nit_seen_before`, `free_period_start`, `referrer_paid_at` |
+| `ReferralReward` (referral_reward) | rf1: `FREE_MONTH` (referred) or `REFERRER_CREDIT` (referrer), `UNIQUE (referral_id, kind)`; `status` in `REWARD_STATUSES`; `amount_cents` / `remaining_cents` (`≤ COALESCE(amount_cents, 0)`) / `clawed_cents`; `source_invoice_id` / `unlock_invoice_id` / `reversal_id` SET NULL; `company_id` (beneficiary) and `referral_id` CASCADE; index `(company_id, status, expires_at)` |
+| `BillingReversal` (billing_reversal) | rf1: a Recurrente refund (`re_…`) or dispute (`di_…`), `kind` REFUND/DISPUTE, `gateway_id` UNIQUE, `invoice_id` SET NULL, `payload` (superadmin-only: holds customer email/name) |
+| `BillingCard` (billing_card) | rf1: card history, one row per saved card (`payment_method_id`, `card_key` indexed); company CASCADE |
+| `CompanyIdentity` (company_identity) | rf1: append-only identity history (`kind` NIT/EMAIL/PHONE, normalised `value`), `UNIQUE (company_id, kind, value)`, index `(kind, value)`; company **SET NULL** so it outlives the company |
+| `ReferralIdentity` (referral_identity) | rf1: the referrer's identity snapshot per referral (`kind` NIT/EMAIL/PHONE/CARD), `UNIQUE (referral_id, kind, value)`, referral CASCADE, no FK to company |
 
 Note the two billing domains: these SaaS-billing models cover ISP companies
 paying Uplink; **subscriber** billing (ISP end-customers) lives in the CRM/ISP
@@ -93,6 +99,22 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   before it), `billing_note` (superadmin-only text);
   `BillingInvoice.recurrente_checkout_id` (indexed) — latest pay-this-invoice
   checkout, matched by the intent webhook. `BillingInvoice.status` also takes `VOID`.
+- **Referral and partner programs** (`rf1_referral_programs`, 6.27.0 provisional, doc 69,
+  purely additive): `Company.referral_code` (VARCHAR(12), UNIQUE, generated lazily by
+  auth-erp); `Subscription.partner_since` (partner flag) and `balance_due_cents`
+  (clawbacks + sub-Q5 remainders added to the next bill, CHECK ≥ 0);
+  `BillingInvoice.credit_cents` / `previous_balance_cents` / `carried_out_cents` /
+  `refunded_cents` (int, default 0, each CHECK ≥ 0), `credit_detail` (JSON
+  `[{reward_id, cents}]`, read by void) and `recurrente_payment_id` (indexed, the
+  `on_…` of a saved-card charge). Invariant: `total = net + previous_balance_cents −
+  credit_cents − carried_out_cents`, so pre-rf1 invoices (all 0) have `net = total`.
+  Statuses are VARCHAR + CHECK built from `REWARD_KINDS`, `REWARD_STATUSES`,
+  `REVERSAL_KINDS`, `IDENTITY_KINDS`, `REFERRAL_IDENTITY_KINDS`. **No ORM relationship
+  on `Company` (nor on the six tables): the DB `ON DELETE` rules govern**, so a
+  company delete keeps the referral history it should; in code "company gone" is a
+  join that finds no `company` row, never a NULL FK alone. SQLite applies those rules
+  only with `PRAGMA foreign_keys=ON`, so company-delete behaviour is tested in
+  `tests/pg/test_rf1_pg.py`.
 
 ## Environment Variables
 
