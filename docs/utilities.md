@@ -472,6 +472,19 @@ approval).
 
 `playbooks_self_managed` is defined in `provisioning_gates.py` and re-exported here.
 
+**Staff actor (doc 70 §5.1).** A superadmin edits one tenant's playbooks by sending
+`X-Uplink-Act-Company: <company uuid>` (`ACT_COMPANY_HEADER`). `require_permission` resolves it
+after the active check, so every existing endpoint works unchanged:
+
+| Name | Behaviour |
+|---|---|
+| `STAFF_PERMISSIONS` | `MANAGED_PERMISSIONS` + `provisioning.read`, `device_types.read`, `inventory_items.read`, `service_plans.read`, `clients.read`, `client_services.read`. Never `provisioning.create/execute/cancel`, `acs_devices.action`, `device_credentials.*`, or any client/service/plan/billing/order/user write |
+| `SELF_MANAGED_STAFF_DENIED` / `staff_permissions(company)` | on a self-managed company staff lose `playbooks.create/update/delete` (read-only); else the full `STAFF_PERMISSIONS` |
+| `StaffActor(user, company)` | `is_staff_actor = True`; `company` / `company_id` are the tenant's, everything else (`id`, `email`, …) delegates to the ORM superadmin, so rows record the superadmin's id. Never added to a session |
+| `resolve_staff_actor(db, request, user)` | header absent or blank → None; user not an **active, company-less** `is_super_admin` → None (the header is ignored, the caller acts as themselves); a header that is not a UUID or names no company → 404 `COMPANY_NOT_FOUND_DETAIL`. Sets span attributes `uplink.staff_actor` / `uplink.act_company_id` |
+| `require_permission` | with an actor: returns it when the permission is in `staff_permissions(company)`; 403 `SELF_MANAGED_TENANT_DETAIL` for the three names on a self-managed company; else the generic 403 |
+| `get_user_permissions(actor)` / `denied_permissions(actor)` | `staff_permissions(company)` / empty |
+
 ## Related packages
 
 | Path | Purpose |
