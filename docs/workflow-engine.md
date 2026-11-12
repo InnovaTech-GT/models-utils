@@ -45,7 +45,15 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    (`WorkflowStep` + `WorkflowStepEdge`), calling `execute_step` per node and
    recording `WorkflowExecution` / `WorkflowStepExecution` rows.
 3. **Step actions** (`StepActionType`):
-   - `UPDATE_FIELD` — mutate a field on the trigger entity
+   - `UPDATE_FIELD` — mutate a field on the trigger entity. `UPDATE_FIELD_DENYLIST`
+     (and `CREATE_ENTITY_FIELD_DENYLIST` for `CREATE_ENTITY`) fail the step on a
+     protected field before any write: order/invoice money state (PaymentService
+     is its single writer), `migration_source` on `client_service`/`service_plan`,
+     and `client.client_group_id` (cg1, doc 68 §1.4: a client's group decides
+     whether dunning may cut it, and backend-erp gates every assignment with
+     built-in ADMIN + `company.update` plus a same-tenant check; a v1 automation's
+     plain `setattr` would skip both and could even link another tenant's group).
+     The v2 engine has no generic field write
    - `CREATE_ENTITY` — create a related entity
    - `HTTP_REQUEST` — call an external `Integration` target; URLs are guarded
      by `utils/ssrf.py` `validate_url_no_ssrf` (SEC-6). A disabled integration

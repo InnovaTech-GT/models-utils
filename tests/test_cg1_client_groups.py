@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from database_utils.models import Client, ClientGroup, DunningRun
 from database_utils.schemas.client import ClientCreate, ClientGroupRef, ClientOut, ClientUpdate
+from database_utils.utils.workflow_engine import _execute_create_entity, _execute_update_field
 
 
 def test_client_group_table_and_constraints():
@@ -58,3 +59,23 @@ def test_cg1_revision_chain():
     # down_revision is re-pointed at compose, with this assertion
     assert m.revision == "cg1_client_groups" and m.down_revision == "et1_edge_telnet"
     assert len(m.revision) <= 32
+
+
+def test_update_field_denies_client_group_id(db):
+    client = Client(company_id=CO_A, name="a")
+    db.add(client)
+    db.commit()
+    with pytest.raises(ValueError, match="client_group_id"):
+        _execute_update_field(db, {"resource_type": "client", "updates": {"client_group_id": str(uuid.uuid4())}},
+                              {"trigger": {"resource_id": client.id}}, CO_A)
+    db.rollback()
+    db.expire_all()
+    assert client.client_group_id is None
+
+
+def test_create_entity_denies_client_group_id(db):
+    with pytest.raises(ValueError, match="client_group_id"):
+        _execute_create_entity(db, {"resource_type": "client",
+                                    "data": {"name": "x", "client_group_id": str(uuid.uuid4())}}, {}, CO_A)
+    db.rollback()
+    assert db.query(Client).count() == 0

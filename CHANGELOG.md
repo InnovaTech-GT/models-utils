@@ -15,6 +15,7 @@ On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat`
   - `client.client_group_id` (FK `client_group` ON DELETE SET NULL, index `ix_client_client_group`); `Client.client_group` is viewonly and company-scoped.
   - `dunning_run.mode` may be `OFF` (`ck_dunning_run_mode` widened). **Not code-rollback-safe once an `OFF` run exists**: an older backend-erp 500s on `GET /dunning/runs`; the remedy SQL is in the revision docstring (founder-only on production). Downgrade maps `OFF` -> `REPORT`.
   - Schemas: `ClientGroupColor`, `ClientGroupRef`; `client_group_id` on `ClientBase`/`ClientCreate`/`ClientUpdate`; `ClientOut.client_group`.
+  - Workflow engine v1: `UPDATE_FIELD` and `CREATE_ENTITY` refuse `client.client_group_id` (assignment is gated in backend-erp); the denylist error no longer names only PaymentService.
   - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
   - Tests: `tests/test_cg1_client_groups.py`, `tests/pg/test_cg1_pg.py`.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
