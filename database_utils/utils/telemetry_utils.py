@@ -13,6 +13,7 @@ from database_utils.utils.logging_utils import (
     user_id_context,
     company_id_context,
     user_roles_context,
+    request_client_context,
 )
 
 
@@ -59,3 +60,6 @@ def set_request_span_attributes(span: Optional[Span] = None) -> None:
     if roles := user_roles_context.get():
         target.set_attribute("enduser.role", roles[0] if roles else "")
         target.set_attribute("enduser.roles", ",".join(str(r) for r in roles))
+
+    if client := request_client_context.get():
+        target.set_attribute("uplink.client", client)

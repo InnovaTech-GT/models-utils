@@ -45,8 +45,8 @@ library, never the reverse).
 | `email_templates.py` | Jinja2 rendering of the email templates (see [email-service.md](email-service.md)) |
 | `error_handling.py` | `handle_exceptions` — wraps an async handler, re-raises `HTTPException`, converts anything else to a 500. Logs argument **types and keyword names only, never values**: every decorated handler receives its request body and the Capa 3 bodies carry plaintext secrets |
 | `exception_handlers.py` | Standardized FastAPI exception handlers |
-| `logging_utils.py` | Loguru structured JSON logging setup |
-| `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services |
+| `logging_utils.py` | Loguru structured JSON logging setup; request-scoped contextvars (`set_request_context` / `clear_request_context`). `request_client_context` / `request_client()` hold the request's client marker (`"mcp"` or `None`, doc 68 §3.4); `set_request_context(client=)` always sets it, so no marker survives from an earlier request, and `clear_request_context()` resets it |
+| `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services. Sets `request.id`, `enduser.id`, `company.id`, `enduser.role(s)`, and `uplink.client` when the request carries the allowlisted `X-Uplink-Client: mcp` marker (telemetry, not security) |
 | `router_factory.py` | FastAPI router factory helpers |
 
 ## The provisioning trio (Cycle 10, doc 35)
@@ -458,7 +458,7 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
 |---|---|
 | `dependencies/db.py` | `get_db` FastAPI session dependency (rollback + close) |
 | `dependencies/audit.py` | `get_client_ip` (proxy-aware) |
-| `middleware/logging_middleware.py` | `LoggingMiddleware` — request-ID + JWT-context + duration ASGI middleware |
+| `middleware/logging_middleware.py` | `LoggingMiddleware` — request-ID + JWT-context + duration ASGI middleware. Also reads the `X-Uplink-Client` marker (doc 68 §3.4): `client_marker()` keeps the trimmed, lower-cased value only if it is in `CLIENT_MARKERS` (`{"mcp"}`), else `None`, and passes it as `set_request_context(client=)`. Telemetry, not security: the marker grants nothing (JWT + RBAC are unchanged); it only lets `create_run` record `MCP` instead of `USER` |
 | `constants/roles.py` | `Roles` ADMIN/VIEWER/COLLECTOR/TECHNICIAN |
 
 ## Connections to Other Components
