@@ -20,11 +20,13 @@ playbooks are exempt. Dry runs bypass every gate (C6/C7). The tenant's
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from database_utils.models.isp import DeviceType, Playbook
+from database_utils.models.isp import DeviceType, DeviceTypePlaybook, InventoryItemPlaybook, Playbook
 
 
 def playbooks_self_managed(company) -> bool:
@@ -35,6 +37,15 @@ def playbooks_self_managed(company) -> bool:
     can use it without importing fastapi; permission_utils re-exports it."""
     pm = getattr(company, "playbook_management", None) if company is not None else None
     return isinstance(pm, dict) and pm.get("status") == "APPROVED"
+
+
+def may_stamp_dry_run(company, *, staff_actor: bool) -> bool:
+    """doc 70 §5.4 (70-A1): whether a SUCCEEDED dry run may clear «Requiere
+    simulación» (`last_dry_run_version`). Only a staff run (Uplink checked the
+    version) or a self-managed tenant's own dry run; a managed tenant's dry run
+    still runs but leaves the gate closed. Callers pass the company as read
+    when the run finishes, so a revoke mid-run does not stamp."""
+    return staff_actor or playbooks_self_managed(company)
 
 # Cycle 7 (doc 25 §5.1): per-company get-or-create connectivity probes, one per
 # protocol (and NAT variant), created by backend-erp routers/core_devices.py.
@@ -59,6 +70,30 @@ SYSTEM_PLAYBOOK_NAMES = frozenset({
     "huawei_onu_reboot",
     "huawei_onu_deprovision",
 }) | CORE_CONNECTIVITY_PLAYBOOK_NAMES
+
+
+def unsimulated_counts(db: Session, company_ids: Iterable[UUID]) -> Dict[UUID, int]:
+    """doc 70 §5.4: per company, the bound non-system playbooks whose current
+    version has not been dry-run (`last_dry_run_version IS DISTINCT FROM
+    version`), i.e. the ones the dry-run gate blocks. One grouped query;
+    companies with zero are absent. A playbook bound on a device type and as
+    a node override counts once."""
+    ids = list(company_ids)
+    if not ids:
+        return {}
+    bound = sa.or_(
+        sa.exists().where(DeviceTypePlaybook.playbook_id == Playbook.id),
+        sa.exists().where(InventoryItemPlaybook.playbook_id == Playbook.id),
+    )
+    rows = db.execute(
+        sa.select(Playbook.company_id, sa.func.count(sa.distinct(Playbook.id)))
+        .where(Playbook.company_id.in_(ids),
+               Playbook.name.not_in(SYSTEM_PLAYBOOK_NAMES),
+               Playbook.last_dry_run_version.is_distinct_from(Playbook.version),
+               bound)
+        .group_by(Playbook.company_id)
+    ).all()
+    return {co: n for co, n in rows}
 
 
 class ProvisioningGateError(Exception):

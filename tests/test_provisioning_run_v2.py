@@ -740,7 +740,10 @@ def test_a_dry_run_walks_every_phase_without_branching(db, csr):
 
 
 def test_a_successful_dry_run_stamps_unchanged_playbooks_only(db, csr):
-    run = create_run(db, csr.service, PURPOSE_ACTIVATION, dry_run=True)
+    # A staff run (doc 70 §5.4): a managed tenant's own dry run never stamps.
+    csr.playbooks["olt-activation"].version = 2  # unstamped, so the stamp is observable
+    db.flush()
+    run = create_run(db, csr.service, PURPOSE_ACTIVATION, dry_run=True, staff_actor=True)
     csr.playbooks["router-activation"].version += 1
     db.flush()
     _drive(db, run)
