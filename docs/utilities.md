@@ -26,6 +26,7 @@ library, never the reverse).
 | `acs_bootstrap.py` | The `acs.*` playbook namespace (doc 42 §9.7): ACS URL, tenant inform password, the CPE's registration ensure — see below |
 | `playbook_expr.py` | Declared integer arithmetic for a playbook's `computed` block (doc 40 §3.3.3, ADR-006 amendment) and the shared `is_secret_name`/`_SECRET_HINTS` (moved from backend-erp's renderer, which re-exports them) — see below |
 | `playbook_template.py`, `playbook_render.py`, `provisioning_codes.py`, `playbook_drivers.py`, `genieacs_nbi.py`, `connectivity.py`, `provisioning_jobs.py`, `provisioning_events.py` | **6.9.0, provisioning worker split R1** (+ **6.10.0 R2**: `provisioning_events.emit_event` and the outbox kinds; `finish_job` emits `JOB_FINISHED`): the playbook language, the job terminal transition (`finish_job`, `fail_parked`), connectivity-job construction and the read-side GenieACS NBI helpers, moved verbatim from backend-erp so the API and the worker share them — see [playbook-language.md](playbook-language.md) |
+| `playbook_revisions.py` (6.27.0) | Doc 70 §8: `record_revision`, the **only** writer of `playbook_revision` (one row per playbook write, flushed inside the caller's transaction) — see [below](#playbook_revisionspy--the-playbook-edit-trail-6270-doc-70-8) |
 | `transport.py` | Transport resolver, `resolve_endpoint()` + `default_outbound_access()` (2026-08-13, doc 34 canon R23 rewrite; `vpn` branch 2026-09-25) — see below |
 | `jwt_utils.py` | HS256 JWT create/decode. Env: `SECRET_KEY`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; dev/prod set 2592000 = 30 days), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60). Every token carries a `type` claim: `create_access_token(usuario, expires_minutes=None, sid=None)` → `"access"` (+ `sid` = the refresh `family_id` when auth-erp issues a pair — see `sessions.py`); `create_refresh_token(usuario, client_type="web", jti=None)` → `"refresh"` + `cl` (`"m"`/`"w"`, so `/refresh` keeps the client's TTL) + `jti` (the given one, else a fresh uuid4 hex — keys the `auth_refresh_token` row auth-erp records for rotation reuse detection). `is_refresh_payload(p)` also recognises legacy tokens (no `type`, no `roles`). `get_current_user` and `require_permission` reject refresh tokens (401 `Invalid token type`); `require_permission` also returns 403 `Account has been deactivated` for an inactive user. Both reject an access token whose session was revoked with 401 `SESSION_REVOKED` (`sessions.check_session`). `decode_token` never logs the payload. **Fails fast if `SECRET_KEY` is unset when `ENVIRONMENT=production`**; dev fallback otherwise |
 | `permission_utils.py` | `PermissionChecker` and require-permission FastAPI dependencies; the managed-playbooks overlay (6.27.0, doc 70) — see below |
@@ -468,6 +469,31 @@ redaction and progress views, and the workflow trigger sanitizer:
 
 `error_code` on the run schemas keeps its one meaning, the run **outcome**; the cause is always
 called `error_cause`. Readable text is built from the cause, never from the raw error.
+
+## `playbook_revisions.py` — the playbook edit trail (6.27.0, doc 70 §8)
+
+`record_revision(db, actor, playbook, action, target=None) -> PlaybookRevision` is the only writer of
+`playbook_revision`. It flushes first (a just-added playbook gets its id and default `version`), adds the
+row and flushes again; it **never commits**, so it runs before the commit that persists the playbook
+write and a failing revision insert rolls that write back.
+
+| Field | Value |
+|---|---|
+| `company_id`, `playbook_id`, `playbook_name`, `version` | from the playbook (`version` = after the change) |
+| `definition` | the playbook's definition after the change; `None` for `DELETE` / `UNBIND` |
+| `target` | `{scope, target_id, purpose}` for `BIND` / `UNBIND`, else `None` |
+| `actor_user_id` | `getattr(actor, "id", None)`: the user, the superadmin behind a `StaffActor`, or `None` for system writes |
+| `actor_staff` | `getattr(actor, "is_staff_actor", False)` |
+
+An action outside `PLAYBOOK_REVISION_ACTIONS` raises `ValueError` before any write.
+
+Write sites in models-utils: `connectivity._get_or_create_connectivity_playbook` records `CREATE` when it
+creates a per-company `core_connectivity_check_*` playbook and `UPDATE` when it self-heals a drifted
+definition in place (no version bump), both with no actor. That get-or-create runs in backend-erp's
+core-device "test connection" route **and** in the provisioning-worker's hourly connectivity sweep, so the
+worker now inserts `playbook_revision` rows too (its write allowlist and `docs/contract.md`, and the frozen
+backend-erp worker copy's allowlist, list it). backend-erp's playbook routes and binding service call it for
+`CREATE` / `UPDATE` / `DELETE` / `BIND` / `UNBIND`.
 
 ## `permission_utils.py` — managed playbooks (6.27.0, doc 70)
 
