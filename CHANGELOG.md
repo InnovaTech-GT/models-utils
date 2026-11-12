@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.27.0** (doc 68 §3, run triggers, 2026-11-11) - Additive revision `rtg1_run_triggers` (labels only, irreversible; parent `et1_edge_telnet`, re-pointed at compose). No row is rewritten; the backfill of past rows is a separate, later revision.
+  - `ProvisioningTrigger` gains `MCP`, `BOT`, `AUTO_SUSPENSION`, `AUTO_REACTIVATION` (PG `provisioningtrigger`, shared by `provisioning_run` and `provisioning_job`).
+  - `X-Uplink-Client` marker: `LoggingMiddleware` accepts only a trimmed, case-insensitive `mcp` (`CLIENT_MARKERS`, `client_marker()`), stores it per request (`request_client()`, `set_request_context(client=)`, cleared after every request) and `set_request_span_attributes()` sets `uplink.client`. Telemetry, not security: JWT + RBAC are unchanged.
+  - `effective_trigger()` in `create_run` and `enqueue_connectivity_check`: `USER` becomes `MCP` inside an MCP-marked request; nothing else is ever swapped (the connectivity sweep stays `API`). A dedupe hit keeps the first creator's trigger.
+  - `create_run` sets the span attributes `provisioning.trigger` / `provisioning.run_id` on the current span.
+  - `write_device_action_log`: `actor_kind` is `user` for `MCP` as well as `USER`.
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together; every worker (Railway and the droplet zone workers) runs this pin before backend-erp writes the new values.
+  - Tests: `tests/test_run_triggers.py`, `tests/test_client_marker.py`, `tests/pg/test_rtg1_pg.py`.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
   - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.

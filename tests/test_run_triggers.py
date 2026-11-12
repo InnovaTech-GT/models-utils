@@ -6,18 +6,25 @@ import uuid
 
 import pytest
 from _mi_helpers import load
+
 from database_utils.models.isp import (
     PURPOSE_ACTIVATION,
     DeviceActionLog,
     ProvisioningJob,
     ProvisioningJobStatus,
+)
+from database_utils.models.isp import (
     ProvisioningTrigger as T,
 )
 from database_utils.utils import provisioning_runs
 from database_utils.utils.connectivity import enqueue_connectivity_check
 from database_utils.utils.logging_utils import request_client_context
 from database_utils.utils.provisioning_jobs import write_device_action_log
-from database_utils.utils.provisioning_runs import create_or_get_run, create_run, effective_trigger
+from database_utils.utils.provisioning_runs import (
+    create_or_get_run,
+    create_run,
+    effective_trigger,
+)
 
 
 def rtg1():
@@ -38,7 +45,7 @@ def test_rtg1_labels_match_the_python_enum():
 
 
 def test_rtg1_rewrites_no_row():
-    assert not re.search(r"\b(UPDATE|INSERT|DELETE)\b", inspect.getsource(rtg1().upgrade), re.I)
+    assert not re.search(r"\b(UPDATE|INSERT|DELETE)\b", inspect.getsource(rtg1().upgrade), re.IGNORECASE)
 
 
 class _Span:

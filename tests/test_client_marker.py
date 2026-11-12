@@ -5,7 +5,10 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 
-from database_utils.middleware.logging_middleware import LoggingMiddleware, client_marker
+from database_utils.middleware.logging_middleware import (
+    LoggingMiddleware,
+    client_marker,
+)
 from database_utils.utils.logging_utils import request_client, request_client_context
 from database_utils.utils.telemetry_utils import set_request_span_attributes
 
