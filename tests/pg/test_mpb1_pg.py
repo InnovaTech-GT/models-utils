@@ -119,7 +119,6 @@ def test_viewer_regranted_read_is_still_denied(conn):
     VIEWER role playbooks.read; the overlay still denies it on a managed company."""
     from sqlalchemy.orm import Session
 
-    from database_utils.models.auth import Role, User
     from database_utils.utils.permission_utils import PermissionChecker
 
     assert _x(conn, "SELECT count(*) FROM role r JOIN role_permission rp ON rp.role_id = r.id "
