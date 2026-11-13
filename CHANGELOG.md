@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **Held, no version yet** (doc 68 §3.4, run triggers backfill, 2026-11-13) - Data-only revision `rtg2_run_trigger_backfill` (parent `rtg1_run_triggers`, one-way). Held for the next founder-gated release; the version is set and `down_revision` rewritten at that compose. Cron-user `SUSPENSION` runs created as `USER` become `AUTO_SUSPENSION`, every `API` run becomes `BOT`, and their jobs follow their run (standalone `API` jobs stay). Tests: `tests/test_run_triggers_backfill.py`, `tests/pg/test_rtg2_pg.py`.
 - **6.27.0** (doc 68 §3, run triggers, 2026-11-11) - Additive revision `rtg1_run_triggers` (labels only, irreversible; parent `et1_edge_telnet`). No row is rewritten; the backfill of past rows is a separate, later revision.
   - `ProvisioningTrigger` gains `MCP`, `BOT`, `AUTO_SUSPENSION`, `AUTO_REACTIVATION` (PG `provisioningtrigger`, shared by `provisioning_run` and `provisioning_job`).
   - `X-Uplink-Client` marker: `LoggingMiddleware` accepts only a trimmed, case-insensitive `mcp` (`CLIENT_MARKERS`, `client_marker()`), stores it per request (`request_client()`, `set_request_context(client=)`, cleared after every request) and `set_request_span_attributes()` sets `uplink.client`. Telemetry, not security: JWT + RBAC are unchanged.

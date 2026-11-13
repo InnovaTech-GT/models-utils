@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (128 revisions, head: **`rtg1_run_triggers`**) — plus
+`alembic/versions/` (129 revisions, head: **`rtg2_run_trigger_backfill`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1459,3 +1459,30 @@ hazard: a worker or backend on an older models-utils raises `LookupError` when i
 written with one of these labels, so a rollback below this pin needs the founder-only remedy
 in doc 68 §3.4. `tests/test_run_triggers.py` pins the chain and the labels against
 `ProvisioningTrigger`; `tests/pg/test_rtg1_pg.py` checks them at head.
+
+## rtg2_run_trigger_backfill (held, no version yet)
+
+Run triggers backfill (doc 68 §3.4), parent `rtg1_run_triggers`. **HELD: built, tested and
+pushed on its own branch, not composed and not released (68-A3).** It ships with a later
+founder-gated release, once production already runs a worker and backend-erp that know the
+`rtg1` labels; until then no row is rewritten, because an older process raises `LookupError`
+on a label it does not know. At that compose its `down_revision` is rewritten to the head of
+the moment and the version is set.
+
+Data only, hand-written (`SET lock_timeout = '5s'`, three `UPDATE`s, no DDL):
+
+1. `provisioning_run` rows created as `USER` for purpose `SUSPENSION` by the cron system user
+   (`CRON_EMAIL = system-cron@internal.erp`) become `AUTO_SUSPENSION`. Past admin `run-now`
+   suspensions and past payment reactivations cannot be told apart from other `USER` runs and
+   stay `USER`. Without a cron user in the database this statement matches nothing.
+2. Every `API` run becomes `BOT`.
+3. A `provisioning_job` takes its run's label when that is `AUTO_SUSPENSION` or `BOT`. Standalone
+   `API` jobs (`run_id` NULL, the connectivity sweeps) are left alone. `DeviceActionLog` is
+   append-only and untouched.
+
+Idempotent (a rerun finds nothing to move). `downgrade()` is a documented no-op: the backfill
+is one-way. `tests/test_run_triggers_backfill.py` pins the chain; `tests/pg/test_rtg2_pg.py`
+runs the three statements against a real Postgres (cron suspension and its child, admin and
+reactivation runs unchanged, API to BOT, standalone API jobs unchanged, rerun, and a no-op
+when there is no cron user). Rehearsed on a throwaway restore of the Railway development
+database; only the cron-user suspension run, the API runs and their children moved.
