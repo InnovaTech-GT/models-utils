@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (128 revisions, head: **`rtg1_run_triggers`**) — plus
+`alembic/versions/` (129 revisions, head: **`vn1_visit_no_money`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1421,6 +1421,17 @@ VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_inter
 on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
+
+## vn1_visit_no_money (6.28.0)
+
+Collector reasons & promises (doc 68 §2), parent `rtg1_run_triggers`. Additive, hand-written: `lock_timeout` 5s,
+then `ALTER TYPE collectionvisitcode ADD VALUE IF NOT EXISTS 'noMoney'` in an autocommit block
+(the nc1a recipe). The label is **irreversible**: downgrade is a documented no-op, because PG
+cannot drop an enum label without rebuilding the type. A backend-erp older than the
+models-utils that knows `CollectionVisitCode.NO_MONEY` raises `LookupError` when it loads a
+`noMoney` visit row, so the three consumers move their pin together; the founder-only remedy
+is in doc 68 §2.4. `tests/test_vn1_visit_no_money.py` pins the chain and the binding;
+`tests/pg/test_vn1_pg.py` checks the label at `alembic upgrade head`.
 
 ## et1_edge_telnet (6.26.0)
 

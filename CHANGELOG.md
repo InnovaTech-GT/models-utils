@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.28.0** (doc 68 §2, collector reasons & promises, 2026-11-12) - Additive revision `vn1_visit_no_money` (parent `rtg1_run_triggers`): the `collectionvisitcode` PG enum gains the label `noMoney` (`ALTER TYPE ... ADD VALUE IF NOT EXISTS` in an autocommit block, `lock_timeout` 5s). Downgrade is a no-op (PG cannot drop an enum label).
+  - `CollectionVisitCode.NO_MONEY = "noMoney"` ("no tenía el dinero aún"), bound by value, so `CollectionVisitCreate.visit_code` accepts it. Docstring and column comment now point at the strings cobros sends (`VISIT_REASONS`).
+  - Irreversible label: a backend-erp older than this pin raises `LookupError` on a `noMoney` visit row. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_vn1_visit_no_money.py`, `tests/pg/test_vn1_pg.py`.
 - **6.27.0** (doc 68 §3, run triggers, 2026-11-11) - Additive revision `rtg1_run_triggers` (labels only, irreversible; parent `et1_edge_telnet`). No row is rewritten; the backfill of past rows is a separate, later revision.
   - `ProvisioningTrigger` gains `MCP`, `BOT`, `AUTO_SUSPENSION`, `AUTO_REACTIVATION` (PG `provisioningtrigger`, shared by `provisioning_run` and `provisioning_job`).
   - `X-Uplink-Client` marker: `LoggingMiddleware` accepts only a trimmed, case-insensitive `mcp` (`CLIENT_MARKERS`, `client_marker()`), stores it per request (`request_client()`, `set_request_context(client=)`, cleared after every request) and `set_request_span_attributes()` sets `uplink.client`. Telemetry, not security: JWT + RBAC are unchanged.
