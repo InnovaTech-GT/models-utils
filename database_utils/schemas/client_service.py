@@ -87,6 +87,32 @@ class ClientServiceBillingUpdate(BaseModel):
     quantity: Optional[int] = None
 
 
+class ServiceNetworkRun(BaseModel):
+    """nm1 (doc 71 §6.1): the service's latest non-dry provisioning run.
+    Backend-computed; `unresolved` comes from the backend's single
+    unresolved-run predicate."""
+    id: UUID
+    purpose: str
+    status: str
+    error_code: Optional[str] = None
+    outcome: Optional[str] = None
+    created_at: datetime
+    finished_at: Optional[datetime] = None
+    unresolved: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OfficeTaskRef(BaseModel):
+    """nm1 (doc 71 §6.1): an open office-action task of the service."""
+    id: UUID
+    office_action: str
+    name: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClientServiceOut(ClientServiceBase):
     id: UUID
     company_id: UUID
@@ -128,6 +154,13 @@ class ClientServiceOut(ClientServiceBase):
     # computed on this endpoint. Never stored, never on Create/Update.
     cpe_serial_number: Optional[str] = None
     cpe_online: Optional[bool] = None
+    # nm1 (doc 71 §3, §6.1). network_managed is the column (machine-written,
+    # never on Create/Update). network_run / open_office_tasks are
+    # backend-COMPUTED on detail, single-service responses and the list
+    # filtered by client_id; None / [] elsewhere means "not computed".
+    network_managed: bool = False
+    network_run: Optional[ServiceNetworkRun] = None
+    open_office_tasks: List[OfficeTaskRef] = []
 
     # --- Billing (read-only here; settable via ClientServiceCreate or the
     # dedicated ClientServiceBillingUpdate / generate / regenerate-charges

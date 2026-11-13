@@ -71,6 +71,15 @@ class TaskOut(TaskBase):
     longitude: Optional[float] = None
     # oa1 (doc 45): the server picked inventory_item_id. Output only.
     onu_auto_assigned: bool = False
+    # nm1 (doc 71 §4.1, §4.5). Output only: office_action is set by the
+    # backend builders, completed_by / completion_note on close (the note is
+    # written through the backend's TaskUpdateIn); completed_by_name is filled
+    # by the backend.
+    office_action: Optional[str] = None
+    provisioning_run_id: Optional[UUID] = None
+    completed_by: Optional[UUID] = None
+    completed_by_name: Optional[str] = None
+    completion_note: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

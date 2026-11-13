@@ -417,6 +417,15 @@ Callers must surface any returned error code as a step failure. See
 
 Moved from backend-erp's worker: `True` when the tenant's `provisioning_settings.dial_target == 'gateway'`. It is the one predicate shared by `connectivity.enqueue_connectivity_check` (drops the ICMP ping step), the worker's sweep and the API's test-connection `MGMT_HOST_NOT_SET` precondition.
 
+## `network_managed.py` (6.32.0, doc 71 §9.2)
+
+`client_service.network_managed` from run history.
+
+| Name | Behaviour |
+|---|---|
+| `MANAGED_EVIDENCE_PURPOSES` | ACTIVATION, CPE_SWAP, SUSPENSION, REACTIVATION, BOOST: a successful live run of any of them needs Uplink's scheme on the device |
+| `backfill_value(db, service_id) -> bool` | One `exists()` query: a SUCCEEDED non-dry evidence run with no later SUCCEEDED non-dry DEPROVISION. The `nm1` backfill predicate for one service; backend-erp's RUN_CLOSED settle calls it when Revertir closes an ACTIVATION. The revision keeps a frozen SQL copy (`BACKFILL_SQL`) and a test runs both on the same fixtures |
+
 ## `playbook_expr.py` (doc 40 §3.3.3)
 
 A playbook may declare `computed: [{"key", "expr", "min"?, "max"?}]`

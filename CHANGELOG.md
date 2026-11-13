@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.32.0** (tentative, the minor is retaken at compose; doc 71, CSR operations fixes, 2026-11-13) - Additive revision `nm1_network_managed` (parent `et1_edge_telnet` on its branch, re-chained onto the integration head at compose). **Inert for old code**: the new columns default to false / NULL and nothing old reads them.
+  - `client_service.network_managed` BOOLEAN NOT NULL DEFAULT false (`ClientService.network_managed`): Uplink's playbooks manage this service's network configuration. Machine-written (backend RUN_CLOSED settle, admin toggle); never on Create/Update.
+  - `task.office_action` VARCHAR(20) (`OFFICE_ACTIONS`: NETWORK_CUT / NETWORK_RECONNECT / NETWORK_REMOVE / NETWORK_SWAP / RUN_BY_HAND) with `ck_task_office_action` (an office action forces `job_kind IS NULL`; declared on the model too), `task.provisioning_run_id` (FK `provisioning_run`, SET NULL, `ix_task_provisioning_run_id`), `task.completed_by` (FK `user`, SET NULL), `task.completion_note` VARCHAR(500).
+  - Backfill (doc 71 §9.2): `network_managed = true` for a service with a SUCCEEDED non-dry ACTIVATION / CPE_SWAP / SUSPENSION / REACTIVATION / BOOST run and no later SUCCEEDED non-dry DEPROVISION.
+  - `utils/network_managed.py`: `MANAGED_EVIDENCE_PURPOSES`, `backfill_value(db, service_id)` (the backfill predicate for one service; the revision keeps a frozen `BACKFILL_SQL`).
+  - Schemas: `ClientServiceOut` + `network_managed`, `network_run: Optional[ServiceNetworkRun]`, `open_office_tasks: List[OfficeTaskRef]` (the last two backend-computed); new `ServiceNetworkRun`, `OfficeTaskRef`; `TaskOut` + `office_action`, `provisioning_run_id`, `completed_by`, `completed_by_name`, `completion_note`. No Create/Update schema gains any of them.
+  - Downgrade drops the index, the CHECK, the FKs and the columns (nothing irreversible).
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_nm1_network_managed.py`, `tests/pg/test_nm1_pg.py` (CI `pg` job); `test_task_links.py` index set.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
   - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.

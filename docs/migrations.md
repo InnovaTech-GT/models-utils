@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (127 revisions, head: **`et1_edge_telnet`**) — plus
+`alembic/versions/` (128 revisions, head: **`nm1_network_managed`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1421,6 +1421,29 @@ VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_inter
 on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
+
+## nm1_network_managed (6.32.0, tentative)
+
+Network-managed services and office tasks (doc 71 §9), parent `et1_edge_telnet` on its
+branch; re-chained at compose onto the integration head of the moment (rewrite
+`down_revision`, never a merge revision). Additive, hand-written (lock_timeout,
+IF [NOT] EXISTS, `DO` blocks for the constraints). `client_service.network_managed` BOOLEAN
+NOT NULL DEFAULT false; `task.office_action` VARCHAR(20) + `ck_task_office_action`
+(`office_action IS NULL OR (office_action IN ('NETWORK_CUT','NETWORK_RECONNECT',
+'NETWORK_REMOVE','NETWORK_SWAP','RUN_BY_HAND') AND job_kind IS NULL)`),
+`task.provisioning_run_id` UUID (`fk_task_provisioning_run_id` → `provisioning_run`, SET NULL,
+`ix_task_provisioning_run_id`), `task.completed_by` UUID (`fk_task_completed_by` → `"user"`,
+SET NULL), `task.completion_note` VARCHAR(500).
+
+**Backfill** (`BACKFILL_SQL`, doc 71 §9.2 frozen): `network_managed = true` where the service
+has a SUCCEEDED non-dry ACTIVATION / CPE_SWAP / SUSPENSION / REACTIVATION / BOOST run and no
+later SUCCEEDED non-dry DEPROVISION. A reverted ACTIVATION is ROLLED_BACK, so it never counts;
+standalone jobs (`run_id` NULL) and `adopted_at` are not evidence. It never writes false.
+`utils/network_managed.backfill_value` is the same predicate for one service;
+`tests/test_nm1_network_managed.py` runs both on one fixture set. Inert for old code.
+Downgrade drops the index, the CHECK, the FKs and the five columns `IF EXISTS`.
+`tests/pg/test_nm1_pg.py` (CI `pg` job) runs the backfill, the CHECK and a
+downgrade/re-upgrade on Postgres.
 
 ## et1_edge_telnet (6.26.0)
 
