@@ -7,7 +7,7 @@ from database_utils.schemas.mobile_integration import CollectionVisitCreate
 
 def test_vn1_revision_chain():
     m = load("versions/vn1_visit_no_money.py", "vn1_visit_no_money")
-    assert m.revision == "vn1_visit_no_money" and m.down_revision == "et1_edge_telnet"
+    assert m.revision == "vn1_visit_no_money" and m.down_revision == "rtg1_run_triggers"
 
 
 def test_no_money_code_value_and_binding():

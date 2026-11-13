@@ -1,7 +1,7 @@
 """collectionvisitcode gains 'noMoney' (doc 68 §2, collector reasons & promises)
 
 Revision ID: vn1_visit_no_money
-Revises: et1_edge_telnet
+Revises: rtg1_run_triggers
 Create Date: 2026-11-12
 
 Additive and irreversible: one enum label, added with ALTER TYPE ... ADD VALUE
@@ -21,7 +21,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "vn1_visit_no_money"
-down_revision: str | Sequence[str] | None = "et1_edge_telnet"
+down_revision: str | Sequence[str] | None = "rtg1_run_triggers"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

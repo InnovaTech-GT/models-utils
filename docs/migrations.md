@@ -1422,10 +1422,9 @@ on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
 
-## vn1_visit_no_money (6.27.0)
+## vn1_visit_no_money (6.28.0)
 
-Collector reasons & promises (doc 68 §2), parent `et1_edge_telnet` (re-pointed at compose if
-another revision lands on the same parent first). Additive, hand-written: `lock_timeout` 5s,
+Collector reasons & promises (doc 68 §2), parent `rtg1_run_triggers`. Additive, hand-written: `lock_timeout` 5s,
 then `ALTER TYPE collectionvisitcode ADD VALUE IF NOT EXISTS 'noMoney'` in an autocommit block
 (the nc1a recipe). The label is **irreversible**: downgrade is a documented no-op, because PG
 cannot drop an enum label without rebuilding the type. A backend-erp older than the
