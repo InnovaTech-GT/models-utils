@@ -35,7 +35,7 @@ def test_trigger_values():
     assert [t.value for t in T] == ["USER", "WORKFLOW", "API", "MCP", "BOT", "AUTO_SUSPENSION", "AUTO_REACTIVATION"]
 
 
-def test_rtg1_revision_chain():  # down_revision is re-pointed at compose, with this assertion
+def test_rtg1_revision_chain():
     m = rtg1()
     assert m.revision == "rtg1_run_triggers" and m.down_revision == "et1_edge_telnet"
 
