@@ -53,6 +53,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import sqlalchemy as sa
 from loguru import logger
+from opentelemetry import trace
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -86,6 +87,7 @@ from database_utils.schemas.playbook import (
 )
 from database_utils.utils import crypto
 from database_utils.utils.acs_bootstrap import acs_values, reads_acs
+from database_utils.utils.logging_utils import request_client
 from database_utils.utils.provisioning_gates import ProvisioningGateError, run_gate_failures
 from database_utils.utils.playbook_template import input_problem
 from database_utils.utils.provisioning_events import RUN_CLOSED, emit_event
@@ -422,6 +424,16 @@ def preflight_run(db: Session, client_service: ClientService, resolved: Resolved
         _encrypt_secrets(uuid.uuid4(), client_service.company_id, {})
 
 
+def effective_trigger(t: ProvisioningTrigger) -> ProvisioningTrigger:
+    """The trigger to store (doc 68 §3.4): MCP when a USER-triggered row is
+    created inside a request marked `X-Uplink-Client: mcp`, else `t`
+    unchanged. The swap only ever turns USER into MCP, so the header cannot
+    forge any other value."""
+    if t is ProvisioningTrigger.USER and request_client() == "mcp":
+        return ProvisioningTrigger.MCP
+    return t
+
+
 def create_run(
     db: Session,
     client_service: ClientService,
@@ -473,6 +485,10 @@ def create_run(
 
     A live run whose path fails a provisioning gate raises
     ProvisioningGateError (doc 43 §5.6) before anything is written.
+
+    `triggered_by` is stored through effective_trigger (USER becomes MCP in an
+    MCP-marked request; doc 68 §3.4) and copied to every child; the current
+    span gets `provisioning.trigger` / `provisioning.run_id`.
     """
     mode = ProvisioningRunMode(mode).value  # ValueError on an unknown mode
     if guided_timeout_seconds is None:  # ClientServiceProvisionIn's "run default"
@@ -539,11 +555,16 @@ def create_run(
         secrets_kek_id=sealed[2],
         idempotency_key=idempotency_key
         or run_idempotency_key(client_service.id, purpose, dry_run),
-        triggered_by=triggered_by,
+        triggered_by=effective_trigger(triggered_by),
         triggered_by_user_id=triggered_by_user_id,
     )
     db.add(run)
     db.flush()
+
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("provisioning.trigger", run.triggered_by.value)
+        span.set_attribute("provisioning.run_id", str(run.id))
 
     _queue_child(db, run, 0)
     return run

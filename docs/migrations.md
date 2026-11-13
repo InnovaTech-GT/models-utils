@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (128 revisions, head: **`vn1_visit_no_money`**) — plus
+`alembic/versions/` (129 revisions, head: **`vn1_visit_no_money`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1458,3 +1458,16 @@ NULL (Telegram public @), `verified_at`, `last_inbound_at`). Unique `uq_client_c
 `ix_client_chat_address (integration_id, address)` and `ix_client_chat_company_client
 (company_id, client_id)`. Downgrade drops the table and both columns.
 `tests/pg/test_ch1_pg.py` runs the real upsert, the cascades and an idempotent round trip.
+
+## rtg1_run_triggers (6.27.0)
+
+Run triggers (doc 68 §3.4), parent `et1_edge_telnet`. Labels only, hand-written on the
+`mi1_mobile_enum_labels` pattern (`lock_timeout`, `ADD VALUE IF NOT EXISTS` inside
+`autocommit_block()`, `pg_enum` post-check): `provisioningtrigger` gains `MCP`, `BOT`,
+`AUTO_SUSPENSION` and `AUTO_REACTIVATION` (`NEW_LABELS`). No statement uses them and no row
+is rewritten; the one-way backfill of past rows is a separate, later revision
+(`rtg2_run_trigger_backfill`). IRREVERSIBLE: `downgrade()` is a documented no-op. Rollback
+hazard: a worker or backend on an older models-utils raises `LookupError` when it loads a row
+written with one of these labels, so a rollback below this pin needs the founder-only remedy
+in doc 68 §3.4. `tests/test_run_triggers.py` pins the chain and the labels against
+`ProvisioningTrigger`; `tests/pg/test_rtg1_pg.py` checks them at head.

@@ -291,9 +291,16 @@ class ProvisioningRunMode(str, enum.Enum):
 
 
 class ProvisioningTrigger(str, enum.Enum):
-    USER = "USER"
-    WORKFLOW = "WORKFLOW"
-    API = "API"
+    """Who or what started a provisioning run/job (doc 68 §3.3). Native PG enum
+    `provisioningtrigger`, shared by provisioning_run and provisioning_job.
+    MCP/BOT/AUTO_* added by rtg1_run_triggers (labels only)."""
+    USER = "USER"  # a person in the web or mobile app
+    WORKFLOW = "WORKFLOW"  # a workflow (v2 engine, boosts, legacy v1)
+    API = "API"  # other machine callers (worker connectivity sweep jobs)
+    MCP = "MCP"  # a person through the MCP server (USER swapped by effective_trigger)
+    BOT = "BOT"  # the WhatsApp bot's purpose endpoint
+    AUTO_SUSPENSION = "AUTO_SUSPENSION"  # the dunning rule (cron or run-now)
+    AUTO_REACTIVATION = "AUTO_REACTIVATION"  # reconnection by a payment or a promise
 
 
 # ---------------------------------------------------------------------------
