@@ -143,6 +143,34 @@ class TaskAssignee(Base):
     role = Column(String(20), nullable=True)
 
 
+class ClientGroup(Base):
+    """A tenant-defined client group (doc 68 §1, revision cg1_client_groups).
+    One group per client (`client.client_group_id`). Its policy overrides the
+    tenant's DunningSettings for its members: `auto_suspension_mode` NULL =
+    the tenant's mode; `min_overdue_orders` NULL = the tenant's threshold, and
+    a value only adds grace (backend-erp applies max(group, tenant)). The rule
+    is evaluated in backend-erp services/dunning.py only. `color` is a palette
+    key, never a hex value."""
+    __tablename__ = "client_group"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    name = Column(String(60), nullable=False)
+    color = Column(String(10), nullable=False, default="grey", server_default="grey")
+    auto_suspension_mode = Column(String(10), nullable=True)  # OFF | REPORT | ON
+    min_overdue_orders = Column(Integer, nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_client_group_company_name"),
+        CheckConstraint("color IN ('grey', 'blue', 'green', 'yellow', 'red')", name="ck_client_group_color"),
+        CheckConstraint("auto_suspension_mode IN ('OFF', 'REPORT', 'ON')", name="ck_client_group_mode"),
+        CheckConstraint("min_overdue_orders >= 1", name="ck_client_group_min"),
+    )
+
+
 class Client(Base):
     __tablename__ = "client"
 
@@ -186,9 +214,20 @@ class Client(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     advisor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     assigned_technician_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    # cg1 (doc 68 §1): NULL = no group = the tenant's dunning settings.
+    client_group_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client_group.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     company = relationship("Company", back_populates="clients")
+    # Viewonly and company-scoped (defence in depth): a client_group_id that
+    # names another tenant's group reads as no group. Writes set client_group_id.
+    client_group = relationship(
+        "ClientGroup",
+        primaryjoin="and_(foreign(Client.client_group_id) == ClientGroup.id, "
+                    "Client.company_id == ClientGroup.company_id)",
+        viewonly=True,
+        lazy="select",
+    )
     advisor = relationship("User", back_populates="clients", foreign_keys=[advisor_id])
     assigned_technician = relationship("User", foreign_keys=[assigned_technician_id])
     services = relationship("ClientService", back_populates="client", cascade="all, delete-orphan")
@@ -209,6 +248,7 @@ class Client(Base):
         CheckConstraint("payment_day IS NULL OR (payment_day BETWEEN 1 AND 31)", name="ck_client_payment_day_range"),
         # cc1: case-insensitive unique per company (codes are stored upper).
         Index("uq_client_company_code", "company_id", text("upper(code)"), unique=True),
+        Index("ix_client_client_group", "client_group_id"),
     )
 
 

@@ -71,6 +71,7 @@ def test_revision_and_model_agree_on_the_indexes():
     assert set(cl1._NEW_INDEXES) == {i.name for i in Client.__table__.indexes} - {
         "ix_client_company_id",
         "uq_client_company_code",  # cc1, a later revision
+        "ix_client_client_group",  # cg1, a later revision
     }
 
 

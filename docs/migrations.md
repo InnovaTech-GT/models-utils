@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (129 revisions, head: **`vn1_visit_no_money`**) — plus
+`alembic/versions/` (130 revisions, head: **`cg1_client_groups`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1421,6 +1421,24 @@ VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_inter
 on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
+
+## cg1_client_groups (6.29.0)
+
+Client groups (doc 68 §1), parent `vn1_visit_no_money`. Additive, hand-written, one
+transactional revision, no backfill (every client starts ungrouped = the tenant's dunning
+settings). New `client_group` (`name` VARCHAR(60) unique per company, `color` palette key
+default `grey`, nullable `auto_suspension_mode` / `min_overdue_orders`; CHECKs
+`ck_client_group_color` / `_mode` / `_min`; company FK CASCADE), `client.client_group_id`
+(FK SET NULL, index `ix_client_client_group`), and `ck_dunning_run_mode` dropped and
+re-created as `mode IN ('OFF','REPORT','ON')`. Upgrade is idempotent (`IF [NOT] EXISTS`).
+
+**Not code-rollback-safe once used**: an older backend-erp validates `dunning_run.mode` as
+`REPORT`/`ON`, so once an `OFF` run is stored its `GET /dunning/runs` answers 500. Remedy:
+`UPDATE dunning_run SET mode='REPORT' WHERE mode='OFF';` (founder-only on production).
+Downgrade runs that mapping, restores the narrow CHECK, then drops the index, the column and
+the table. `tests/test_cg1_client_groups.py` pins the chain and the model;
+`tests/pg/test_cg1_pg.py` covers the CHECKs, SET NULL / CASCADE, `OFF` runs and an
+idempotent round trip that maps `OFF` to `REPORT`.
 
 ## vn1_visit_no_money (6.28.0)
 

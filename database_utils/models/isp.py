@@ -888,7 +888,8 @@ class DunningRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     ran_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    # REPORT | ON (OFF tenants are not run).
+    # REPORT | ON, or OFF (cg1, doc 68 §1): the tenant is OFF and a client
+    # group's policy ran for its members.
     mode = Column(String(10), nullable=False)
     outcome = Column(Enum(DunningRunOutcome), nullable=False)
     candidates = Column(JSON, nullable=False, default=list)
@@ -901,7 +902,7 @@ class DunningRun(Base):
 
     __table_args__ = (
         Index("ix_dunning_run_company_ran_at", "company_id", "ran_at"),
-        CheckConstraint("mode IN ('REPORT', 'ON')", name="ck_dunning_run_mode"),
+        CheckConstraint("mode IN ('OFF', 'REPORT', 'ON')", name="ck_dunning_run_mode"),
     )
 
 

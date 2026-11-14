@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
+- **6.29.0** (doc 68 §1, client groups, 2026-11-11) - Additive revision `cg1_client_groups` (parent `vn1_visit_no_money`). No backfill: every client starts ungrouped (= the tenant's dunning settings).
+  - New `ClientGroup` (`client_group`): `name` VARCHAR(60) unique per company, `color` palette key `grey|blue|green|yellow|red` (default `grey`), `auto_suspension_mode` NULL/`OFF`/`REPORT`/`ON`, `min_overdue_orders` NULL or >= 1; CHECKs `ck_client_group_color` / `_mode` / `_min`.
+  - `client.client_group_id` (FK `client_group` ON DELETE SET NULL, index `ix_client_client_group`); `Client.client_group` is viewonly and company-scoped.
+  - `dunning_run.mode` may be `OFF` (`ck_dunning_run_mode` widened). **Not code-rollback-safe once an `OFF` run exists**: an older backend-erp 500s on `GET /dunning/runs`; the remedy SQL is in the revision docstring (founder-only on production). Downgrade maps `OFF` -> `REPORT`.
+  - Schemas: `ClientGroupColor`, `ClientGroupRef`; `client_group_id` on `ClientBase`/`ClientCreate`/`ClientUpdate`; `ClientOut.client_group`.
+  - Workflow engine v1: `UPDATE_FIELD` and `CREATE_ENTITY` refuse `client.client_group_id` (assignment is gated in backend-erp); the denylist error no longer names only PaymentService.
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_cg1_client_groups.py`, `tests/pg/test_cg1_pg.py`.
 - **6.28.0** (doc 68 §2, collector reasons & promises, 2026-11-12) - Additive revision `vn1_visit_no_money` (parent `rtg1_run_triggers`): the `collectionvisitcode` PG enum gains the label `noMoney` (`ALTER TYPE ... ADD VALUE IF NOT EXISTS` in an autocommit block, `lock_timeout` 5s). Downgrade is a no-op (PG cannot drop an enum label).
   - `CollectionVisitCode.NO_MONEY = "noMoney"` ("no tenía el dinero aún"), bound by value, so `CollectionVisitCreate.visit_code` accepts it. Docstring and column comment now point at the strings cobros sends (`VISIT_REASONS`).
   - Irreversible label: a backend-erp older than this pin raises `LookupError` on a `noMoney` visit row. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
