@@ -19,7 +19,9 @@ from database_utils.models.isp import (
     ProvisioningJob,
     ProvisioningTrigger,
 )
+from database_utils.utils.playbook_revisions import record_revision
 from database_utils.utils.provisioning_gates import ProvisioningGateError, gate_failure
+from database_utils.utils.provisioning_runs import effective_trigger
 from database_utils.utils.transport import company_dials_gateway
 
 DEFAULT_PROBE_COMMAND = "display version"
@@ -92,6 +94,7 @@ def _get_or_create_connectivity_playbook(db, company_id, protocol: str, nat_mode
             )
             playbook.definition = desired_definition
             db.flush()
+            record_revision(db, None, playbook, "UPDATE")  # doc 70 §8, no version bump
         return playbook
 
     description = f"System playbook: core device connectivity check ({protocol} login probe)"
@@ -107,6 +110,7 @@ def _get_or_create_connectivity_playbook(db, company_id, protocol: str, nat_mode
     )
     db.add(playbook)
     db.flush()
+    record_revision(db, None, playbook, "CREATE")  # doc 70 §8
     return playbook
 
 
@@ -163,7 +167,7 @@ def enqueue_connectivity_check(
             "input.probe_command": probe_command,
         },
         idempotency_key=idempotency_key,
-        triggered_by=triggered_by,
+        triggered_by=effective_trigger(triggered_by),  # USER→MCP in an MCP request; API stays API
         triggered_by_user_id=triggered_by_user_id,
         scheduled_for=scheduled_for,
     )

@@ -1,7 +1,7 @@
 """client_service.network_managed + office-task columns on task (doc 71)
 
 Revision ID: nm1_network_managed
-Revises: et1_edge_telnet
+Revises: rf1_referral_programs
 Create Date: 2026-11-13
 
 Additive (doc 71 §9.1):
@@ -21,10 +21,8 @@ database_utils.utils.network_managed.backfill_value (revisions never import
 evolving utils); tests/test_nm1_network_managed.py runs both on one fixture
 set.
 
-Chain: down_revision is et1_edge_telnet (the head when this branch was cut)
-so the branch tests run. At compose it is re-chained onto the integration
-head of the moment (expected rf1_referral_programs, another feature's chain):
-rewrite down_revision on this branch, never a merge revision.
+Chain: re-chained at compose from et1_edge_telnet onto rf1_referral_programs
+(the integration head): down_revision rewritten, never a merge revision.
 
 Inert for old code: the new columns default to false / NULL and old code never
 reads them. Downgrade drops the index, CHECK, FKs and columns; nothing is
@@ -37,7 +35,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "nm1_network_managed"
-down_revision: str | Sequence[str] | None = "et1_edge_telnet"
+down_revision: str | Sequence[str] | None = "rf1_referral_programs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

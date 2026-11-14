@@ -24,7 +24,7 @@ def _nm1():
 
 def test_nm1_revision_chain():
     m = _nm1()
-    assert m.revision == "nm1_network_managed" and m.down_revision == "et1_edge_telnet"
+    assert m.revision == "nm1_network_managed" and m.down_revision == "rf1_referral_programs"
     assert len(m.revision) <= 32
 
 

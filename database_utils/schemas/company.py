@@ -1,5 +1,5 @@
 # schemas/company.py
-from pydantic import BaseModel, EmailStr, field_validator, model_validator, ConfigDict, Field
+from pydantic import BaseModel, EmailStr, field_validator, model_validator, ConfigDict, Field, ValidationError
 from typing import Literal, Optional
 from datetime import datetime
 from uuid import UUID
@@ -142,3 +142,78 @@ class CompanyOut(CompanyBase):
     dunning_settings: Optional[DunningSettings] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- mpb1 (doc 70 §7.1): playbook self-management ---------------------------
+
+PlaybookManagementStatus = Literal["PENDING", "APPROVED", "DENIED", "CANCELLED", "REVOKED"]
+
+
+class PlaybookManagement(BaseModel):
+    """company.playbook_management: the self-management request and its
+    decision. Written only by auth-erp services/playbook_management.transition;
+    never part of CompanyUpdate (a tenant could otherwise approve itself)."""
+    model_config = ConfigDict(extra="forbid")
+    status: PlaybookManagementStatus
+    reason: str = Field(min_length=1, max_length=1000)
+    requested_by: UUID
+    requested_at: datetime
+    # auth-erp SELF_MANAGEMENT_ACK_VERSION at request time (the accepted wording).
+    ack_version: str
+    decided_by: Optional[UUID] = None
+    decided_at: Optional[datetime] = None
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class PlaybookManagementOut(BaseModel):
+    """Tenant view of the request (GET /companies/playbook-management)."""
+    self_managed: bool
+    status: Optional[PlaybookManagementStatus] = None
+    reason: Optional[str] = None
+    requested_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+class PlaybookManagementRequestIn(BaseModel):
+    """Tenant ADMIN request body. `accept_responsibility` must be literally
+    true: missing or false is a 422 and nothing is stored (doc 70 §7.1)."""
+    reason: str
+    accept_responsibility: Literal[True]
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v: str) -> str:
+        v = v.strip()
+        if not 1 <= len(v) <= 1000:
+            raise ValueError("reason must be 1..1000 characters")
+        return v
+
+
+class PlaybookManagementDecisionIn(BaseModel):
+    """Superadmin decision body."""
+    decision: Literal["APPROVE", "DENY", "REVOKE"]
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class AdminCompanyOut(CompanyOut):
+    """Superadmin company list/detail. `playbook_management_status` and
+    `playbooks_unsimulated` are filled by auth-erp from the raw column; the
+    two names are filled on the detail only (doc 70 D3)."""
+    playbook_management_status: Literal["UPLINK", "PENDING", "SELF_MANAGED"] = "UPLINK"
+    playbooks_unsimulated: int = 0
+    playbook_management: Optional[PlaybookManagement] = None
+    playbook_management_requested_by_name: Optional[str] = None
+    playbook_management_decided_by_name: Optional[str] = None
+
+    @field_validator("playbook_management", mode="before")
+    @classmethod
+    def _tolerate_junk(cls, v):
+        # A partial or junk stored value never makes validating an ORM company
+        # raise (doc 70a Review Focus 2); the status is derived from the raw column.
+        if v is None or isinstance(v, PlaybookManagement):
+            return v
+        try:
+            return PlaybookManagement.model_validate(v)
+        except ValidationError:
+            return None

@@ -21,6 +21,14 @@ user_id_context: ContextVar[Optional[Union[int, uuid.UUID, str]]] = ContextVar('
 company_id_context: ContextVar[Optional[Union[int, uuid.UUID, str]]] = ContextVar('company_id', default=None)
 user_roles_context: ContextVar[list] = ContextVar('user_roles', default=[])
 user_permissions_context: ContextVar[set] = ContextVar('user_permissions', default=set())
+# Which client made the request, from the allowlisted X-Uplink-Client header
+# (doc 68 §3.4): "mcp" or None. Telemetry only, never authority.
+request_client_context: ContextVar[Optional[str]] = ContextVar('request_client', default=None)
+
+
+def request_client() -> Optional[str]:
+    """The current request's client marker ("mcp") or None."""
+    return request_client_context.get()
 
 
 class StructuredFormatter(logging.Formatter):
@@ -159,7 +167,8 @@ def set_request_context(
     user_id: Optional[Union[int, uuid.UUID, str]] = None,
     company_id: Optional[Union[int, uuid.UUID, str]] = None,
     user_roles: Optional[list] = None,
-    user_permissions: Optional[set] = None
+    user_permissions: Optional[set] = None,
+    client: Optional[str] = None,
 ) -> None:
     """
     Set context variables for the current request.
@@ -172,6 +181,8 @@ def set_request_context(
         company_id: ID of the user's company (int, UUID, or string)
         user_roles: List of user's role names
         user_permissions: Set of user's permission strings
+        client: Client marker ("mcp" or None). Always set, so None clears it:
+            no marker survives from an earlier request.
     """
     if request_id:
         request_id_context.set(request_id)
@@ -183,6 +194,7 @@ def set_request_context(
         user_roles_context.set(user_roles)
     if user_permissions is not None:
         user_permissions_context.set(user_permissions)
+    request_client_context.set(client)
 
 
 def clear_request_context() -> None:
@@ -192,6 +204,7 @@ def clear_request_context() -> None:
     company_id_context.set(None)
     user_roles_context.set([])
     user_permissions_context.set(set())
+    request_client_context.set(None)
 
 
 def log_with_context(logger: logging.Logger, level: str, message: str, **kwargs) -> None:
