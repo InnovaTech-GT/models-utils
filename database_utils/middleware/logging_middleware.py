@@ -27,6 +27,16 @@ from database_utils.utils.logging_utils import (
 from database_utils.utils.jwt_utils import decode_token
 from database_utils.utils.telemetry_utils import set_request_span_attributes
 
+# Accepted X-Uplink-Client values (doc 68 §3.4). Telemetry, not security: the
+# marker only lets create_run record MCP instead of USER; JWT + RBAC decide.
+CLIENT_MARKERS = frozenset({"mcp"})
+
+
+def client_marker(value: Optional[str]) -> Optional[str]:
+    """The trimmed, lower-cased header value if it is allowlisted, else None."""
+    marker = (value or "").strip().lower()
+    return marker if marker in CLIENT_MARKERS else None
+
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     """
@@ -98,7 +108,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             user_id=user_id,
             company_id=company_id,
             user_roles=user_roles,
-            user_permissions=user_permissions
+            user_permissions=user_permissions,
+            client=client_marker(request.headers.get("X-Uplink-Client")),
         )
 
         # Promote identity context to the active OTEL span for Honeycomb filtering.

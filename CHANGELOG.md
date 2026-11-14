@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
 ### Added
-- **6.27.0** (doc 68 §1, client groups, 2026-11-11) - Additive revision `cg1_client_groups` (parent `et1_edge_telnet`; final number and parent set at compose). No backfill: every client starts ungrouped (= the tenant's dunning settings).
+- **6.29.0** (doc 68 §1, client groups, 2026-11-11) - Additive revision `cg1_client_groups` (parent `vn1_visit_no_money`). No backfill: every client starts ungrouped (= the tenant's dunning settings).
   - New `ClientGroup` (`client_group`): `name` VARCHAR(60) unique per company, `color` palette key `grey|blue|green|yellow|red` (default `grey`), `auto_suspension_mode` NULL/`OFF`/`REPORT`/`ON`, `min_overdue_orders` NULL or >= 1; CHECKs `ck_client_group_color` / `_mode` / `_min`.
   - `client.client_group_id` (FK `client_group` ON DELETE SET NULL, index `ix_client_client_group`); `Client.client_group` is viewonly and company-scoped.
   - `dunning_run.mode` may be `OFF` (`ck_dunning_run_mode` widened). **Not code-rollback-safe once an `OFF` run exists**: an older backend-erp 500s on `GET /dunning/runs`; the remedy SQL is in the revision docstring (founder-only on production). Downgrade maps `OFF` -> `REPORT`.
@@ -18,6 +18,18 @@ On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat`
   - Workflow engine v1: `UPDATE_FIELD` and `CREATE_ENTITY` refuse `client.client_group_id` (assignment is gated in backend-erp); the denylist error no longer names only PaymentService.
   - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
   - Tests: `tests/test_cg1_client_groups.py`, `tests/pg/test_cg1_pg.py`.
+- **6.28.0** (doc 68 §2, collector reasons & promises, 2026-11-12) - Additive revision `vn1_visit_no_money` (parent `rtg1_run_triggers`): the `collectionvisitcode` PG enum gains the label `noMoney` (`ALTER TYPE ... ADD VALUE IF NOT EXISTS` in an autocommit block, `lock_timeout` 5s). Downgrade is a no-op (PG cannot drop an enum label).
+  - `CollectionVisitCode.NO_MONEY = "noMoney"` ("no tenía el dinero aún"), bound by value, so `CollectionVisitCreate.visit_code` accepts it. Docstring and column comment now point at the strings cobros sends (`VISIT_REASONS`).
+  - Irreversible label: a backend-erp older than this pin raises `LookupError` on a `noMoney` visit row. Consumers: re-pin backend-erp, auth-erp and provisioning-worker together.
+  - Tests: `tests/test_vn1_visit_no_money.py`, `tests/pg/test_vn1_pg.py`.
+- **6.27.0** (doc 68 §3, run triggers, 2026-11-11) - Additive revision `rtg1_run_triggers` (labels only, irreversible; parent `et1_edge_telnet`). No row is rewritten; the backfill of past rows is a separate, later revision.
+  - `ProvisioningTrigger` gains `MCP`, `BOT`, `AUTO_SUSPENSION`, `AUTO_REACTIVATION` (PG `provisioningtrigger`, shared by `provisioning_run` and `provisioning_job`).
+  - `X-Uplink-Client` marker: `LoggingMiddleware` accepts only a trimmed, case-insensitive `mcp` (`CLIENT_MARKERS`, `client_marker()`), stores it per request (`request_client()`, `set_request_context(client=)`, cleared after every request) and `set_request_span_attributes()` sets `uplink.client`. Telemetry, not security: JWT + RBAC are unchanged.
+  - `effective_trigger()` in `create_run` and `enqueue_connectivity_check`: `USER` becomes `MCP` inside an MCP-marked request; nothing else is ever swapped (the connectivity sweep stays `API`). A dedupe hit keeps the first creator's trigger.
+  - `create_run` sets the span attributes `provisioning.trigger` / `provisioning.run_id` on the current span.
+  - `write_device_action_log`: `actor_kind` is `user` for `MCP` as well as `USER`.
+  - Consumers: re-pin backend-erp, auth-erp and provisioning-worker together; every worker (Railway and the droplet zone workers) runs this pin before backend-erp writes the new values.
+  - Tests: `tests/test_run_triggers.py`, `tests/test_client_marker.py`, `tests/pg/test_rtg1_pg.py`.
 - **6.26.0** (doc 67, telnet on EDGE devices / ONU CATV on/off, 2026-11-10) - Additive revision `et1_edge_telnet` (parent `ch1_client_chat`): `device_type.identity_command` / `identity_regex`, `provisioning_settings.edge_mgmt_cidr`, `provisioning_run.warnings`. **Inert unless a tenant sets `edge_mgmt_cidr`.**
   - `edge_mgmt_cidr` must lie inside RFC 1918 space (10/8, 172.16/12, 192.168/16): `is_private` alone admitted loopback, 0.0.0.0/8, link-local and 192.0.0.0/24. `host_in_cidr` also refuses any host outside RFC 1918 whatever the stored CIDR (`EDGE_MGMT_SPACE`, `edge_mgmt_network_ok`).
   - `utils/edge_telnet.py`: `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity` (re2), `edge_telnet_ready`, `edge_telnet_step_problem`, `EDGE_FRESH_SECONDS = 180`, `EDGE_TELNET_PORT = 23`.

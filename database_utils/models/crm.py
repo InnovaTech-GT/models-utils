@@ -855,9 +855,11 @@ class CollectionVisitOutcome(str, enum.Enum):
 
 
 class CollectionVisitCode(str, enum.Enum):
-    """Values match VISIT_CODES in uplink-mobile apps/cobros/src/data.ts:71
-    verbatim (camelCase) — the mobile app sends these strings as-is."""
+    """Values are the strings cobros sends as-is (camelCase): they match
+    uplink-mobile apps/cobros/src/store/types.ts VISIT_REASONS (the outbox's
+    RouteVisitCode plus 'promise', which goes by direct POST)."""
     NO_ONE_HOME = "noOneHome"
+    NO_MONEY = "noMoney"
     PROMISE = "promise"
     REFUSED = "refused"
     COMPLAINT = "complaint"
@@ -923,10 +925,10 @@ class CollectionVisit(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
     outcome = Column(Enum(CollectionVisitOutcome), nullable=False)
     # values_callable required: CollectionVisitCode members are UPPER_SNAKE
-    # but their .value is camelCase (must match uplink-mobile's VISIT_CODES
-    # verbatim) — without this SQLAlchemy binds .name and every insert 500s
-    # against the postgres enum (which was correctly created from .value in
-    # rs1_route_cash).
+    # but their .value is camelCase (must match the strings cobros sends,
+    # VISIT_REASONS, verbatim) — without this SQLAlchemy binds .name and
+    # every insert 500s against the postgres enum (which was correctly
+    # created from .value in rs1_route_cash).
     visit_code = Column(Enum(CollectionVisitCode, values_callable=lambda e: [m.value for m in e]), nullable=True)
     promise_date = Column(Date, nullable=True)
     note = Column(String, nullable=True)

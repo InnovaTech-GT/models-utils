@@ -45,8 +45,8 @@ library, never the reverse).
 | `email_templates.py` | Jinja2 rendering of the email templates (see [email-service.md](email-service.md)) |
 | `error_handling.py` | `handle_exceptions` — wraps an async handler, re-raises `HTTPException`, converts anything else to a 500. Logs argument **types and keyword names only, never values**: every decorated handler receives its request body and the Capa 3 bodies carry plaintext secrets |
 | `exception_handlers.py` | Standardized FastAPI exception handlers |
-| `logging_utils.py` | Loguru structured JSON logging setup |
-| `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services |
+| `logging_utils.py` | Loguru structured JSON logging setup; request-scoped contextvars (`set_request_context` / `clear_request_context`). `request_client_context` / `request_client()` hold the request's client marker (`"mcp"` or `None`, doc 68 §3.4); `set_request_context(client=)` always sets it, so no marker survives from an earlier request, and `clear_request_context()` resets it |
+| `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services. Sets `request.id`, `enduser.id`, `company.id`, `enduser.role(s)`, and `uplink.client` when the request carries the allowlisted `X-Uplink-Client: mcp` marker (telemetry, not security) |
 | `router_factory.py` | FastAPI router factory helpers |
 
 ## The provisioning trio (Cycle 10, doc 35)
@@ -339,6 +339,21 @@ before a service-status write; this is the backstop.
 | `run_captures(db, job)` | Captures of this run's EARLIER children on the same item, in plan order (doc 42 §6.3); was the worker's `_run_captures`. The executor re-gates them before use |
 | `parked_step(run, job)` | The parked step's definition from the run's snapshot, or `{}`; was backend-erp `services/manual_steps.parked_step` |
 
+### Run triggers (6.27.0, doc 68 §3.4)
+
+Every run and job records who or what started it (`ProvisioningTrigger`, see
+[isp-models.md](isp-models.md)). Callers pass an explicit value (`AUTO_SUSPENSION`,
+`AUTO_REACTIVATION`, `BOT`, `WORKFLOW`, `API`) or leave the `USER` default; the MCP case
+needs no parameter:
+
+| Name | Behaviour |
+|---|---|
+| `provisioning_runs.effective_trigger(t)` | `MCP` when `t is USER` and the request carries the `X-Uplink-Client: mcp` marker (`request_client() == "mcp"`, set by `LoggingMiddleware`), else `t` unchanged. The swap only ever turns `USER` into `MCP`: the header cannot forge any other value, and it grants nothing |
+| `create_run` | Stores `effective_trigger(triggered_by)`; `_queue_child` copies the stored value to every child job. After the flush it sets the span attributes `provisioning.trigger` (the value) and `provisioning.run_id` on the current span when it is recording (no-op without one) |
+| `create_or_get_run` | **A dedupe hit keeps the first creator's trigger**: an MCP request that lands on an in-flight `AUTO_SUSPENSION` run gets that run back unchanged |
+| `connectivity.enqueue_connectivity_check` | Stores `effective_trigger(triggered_by)`: the manual "test connection" button (`USER`) records `MCP` in an MCP request; the sweep's `API` default is never swapped |
+| `provisioning_jobs.write_device_action_log` | `actor_kind = "user"` for `USER` and `MCP` (a person), `"automation"` for every other value |
+
 ### `transport.py` (transport resolution, 2026-08-13; transport axis `tr1_transport_axis`, 2026-09-26)
 
 The one place that turns an `InventoryItem` plus its tenant's
@@ -458,7 +473,7 @@ lookup as `{{computed.<key>}}`. The renderer stays a dictionary lookup.
 |---|---|
 | `dependencies/db.py` | `get_db` FastAPI session dependency (rollback + close) |
 | `dependencies/audit.py` | `get_client_ip` (proxy-aware) |
-| `middleware/logging_middleware.py` | `LoggingMiddleware` — request-ID + JWT-context + duration ASGI middleware |
+| `middleware/logging_middleware.py` | `LoggingMiddleware` — request-ID + JWT-context + duration ASGI middleware. Also reads the `X-Uplink-Client` marker (doc 68 §3.4): `client_marker()` keeps the trimmed, lower-cased value only if it is in `CLIENT_MARKERS` (`{"mcp"}`), else `None`, and passes it as `set_request_context(client=)`. Telemetry, not security: the marker grants nothing (JWT + RBAC are unchanged); it only lets `create_run` record `MCP` instead of `USER` |
 | `constants/roles.py` | `Roles` ADMIN/VIEWER/COLLECTOR/TECHNICIAN |
 
 ## Connections to Other Components

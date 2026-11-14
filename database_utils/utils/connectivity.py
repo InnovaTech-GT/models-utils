@@ -20,6 +20,7 @@ from database_utils.models.isp import (
     ProvisioningTrigger,
 )
 from database_utils.utils.provisioning_gates import ProvisioningGateError, gate_failure
+from database_utils.utils.provisioning_runs import effective_trigger
 from database_utils.utils.transport import company_dials_gateway
 
 DEFAULT_PROBE_COMMAND = "display version"
@@ -163,7 +164,7 @@ def enqueue_connectivity_check(
             "input.probe_command": probe_command,
         },
         idempotency_key=idempotency_key,
-        triggered_by=triggered_by,
+        triggered_by=effective_trigger(triggered_by),  # USER→MCP in an MCP request; API stays API
         triggered_by_user_id=triggered_by_user_id,
         scheduled_for=scheduled_for,
     )

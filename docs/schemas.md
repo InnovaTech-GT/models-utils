@@ -111,7 +111,7 @@ matters when reading `__init__.py`:
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
-### Client groups (6.27.0 `cg1`, doc 68 §1) — `client` schema changes
+### Client groups (6.29.0 `cg1`, doc 68 §1) — `client` schema changes
 
 - `ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]` — a
   palette key, never hex.
