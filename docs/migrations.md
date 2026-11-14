@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (130 revisions, head: **`cg1_client_groups`**) — plus
+`alembic/versions/` (131 revisions, head: **`mpb1_managed_playbooks`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1421,6 +1421,22 @@ VARCHAR(16), `note` VARCHAR(500)). Unique expression index `uq_integration_inter
 on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `type` (the
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
+
+## mpb1_managed_playbooks (6.30.0)
+
+Uplink-managed playbooks (doc 70 §10), parent `cg1_client_groups` (no merge revision).
+Hand-written, `lock_timeout`, `IF [NOT] EXISTS`.
+Adds `company.playbook_management` JSON NULL (the self-management request, NULL =
+Uplink-managed), `provisioning_run.staff_actor` BOOLEAN NOT NULL DEFAULT false (existing rows
+false: no superadmin could open a run before) and the `playbook_revision` table (no FK on
+`playbook_id`, `company_id` CASCADE, `actor_user_id` SET NULL, CHECK
+`ck_playbook_revision_action`, indexes `ix_playbook_revision_company_created` and
+`ix_playbook_revision_playbook`). **One-way data step:** one `BASELINE` revision per existing
+playbook (`gen_random_uuid()`, actor NULL, `actor_staff` false), skipped when the table already
+existed so a re-run never duplicates it. Downgrade drops the table and both columns and loses
+the edit history (the baseline is recomputable). `tests/test_mpb1_managed_playbooks.py` pins the
+chain, columns and schemas; `tests/pg/test_mpb1_pg.py` runs the baseline, the CHECK, the
+`staff_actor` server default, the company cascade and an idempotent downgrade/upgrade.
 
 ## cg1_client_groups (6.29.0)
 
