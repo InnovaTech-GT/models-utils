@@ -529,7 +529,7 @@ Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.
 
 Pinned by `tests/test_payment_link.py`.
 
-### Uplink-managed playbooks (6.27.0, revision `mpb1_managed_playbooks`, doc 70)
+### Uplink-managed playbooks (6.30.0, revision `mpb1_managed_playbooks`, doc 70)
 
 `schemas/company.py`:
 

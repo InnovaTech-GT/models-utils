@@ -34,9 +34,9 @@ def _company_obj(**kw):
 
 
 def test_mpb1_revision_chain():
-    # down_revision is re-pointed at compose, with this assertion (doc 70a Compose handoff)
+    # down_revision re-pointed at compose onto the head of the moment (doc 70a Compose handoff)
     m = load("versions/mpb1_managed_playbooks.py", "mpb1_managed_playbooks")
-    assert m.revision == "mpb1_managed_playbooks" and m.down_revision == "et1_edge_telnet"
+    assert m.revision == "mpb1_managed_playbooks" and m.down_revision == "cg1_client_groups"
     assert len(m.revision) <= 32
 
 

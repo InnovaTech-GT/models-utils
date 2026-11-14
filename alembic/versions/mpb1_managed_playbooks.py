@@ -1,7 +1,7 @@
 """Uplink-managed playbooks: playbook_management, run staff_actor, playbook_revision (doc 70)
 
 Revision ID: mpb1_managed_playbooks
-Revises: et1_edge_telnet
+Revises: cg1_client_groups
 Create Date: 2026-11-12
 
 Additive. company.playbook_management (JSON NULL = Uplink-managed),
@@ -22,7 +22,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "mpb1_managed_playbooks"
-down_revision: str | Sequence[str] | None = "et1_edge_telnet"
+down_revision: str | Sequence[str] | None = "cg1_client_groups"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

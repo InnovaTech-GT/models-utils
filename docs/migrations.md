@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (130 revisions, head: **`cg1_client_groups`**) — plus
+`alembic/versions/` (131 revisions, head: **`mpb1_managed_playbooks`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1422,10 +1422,10 @@ on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
 
-## mpb1_managed_playbooks (6.27.0, provisional)
+## mpb1_managed_playbooks (6.30.0)
 
-Uplink-managed playbooks (doc 70 §10), parent `et1_edge_telnet` (re-pointed at compose to the
-head that exists then; no merge revision). Hand-written, `lock_timeout`, `IF [NOT] EXISTS`.
+Uplink-managed playbooks (doc 70 §10), parent `cg1_client_groups` (no merge revision).
+Hand-written, `lock_timeout`, `IF [NOT] EXISTS`.
 Adds `company.playbook_management` JSON NULL (the self-management request, NULL =
 Uplink-managed), `provisioning_run.staff_actor` BOOLEAN NOT NULL DEFAULT false (existing rows
 false: no superadmin could open a run before) and the `playbook_revision` table (no FK on
