@@ -291,9 +291,16 @@ class ProvisioningRunMode(str, enum.Enum):
 
 
 class ProvisioningTrigger(str, enum.Enum):
-    USER = "USER"
-    WORKFLOW = "WORKFLOW"
-    API = "API"
+    """Who or what started a provisioning run/job (doc 68 §3.3). Native PG enum
+    `provisioningtrigger`, shared by provisioning_run and provisioning_job.
+    MCP/BOT/AUTO_* added by rtg1_run_triggers (labels only)."""
+    USER = "USER"  # a person in the web or mobile app
+    WORKFLOW = "WORKFLOW"  # a workflow (v2 engine, boosts, legacy v1)
+    API = "API"  # other machine callers (worker connectivity sweep jobs)
+    MCP = "MCP"  # a person through the MCP server (USER swapped by effective_trigger)
+    BOT = "BOT"  # the WhatsApp bot's purpose endpoint
+    AUTO_SUSPENSION = "AUTO_SUSPENSION"  # the dunning rule (cron or run-now)
+    AUTO_REACTIVATION = "AUTO_REACTIVATION"  # reconnection by a payment or a promise
 
 
 # ---------------------------------------------------------------------------
@@ -881,7 +888,8 @@ class DunningRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     ran_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    # REPORT | ON (OFF tenants are not run).
+    # REPORT | ON, or OFF (cg1, doc 68 §1): the tenant is OFF and a client
+    # group's policy ran for its members.
     mode = Column(String(10), nullable=False)
     outcome = Column(Enum(DunningRunOutcome), nullable=False)
     candidates = Column(JSON, nullable=False, default=list)
@@ -894,7 +902,7 @@ class DunningRun(Base):
 
     __table_args__ = (
         Index("ix_dunning_run_company_ran_at", "company_id", "ran_at"),
-        CheckConstraint("mode IN ('REPORT', 'ON')", name="ck_dunning_run_mode"),
+        CheckConstraint("mode IN ('OFF', 'REPORT', 'ON')", name="ck_dunning_run_mode"),
     )
 
 

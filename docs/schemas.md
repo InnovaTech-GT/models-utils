@@ -111,6 +111,18 @@ matters when reading `__init__.py`:
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### Client groups (6.29.0 `cg1`, doc 68 §1) — `client` schema changes
+
+- `ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]` — a
+  palette key, never hex.
+- `ClientGroupRef {id, name, color}` (`from_attributes`).
+- `ClientBase`, `ClientCreate`, `ClientUpdate` gain `client_group_id:
+  Optional[UUID] = None`. On update an explicit `null` (kept by
+  `exclude_unset`) removes the client from its group.
+- `ClientOut.client_group: Optional[ClientGroupRef]`, read from the
+  company-scoped viewonly `Client.client_group`.
+- The group CRUD wire schemas live in backend-erp (`schemas/client_groups.py`).
+
 ### Client codes and payment day (4.5.0 `cc1`, 4.2.0 `pd1`) — `client` schema changes
 
 - `ClientCreate.code` / `ClientUpdate.code` (`Optional[str]`): trimmed and
