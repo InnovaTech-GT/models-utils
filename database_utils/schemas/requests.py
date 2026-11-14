@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -24,6 +24,11 @@ class SignupCompanyRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     locale: Literal["es", "en"] = "es"
+    # Doc 69 §4.1: a referral code needs tax_id + phone (auth-erp enforces
+    # REFERRAL_IDENTITY_REQUIRED / NIT_INVALID and normalises the code).
+    referral_code: Optional[str] = Field(None, max_length=12)
+    tax_id: Optional[str] = Field(None, max_length=32)
+    phone: Optional[str] = Field(None, max_length=32)
 
 
 class RefreshTokenRequest(BaseModel):

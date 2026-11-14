@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (131 revisions, head: **`mpb1_managed_playbooks`**) — plus
+`alembic/versions/` (132 revisions, head: **`rf1_referral_programs`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1504,3 +1504,20 @@ hazard: a worker or backend on an older models-utils raises `LookupError` when i
 written with one of these labels, so a rollback below this pin needs the founder-only remedy
 in doc 68 §3.4. `tests/test_run_triggers.py` pins the chain and the labels against
 `ProvisioningTrigger`; `tests/pg/test_rtg1_pg.py` checks them at head.
+## rf1_referral_programs (6.31.0)
+
+Doc 69 (referral and partner programs on SaaS billing), parent `mpb1_managed_playbooks`. Purely additive, no
+data step, no PG enum (statuses VARCHAR + CHECK, `pl1` precedent); downgrade
+drops everything it adds. Columns: `company.referral_code` (`uq_company_referral_code`),
+`subscription.partner_since` / `balance_due_cents` (`ck_subscription_balance_due_nonneg`),
+`billing_invoice.credit_cents` / `previous_balance_cents` / `carried_out_cents` /
+`refunded_cents` (each `ck_billing_invoice_<col>_nonneg`, default 0, so existing rows
+read 0), `credit_detail`, `recurrente_payment_id` (indexed). Tables: `referral`,
+`referral_reward`, `billing_reversal`, `billing_card`, `company_identity`,
+`referral_identity` with the `ON DELETE` rules of doc 69 §5 (referral and
+identity history outlive a deleted company). Each constraint is declared inside
+its `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`, so a re-run is a
+no-op. Re-pointed at compose from its provisional parent to the head of that
+moment (no merge revision). `tests/test_referral_models.py` (SQLite)
+and `tests/pg/test_rf1_pg.py` (the CHECK/UNIQUE/index names on the migrated
+schema, the delete rules, the refusals, the downgrade/upgrade pair) pin it.
