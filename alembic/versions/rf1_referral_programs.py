@@ -1,7 +1,7 @@
 """Referral and partner programs on SaaS billing (doc 69 §5)
 
 Revision ID: rf1_referral_programs
-Revises: et1_edge_telnet
+Revises: mpb1_managed_playbooks
 Create Date: 2026-11-12
 
 Purely additive; downgrade drops everything it adds. No data step, no PG enum:
@@ -10,8 +10,8 @@ statuses are VARCHAR + CHECK (pl1 precedent). Columns: company.referral_code
 credit_cents / previous_balance_cents / carried_out_cents / credit_detail /
 refunded_cents / recurrente_payment_id. Tables: referral, referral_reward,
 billing_reversal, billing_card, company_identity, referral_identity, with the
-ON DELETE rules of §5 (history outlives a deleted company). The down_revision
-is provisional: it is re-pointed to the head of the moment at compose.
+ON DELETE rules of §5 (history outlives a deleted company). Re-pointed at compose
+onto the head of that moment, mpb1_managed_playbooks (6.31.0).
 Hand-written, house style: lock_timeout, IF [NOT] EXISTS.
 """
 from collections.abc import Sequence
@@ -21,7 +21,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "rf1_referral_programs"
-down_revision: str | Sequence[str] | None = "et1_edge_telnet"
+down_revision: str | Sequence[str] | None = "mpb1_managed_playbooks"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

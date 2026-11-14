@@ -15,7 +15,7 @@ both auth-erp (primary) and backend-erp (token/permission validation).
 | Model | Purpose |
 |-------|---------|
 | `Tier` (tier) | SaaS subscription plans (features/modules JSON) |
-| `Company` (company) | Multi-tenant ISP company. `mobile_settings` JSON (mi2): `{bank_account, collector_daily_goal, technician_daily_goal}`, validated by `schemas.company.MobileSettings`. `dunning_settings` JSON (cp1, doc 52): auto-suspension mode/threshold, captive-portal switch + contact, promise window/capacity/reconnection, validated by `schemas.company.DunningSettings`, NULL = everything off. `provisioning_zone` (pz1, String(64), NULL = default worker): which provisioning worker serves the tenant, see `utils.provisioning_jobs.company_in_zone`. `workflow_daily_message_cap` (6.23.0, `wf1`): the tenant's daily cap on workflow messages, NULL = the default 500, set by superadmin only |
+| `Company` (company) | Multi-tenant ISP company. `mobile_settings` JSON (mi2): `{bank_account, collector_daily_goal, technician_daily_goal}`, validated by `schemas.company.MobileSettings`. `dunning_settings` JSON (cp1, doc 52): auto-suspension mode/threshold, captive-portal switch + contact, promise window/capacity/reconnection, validated by `schemas.company.DunningSettings`, NULL = everything off. `provisioning_zone` (pz1, String(64), NULL = default worker): which provisioning worker serves the tenant, see `utils.provisioning_jobs.company_in_zone`. `workflow_daily_message_cap` (6.23.0, `wf1`): the tenant's daily cap on workflow messages, NULL = the default 500, set by superadmin only. `playbook_management` JSON (6.30.0, `mpb1`, doc 70 §7.1): the playbook self-management request `{status PENDING/APPROVED/DENIED/CANCELLED/REVOKED, reason, requested_by, requested_at, ack_version, decided_by, decided_at, note}`, validated by `schemas.company.PlaybookManagement`; NULL = Uplink-managed, never asked; self-managed exactly when `status == "APPROVED"` (read through `utils.provisioning_gates.playbooks_self_managed`, junk fails closed). Written only by auth-erp's transition service, never through `CompanyUpdate` |
 | `User` (user) | Authenticated user (incl. super-admin flag). `home_latitude` / `home_longitude` (ca1, FLOAT NULL, both or neither by `ck_user_home_location` in the revision): where a collector lives, used by the back-office to suggest collection areas |
 | `Role` (role) | Permission group |
 | `Permission` (permission) | Single access right (resource + action) |
@@ -99,7 +99,7 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   before it), `billing_note` (superadmin-only text);
   `BillingInvoice.recurrente_checkout_id` (indexed) — latest pay-this-invoice
   checkout, matched by the intent webhook. `BillingInvoice.status` also takes `VOID`.
-- **Referral and partner programs** (`rf1_referral_programs`, 6.27.0 provisional, doc 69,
+- **Referral and partner programs** (`rf1_referral_programs`, 6.31.0, doc 69,
   purely additive): `Company.referral_code` (VARCHAR(12), UNIQUE, generated lazily by
   auth-erp); `Subscription.partner_since` (partner flag) and `balance_due_cents`
   (clawbacks + sub-Q5 remainders added to the next bill, CHECK ≥ 0);

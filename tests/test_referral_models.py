@@ -22,7 +22,7 @@ from database_utils.utils.timezone_utils import now_gt
 
 def test_rf1_revision_chain():
     m = load("versions/rf1_referral_programs.py", "rf1_test")
-    assert m.revision == "rf1_referral_programs" and m.down_revision == "et1_edge_telnet"
+    assert m.revision == "rf1_referral_programs" and m.down_revision == "mpb1_managed_playbooks"
     assert len(m.revision) <= 32
 
 
