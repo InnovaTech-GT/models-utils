@@ -57,7 +57,7 @@ def test_client_schemas_carry_the_group():
 def test_cg1_revision_chain():
     m = load("versions/cg1_client_groups.py", "cg1_client_groups")
     # down_revision is re-pointed at compose, with this assertion
-    assert m.revision == "cg1_client_groups" and m.down_revision == "et1_edge_telnet"
+    assert m.revision == "cg1_client_groups" and m.down_revision == "vn1_visit_no_money"
     assert len(m.revision) <= 32
 
 

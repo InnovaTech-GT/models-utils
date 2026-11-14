@@ -1,7 +1,7 @@
 """Client groups: client_group, client.client_group_id, dunning_run.mode OFF (doc 68 §1)
 
 Revision ID: cg1_client_groups
-Revises: et1_edge_telnet
+Revises: vn1_visit_no_money
 Create Date: 2026-11-11
 
 Additive, no backfill: every client starts ungrouped (= the tenant's dunning
@@ -25,7 +25,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "cg1_client_groups"
-down_revision: str | Sequence[str] | None = "et1_edge_telnet"
+down_revision: str | Sequence[str] | None = "vn1_visit_no_money"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
