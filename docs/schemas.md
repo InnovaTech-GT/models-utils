@@ -20,7 +20,7 @@ One module per entity. `schemas/__init__.py` star-imports all modules and runs
 | Domain | Modules |
 |---|---|
 | Auth / tenancy | `user`, `company`, `role`, `permission`, `invitation`, `notification`, `audit_log`, `requests` (Login + flat company-only Signup), `email_verification`, `password_reset` |
-| SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice` — rb1 extends `tier` and `subscription` (see below) |
+| SaaS billing | `tier`, `subscription`, `payment_method`, `billing_invoice`, `referral` (doc 69) — rb1 extends `tier` and `subscription` (see below) |
 | CRM | `client`, `custom_field`, `order`, `order_item`, `payment`, `invoice`, `billing_due` (cron due-billing + generation/gap DTOs), `task`, `task_template`, `integration`, `whatsapp_bot` (wb1, see below) |
 | Field ops (uplink-mobile) | `mobile_integration` (`UploadedFileOut`, `CollectionRouteOut`, `RouteStopOut`, `CollectionVisitCreate`/`Out` — `idempotency_key` forwarded to the payment for PAID/PARTIAL, `CashSessionOut`, `CashSessionClose` {`counted_cash_cents`, `deposit_slip_photo_id`}, `TaskCloseoutCreate`/`Out`), `collection_area` (ca1: `CollectionAreaCreate`/`Update`/`Out` — `name` 1..80 stripped, `color` `#RRGGBB` upper-cased, `polygon` through `normalize_polygon`: `[lat, lng]` pairs in range, a closing repeat dropped, 3..1000 distinct points; `Update` takes `collector_id: null` to unassign; `CollectorHomeUpdate` {`home_latitude`, `home_longitude`}, both or neither) |
 | ISP | `service_plan`, `client_service`, `inventory`, `playbook`, `device_category`, `insight` (Cycle 4; v2 since 1.33.0) |
@@ -110,6 +110,18 @@ matters when reading `__init__.py`:
   `'NOT_FOUND'`|`'ALREADY_ADOPTED'`) and `ClientServiceAdoptBulkOut`
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
+
+### Client groups (6.29.0 `cg1`, doc 68 §1) — `client` schema changes
+
+- `ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]` — a
+  palette key, never hex.
+- `ClientGroupRef {id, name, color}` (`from_attributes`).
+- `ClientBase`, `ClientCreate`, `ClientUpdate` gain `client_group_id:
+  Optional[UUID] = None`. On update an explicit `null` (kept by
+  `exclude_unset`) removes the client from its group.
+- `ClientOut.client_group: Optional[ClientGroupRef]`, read from the
+  company-scoped viewonly `Client.client_group`.
+- The group CRUD wire schemas live in backend-erp (`schemas/client_groups.py`).
 
 ### Client codes and payment day (4.5.0 `cc1`, 4.2.0 `pd1`) — `client` schema changes
 
@@ -516,6 +528,60 @@ Pinned by `tests/test_workflow_v2_models.py` and `tests/test_workflow_v2_schema.
 - `PaymentLinkOut` — the office view of a `payment_link` row; nothing secret. Carries `notified_at`; never `wa_to` (PII) or `wa_integration_id`.
 
 Pinned by `tests/test_payment_link.py`.
+
+### Uplink-managed playbooks (6.30.0, revision `mpb1_managed_playbooks`, doc 70)
+
+`schemas/company.py`:
+
+- `PlaybookManagementStatus` = `PENDING` / `APPROVED` / `DENIED` / `CANCELLED` / `REVOKED`.
+- `PlaybookManagement` (`extra="forbid"`) — the stored `company.playbook_management`: `status`, `reason` (1..1000), `requested_by`, `requested_at`, `ack_version`, `decided_by`, `decided_at`, `note` (≤1000).
+- `PlaybookManagementOut` — the tenant view: `self_managed` plus the optional `status`, `reason`, `requested_at`, `decided_at`, `note`.
+- `PlaybookManagementRequestIn` — `reason` (stripped, 1..1000) and `accept_responsibility: Literal[True]` (missing or false → 422).
+- `PlaybookManagementDecisionIn` — `decision` APPROVE / DENY / REVOKE, `note` ≤1000.
+- `AdminCompanyOut(CompanyOut)` — the superadmin company view: `playbook_management_status` (UPLINK / PENDING / SELF_MANAGED, derived by auth-erp from the raw column), `playbooks_unsimulated`, `playbook_management` (a value `PlaybookManagement` rejects — partial, junk — reads as `None`, never raises) and the requester/decider names (detail only).
+- **`CompanyUpdate` and `CompanyOut` get no `playbook_management` field**: both company PATCHes `setattr` every `CompanyUpdate` field, so a tenant could otherwise approve itself.
+
+`schemas/playbook.py`: `PlaybookRevisionOut` (a revision row, no definition; `actor_name`, `actor_staff`), `PlaybookRevisionDetailOut` (+ `definition`, `previous_definition`), `PlaybookSimulateIn` (`client_service_id`, `purpose` default ACTIVATION through `normalize_purpose`), `DeclaredInputOut` (`key`, `label`, `type`, `required`, `min_length`, `max_length`).
+
+Pinned by `tests/test_mpb1_managed_playbooks.py`.
+
+`ProvisioningJobOut` gains `playbook_name` and `error_cause` (doc 70 §6.1), filled by one
+`model_validator(mode="after")` **only while each is `None`**: `playbook_name` from the loaded
+`playbook`, `error_cause` = `provisioning_jobs.job_error_cause(error, log)`. Why only while
+`None`: FastAPI dumps a returned model and validates it again against the response model, so the
+validator runs a second time on backend-erp's projected values (readable `error`, whitelisted
+`log`, `playbook=None`); an unconditional assignment would turn every tenant cause into
+`PROVISIONING_FAILED` and wipe the name. Pinned by `tests/test_error_cause.py`.
+### Referral and partner programs (6.31.0, revision `rf1_referral_programs`)
+
+Doc 69. Every stage, amount, expiry, hold and flag below is computed by
+auth-erp (`services/referrals.py`); the frontend only renders it.
+
+- `requests.py` `SignupCompanyRequest` gains `referral_code` (≤ 12), `tax_id`
+  (≤ 32), `phone` (≤ 32), all optional. auth-erp normalises the code
+  (`strip().upper()`) and requires `tax_id` + `phone` when a code is sent.
+- `subscription.py`: `SubscriptionWithTier` gains `credit_balance_cents`,
+  `balance_due_cents` (0), `discount_active`, `is_partner` (false),
+  `partner_since`; `SubscriptionExceptionUpdate` gains `partner: Optional[bool]`
+  (true grants, false revokes, omitted = unchanged).
+- `billing_invoice.py`: `BillingInvoiceOut` (and `BillingInvoiceWithCompany`)
+  gains `credit_cents`, `previous_balance_cents`, `carried_out_cents`,
+  `refunded_cents` (default 0) and the computed `discounted: bool` =
+  `net < subtotal` with `net = total + credit_cents + carried_out_cents −
+  previous_balance_cents` (the §5 invariant). Pre-rf1 invoices have the three
+  at 0, so a discounted old invoice stays `discounted` and a full-price one does
+  not; a credit or a carried balance never reads as a discount.
+- `referral.py` (new, not star-imported; import it by module):
+  `REFERRAL_STAGES` (`REGISTERED`, `ACTIVE`, `CREDIT_PENDING`,
+  `CREDIT_AVAILABLE`, `NOT_ELIGIBLE`, `REVERSED`, `EXPIRED`); `RewardOut`
+  (from_attributes, plus computed `holds`); `PartyOut`, `MatchOut` (redacted
+  value), `ReferralAdminOut` (superadmin queue row); `TenantReferralRow`
+  (`company_name` None once the referred company is deleted, `stage`; **no
+  amounts or reasons**), `ReferredByOut`, `TenantReferralsOut` (tenant card);
+  `RewardDecision {note ≤ 500}`; `ReversalOut` (no `payload`);
+  `ReversalLink {invoice_number 1..64}`.
+
+Pinned by `tests/test_referral_schemas.py`.
 
 ### Client account state (6.25.1, no DB migration)
 

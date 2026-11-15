@@ -82,6 +82,19 @@ class ClientDeactivateIn(BaseModel):
     cascade: bool = False
 
 
+# cg1 (doc 68 §1): a client group's colour is a palette key, never a hex value.
+ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]
+
+
+class ClientGroupRef(BaseModel):
+    """The client's group as ClientOut shows it (from Client.client_group)."""
+    id: UUID
+    name: str
+    color: ClientGroupColor
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ClientBase(BaseModel):
     name: str
     tax_id: Optional[str]
@@ -101,6 +114,9 @@ class ClientBase(BaseModel):
     service_availability: ServiceAvailability = ServiceAvailability.UNKNOWN
     # pd1: usual payment day of month (1..31), optional.
     payment_day: Optional[int] = Field(default=None, ge=1, le=31)
+    # cg1: NULL = no group (the tenant's dunning settings). backend-erp gates
+    # and ownership-checks every assignment.
+    client_group_id: Optional[UUID] = None
 
 
 def _code(value: Optional[str]) -> Optional[str]:
@@ -117,6 +133,7 @@ class ClientCreate(ClientBase):
     code: Optional[str] = None
     advisor_id: Optional[UUID] = None
     assigned_technician_id: Optional[UUID] = None
+    client_group_id: Optional[UUID] = None
     custom_field_values: Optional[List["ClientCustomFieldValueInput"]] = None
 
     _normalize_code = field_validator("code")(_code)
@@ -140,6 +157,8 @@ class ClientUpdate(BaseModel):
     gps_precision_m: Optional[float] = None
     service_availability: Optional[ServiceAvailability] = None
     payment_day: Optional[int] = Field(default=None, ge=1, le=31)
+    # cg1: an explicit null removes the client from its group.
+    client_group_id: Optional[UUID] = None
     custom_field_values: Optional[List["ClientCustomFieldValueInput"]] = None
 
     _normalize_code = field_validator("code")(_code)
@@ -173,6 +192,8 @@ class ClientOut(ClientBase):
     advisor: Optional[UserOut] = None
     assigned_technician_id: Optional[UUID] = None
     assigned_technician: Optional[UserOut] = None
+    # cg1: from the company-scoped viewonly Client.client_group relationship.
+    client_group: Optional[ClientGroupRef] = None
     custom_field_values: Optional[List["ClientCustomFieldValueOut"]] = None
 
     model_config = ConfigDict(from_attributes=True)
