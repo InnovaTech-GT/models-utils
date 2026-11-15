@@ -648,6 +648,12 @@ class ClientService(Base):
     # Stamped on the FIRST transition to INSTALLED (never cleared by a later
     # regression to NOT_INSTALLED — a historical fact, like activation_date).
     installed_at = Column(DateTime(timezone=True), nullable=True)
+    # nm1_network_managed (doc 71 §3): Uplink's playbooks made (or an admin
+    # attests they match) this service's network configuration, so the
+    # SUSPENSION / REACTIVATION / DEPROVISION / CPE_SWAP / BOOST playbooks may
+    # act on it. Machine-written (backend RUN_CLOSED settle, the admin toggle,
+    # the nm1 backfill); never on Create/Update schemas.
+    network_managed = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # Cycle 10 (doc 35 §5.2): set when someone re-parented a node above this
     # service's CPE, so the configuration path it was provisioned against is no
     # longer the path it sits on. Cleared by a SUCCEEDED non-dry-run ACTIVATION

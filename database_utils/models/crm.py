@@ -528,6 +528,17 @@ class ClientCustomFieldValue(Base):
 TASK_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS", "DONE")
 _TASK_STATUS_CHECK = "status IN ('PENDING','ASSIGNED','IN_PROGRESS','DONE')"
 
+# nm1_network_managed (doc 71 §4.1): what an office task asks the back office
+# to do on the network for an unmanaged service, or RUN_BY_HAND (a failed run
+# closed by hand). A CHECK-constrained string, never a PG enum; the CHECK also
+# forces job_kind NULL, so an office task can never reach dispatch or tecnicos.
+OFFICE_ACTIONS = ("NETWORK_CUT", "NETWORK_RECONNECT", "NETWORK_REMOVE", "NETWORK_SWAP", "RUN_BY_HAND")
+_OFFICE_ACTION_CHECK = (
+    "office_action IS NULL OR (office_action IN ("
+    + ",".join(f"'{a}'" for a in OFFICE_ACTIONS)
+    + ") AND job_kind IS NULL)"
+)
+
 
 class Task(Base):
     __tablename__ = "task"
@@ -565,6 +576,17 @@ class Task(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     step_progress = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    # nm1_network_managed (doc 71 §4.1). office_action: OFFICE_ACTIONS or NULL
+    # (ck_task_office_action). provisioning_run_id: the run a RUN_BY_HAND task
+    # closes. completed_by / completion_note: who closed the task and why
+    # (stamped by backend task_status.on_status_change; generic, any task).
+    # None of them is on a Create/Update schema here.
+    office_action = Column(String(20), nullable=True)
+    provisioning_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("provisioning_run.id", ondelete="SET NULL"), nullable=True, index=True)
+    completed_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    completion_note = Column(String(500), nullable=True)
 
     # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
     # device + parent node SIMULTANEOUSLY, which the single polymorphic
@@ -623,6 +645,7 @@ class Task(Base):
         Index("ix_task_company_due_date", "company_id", "due_date"),
         Index("ix_task_company_status", "company_id", "status"),
         CheckConstraint(_TASK_STATUS_CHECK, name="ck_task_status"),
+        CheckConstraint(_OFFICE_ACTION_CHECK, name="ck_task_office_action"),
     )
 
 
