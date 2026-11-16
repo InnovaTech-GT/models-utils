@@ -17,8 +17,14 @@ which tags the device in the ACS) before any child exists; backend-erp's
 worker loads them again at claim and merges them into the job's variables IN
 MEMORY only, never into job.variables, frames or logs.
 
-ponytail: only the CPE's own registration is ensured, and only when a
-playbook reads `acs.*`; bulk pre-registration stays POST /acs/registrations/bulk.
+Doc 73 §3: a live run whose plan has any `tr069` step also ensures the CPE's
+registration even when no playbook reads `acs.*` (tenants whose ONUs learn the
+ACS URL out of band, e.g. DHCP option 43). The registration follows management:
+it is created at run creation and released with the CPE (backend-erp
+services/cpe_link.py), never at intake.
+
+ponytail: only the CPE's own registration is ensured; bulk pre-registration
+stays POST /acs/registrations/bulk.
 """
 from __future__ import annotations
 
@@ -52,6 +58,23 @@ ACS_SERIAL_CLAIMED = "ACS_SERIAL_CLAIMED"
 def reads_acs(definitions: Iterable[Any]) -> bool:
     """True when any of these (definition / step list) dicts holds an {{acs.*}} token."""
     return any(ACS_TOKEN.search(json.dumps(d, default=str)) for d in definitions)
+
+
+# Drivers that resolve the CPE through the ACS (tenant-tagged GenieACS device).
+ACS_DRIVERS = frozenset({"tr069", "connection_request"})
+
+
+def uses_tr069(definitions: Iterable[Any]) -> bool:
+    """True when any step anywhere in these definitions uses an ACS driver
+    (`tr069` or `connection_request`, doc 73 §3.2): the run will talk to the
+    ACS, so the CPE must be registered."""
+    def walk(node) -> bool:
+        if isinstance(node, dict):
+            return node.get("driver") in ACS_DRIVERS or any(walk(v) for v in node.values())
+        if isinstance(node, list):
+            return any(walk(v) for v in node)
+        return False
+    return any(walk(d) for d in definitions)
 
 
 def acs_url(settings) -> str | None:
@@ -101,6 +124,29 @@ def _registration(db: Session, company_id, serial: str, *, item_id=None,
     if ensure and reg.inventory_item_id is None and item_id is not None:
         reg.inventory_item_id = item_id
     return reg
+
+
+def registration_conflict(db: Session, company_id, serial: str | None) -> str | None:
+    """Read-only twin of `ensure_cpe_registration` (doc 73 §3.3): ACS_SERIAL_CLAIMED
+    when another tenant or quarantine holds the serial, else None. Writes nothing."""
+    serial = _normalize_serial(serial or "")
+    if not serial:
+        return None
+    owners = {c for (c,) in db.query(AcsDeviceRegistration.company_id)
+              .filter(AcsDeviceRegistration.serial_number == serial).all()}
+    return ACS_SERIAL_CLAIMED if any(c != company_id for c in owners) else None
+
+
+def ensure_cpe_registration(db: Session, company_id, serial: str | None, *,
+                            item_id=None) -> AcsDeviceRegistration:
+    """This tenant's registration of the CPE `serial`, created when absent and
+    stamped with `item_id` (doc 73 §3.1). Idempotent. Raises ResolutionError
+    ACS_NOT_CONFIGURED (no serial) or ACS_SERIAL_CLAIMED. Flushes nothing; the
+    caller's transaction owns the row."""
+    serial = _normalize_serial(serial or "")
+    if not serial:
+        _refuse(ACS_NOT_CONFIGURED, "The service's CPE has no serial number to register in the ACS")
+    return _registration(db, company_id, serial, item_id=item_id, ensure=True)
 
 
 def acs_values(db: Session, company_id, serial: str | None, *, item_id=None,
