@@ -143,6 +143,34 @@ class TaskAssignee(Base):
     role = Column(String(20), nullable=True)
 
 
+class ClientGroup(Base):
+    """A tenant-defined client group (doc 68 §1, revision cg1_client_groups).
+    One group per client (`client.client_group_id`). Its policy overrides the
+    tenant's DunningSettings for its members: `auto_suspension_mode` NULL =
+    the tenant's mode; `min_overdue_orders` NULL = the tenant's threshold, and
+    a value only adds grace (backend-erp applies max(group, tenant)). The rule
+    is evaluated in backend-erp services/dunning.py only. `color` is a palette
+    key, never a hex value."""
+    __tablename__ = "client_group"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=now_gt, onupdate=now_gt)
+    name = Column(String(60), nullable=False)
+    color = Column(String(10), nullable=False, default="grey", server_default="grey")
+    auto_suspension_mode = Column(String(10), nullable=True)  # OFF | REPORT | ON
+    min_overdue_orders = Column(Integer, nullable=True)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_client_group_company_name"),
+        CheckConstraint("color IN ('grey', 'blue', 'green', 'yellow', 'red')", name="ck_client_group_color"),
+        CheckConstraint("auto_suspension_mode IN ('OFF', 'REPORT', 'ON')", name="ck_client_group_mode"),
+        CheckConstraint("min_overdue_orders >= 1", name="ck_client_group_min"),
+    )
+
+
 class Client(Base):
     __tablename__ = "client"
 
@@ -186,9 +214,20 @@ class Client(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True)
     advisor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
     assigned_technician_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    # cg1 (doc 68 §1): NULL = no group = the tenant's dunning settings.
+    client_group_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("client_group.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     company = relationship("Company", back_populates="clients")
+    # Viewonly and company-scoped (defence in depth): a client_group_id that
+    # names another tenant's group reads as no group. Writes set client_group_id.
+    client_group = relationship(
+        "ClientGroup",
+        primaryjoin="and_(foreign(Client.client_group_id) == ClientGroup.id, "
+                    "Client.company_id == ClientGroup.company_id)",
+        viewonly=True,
+        lazy="select",
+    )
     advisor = relationship("User", back_populates="clients", foreign_keys=[advisor_id])
     assigned_technician = relationship("User", foreign_keys=[assigned_technician_id])
     services = relationship("ClientService", back_populates="client", cascade="all, delete-orphan")
@@ -209,6 +248,7 @@ class Client(Base):
         CheckConstraint("payment_day IS NULL OR (payment_day BETWEEN 1 AND 31)", name="ck_client_payment_day_range"),
         # cc1: case-insensitive unique per company (codes are stored upper).
         Index("uq_client_company_code", "company_id", text("upper(code)"), unique=True),
+        Index("ix_client_client_group", "client_group_id"),
     )
 
 
@@ -488,6 +528,17 @@ class ClientCustomFieldValue(Base):
 TASK_STATUSES = ("PENDING", "ASSIGNED", "IN_PROGRESS", "DONE")
 _TASK_STATUS_CHECK = "status IN ('PENDING','ASSIGNED','IN_PROGRESS','DONE')"
 
+# nm1_network_managed (doc 71 §4.1): what an office task asks the back office
+# to do on the network for an unmanaged service, or RUN_BY_HAND (a failed run
+# closed by hand). A CHECK-constrained string, never a PG enum; the CHECK also
+# forces job_kind NULL, so an office task can never reach dispatch or tecnicos.
+OFFICE_ACTIONS = ("NETWORK_CUT", "NETWORK_RECONNECT", "NETWORK_REMOVE", "NETWORK_SWAP", "RUN_BY_HAND")
+_OFFICE_ACTION_CHECK = (
+    "office_action IS NULL OR (office_action IN ("
+    + ",".join(f"'{a}'" for a in OFFICE_ACTIONS)
+    + ") AND job_kind IS NULL)"
+)
+
 
 class Task(Base):
     __tablename__ = "task"
@@ -525,6 +576,17 @@ class Task(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     step_progress = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    # nm1_network_managed (doc 71 §4.1). office_action: OFFICE_ACTIONS or NULL
+    # (ck_task_office_action). provisioning_run_id: the run a RUN_BY_HAND task
+    # closes. completed_by / completion_note: who closed the task and why
+    # (stamped by backend task_status.on_status_change; generic, any task).
+    # None of them is on a Create/Update schema here.
+    office_action = Column(String(20), nullable=True)
+    provisioning_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("provisioning_run.id", ondelete="SET NULL"), nullable=True, index=True)
+    completed_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    completion_note = Column(String(500), nullable=True)
 
     # tk2_task_links (doc 04 §2.3): the Figma form writes client + service +
     # device + parent node SIMULTANEOUSLY, which the single polymorphic
@@ -583,6 +645,7 @@ class Task(Base):
         Index("ix_task_company_due_date", "company_id", "due_date"),
         Index("ix_task_company_status", "company_id", "status"),
         CheckConstraint(_TASK_STATUS_CHECK, name="ck_task_status"),
+        CheckConstraint(_OFFICE_ACTION_CHECK, name="ck_task_office_action"),
     )
 
 
@@ -815,9 +878,11 @@ class CollectionVisitOutcome(str, enum.Enum):
 
 
 class CollectionVisitCode(str, enum.Enum):
-    """Values match VISIT_CODES in uplink-mobile apps/cobros/src/data.ts:71
-    verbatim (camelCase) — the mobile app sends these strings as-is."""
+    """Values are the strings cobros sends as-is (camelCase): they match
+    uplink-mobile apps/cobros/src/store/types.ts VISIT_REASONS (the outbox's
+    RouteVisitCode plus 'promise', which goes by direct POST)."""
     NO_ONE_HOME = "noOneHome"
+    NO_MONEY = "noMoney"
     PROMISE = "promise"
     REFUSED = "refused"
     COMPLAINT = "complaint"
@@ -883,10 +948,10 @@ class CollectionVisit(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
     outcome = Column(Enum(CollectionVisitOutcome), nullable=False)
     # values_callable required: CollectionVisitCode members are UPPER_SNAKE
-    # but their .value is camelCase (must match uplink-mobile's VISIT_CODES
-    # verbatim) — without this SQLAlchemy binds .name and every insert 500s
-    # against the postgres enum (which was correctly created from .value in
-    # rs1_route_cash).
+    # but their .value is camelCase (must match the strings cobros sends,
+    # VISIT_REASONS, verbatim) — without this SQLAlchemy binds .name and
+    # every insert 500s against the postgres enum (which was correctly
+    # created from .value in rs1_route_cash).
     visit_code = Column(Enum(CollectionVisitCode, values_callable=lambda e: [m.value for m in e]), nullable=True)
     promise_date = Column(Date, nullable=True)
     note = Column(String, nullable=True)

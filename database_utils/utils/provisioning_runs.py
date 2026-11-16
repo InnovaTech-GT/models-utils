@@ -57,6 +57,7 @@ from opentelemetry import trace
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from database_utils.models.auth import Company
 from database_utils.models.isp import (
     PHASE_CONFIGURATION,
     PHASE_PRECONDITIONS,
@@ -86,9 +87,20 @@ from database_utils.schemas.playbook import (
     normalize_definition,
 )
 from database_utils.utils import crypto
-from database_utils.utils.acs_bootstrap import acs_values, reads_acs
+from database_utils.utils.acs_bootstrap import (
+    ACS_SERIAL_CLAIMED,
+    acs_values,
+    ensure_cpe_registration,
+    reads_acs,
+    registration_conflict,
+    uses_tr069,
+)
 from database_utils.utils.logging_utils import request_client
-from database_utils.utils.provisioning_gates import ProvisioningGateError, run_gate_failures
+from database_utils.utils.provisioning_gates import (
+    ProvisioningGateError,
+    may_stamp_dry_run,
+    run_gate_failures,
+)
 from database_utils.utils.playbook_template import input_problem
 from database_utils.utils.provisioning_events import RUN_CLOSED, emit_event
 from database_utils.utils.provisioning_resolution import (
@@ -387,7 +399,8 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
     OUTPUT_KEY_CONFLICT (§9.4), a live run's MISSING_INPUT / INVALID_INPUT
     (input_problem over `provided`; a dry run gets «input.k» stand-ins
     instead) and, when a definition reads {{acs.*}}, the ACS checks of §9.7
-    (ensure=True also ensures the CPE's registration)."""
+    (ensure=True also ensures the CPE's registration). With ensure and a
+    `tr069` step but no {{acs.*}}, only the registration (doc 73 §3.2)."""
     ordered = order_for_purpose(list(resolved.steps), purpose)
     definitions: Dict[str, Dict[str, Any]] = {}
     for node in ordered:
@@ -400,11 +413,30 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
         errors = _input_errors(definitions, provided or {})
         if errors:
             raise ResolutionError(errors[0]["code"], "playbook inputs refused", errors=errors)
+    cpe = next((n for n in resolved.path if n.position == 0), None)
     if reads_acs(definitions.values()):
-        cpe = next((n for n in resolved.path if n.position == 0), None)
         # The values are checked and discarded: the worker reloads them.
         acs_values(db, client_service.company_id, cpe.serial_number if cpe else None,
                    item_id=cpe.item_id if cpe else None, ensure=ensure)
+    elif purpose not in TEARDOWN_PURPOSES and uses_tr069(definitions.values()):
+        # doc 73 §3.2: the run talks to the ACS even though no playbook pushes
+        # its URL (DHCP option 43 tenants). Without the registration the device
+        # is never tagged and every tr069 step ends DEVICE_NOT_FOUND. Teardown
+        # purposes never register (a CPE leaving service must not claim its
+        # serial). preflight / live checks raise the same refusals without
+        # writing, so lifecycle callers see them before their status write.
+        serial = cpe.serial_number if cpe else None
+        if ensure:
+            ensure_cpe_registration(db, client_service.company_id, serial,
+                                    item_id=cpe.item_id if cpe else None)
+        elif not dry_run:
+            if not (serial or "").strip():
+                raise ResolutionError("ACS_NOT_CONFIGURED",
+                                      "The service's CPE has no serial number to register in the ACS")
+            if registration_conflict(db, client_service.company_id, serial):
+                raise ResolutionError(ACS_SERIAL_CLAIMED,
+                                      f"The CPE serial {serial} is registered in the ACS outside this company "
+                                      "(another tenant or quarantine)")
     return ordered, definitions, secret_specs
 
 
@@ -446,8 +478,13 @@ def create_run(
     resolution: Optional[ResolvedProvisioning] = None,
     mode: str = ProvisioningRunMode.AUTOMATIC.value,
     guided_timeout_seconds: Optional[int] = GUIDED_TIMEOUT_DEFAULT,
+    staff_actor: bool = False,
 ) -> ProvisioningRun:
     """Resolve the path and open a run with only its first child queued.
+
+    `staff_actor` (doc 70 §5.4) records, once, that a superadmin acting on
+    the company opened the run; only such a dry run (or a self-managed
+    tenant's) stamps `last_dry_run_version` (`_finish_dry_run`).
 
     `mode` / `guided_timeout_seconds` (doc 50) are stored on the run (a None
     timeout means GUIDED_TIMEOUT_DEFAULT); an
@@ -557,6 +594,7 @@ def create_run(
         or run_idempotency_key(client_service.id, purpose, dry_run),
         triggered_by=effective_trigger(triggered_by),
         triggered_by_user_id=triggered_by_user_id,
+        staff_actor=staff_actor,
     )
     db.add(run)
     db.flush()
@@ -892,6 +930,10 @@ def _finish_dry_run(db: Session, run: ProvisioningRun) -> None:
     ok = bool(jobs) and all(j.status in TERMINAL_OK for j in jobs)
     close_run(db, run, ProvisioningJobStatus.SUCCEEDED if ok else ProvisioningJobStatus.FAILED)
     if not ok:
+        return
+    # doc 70 §5.4: only a staff run or a self-managed tenant clears the gate;
+    # the company is read now, at finish, so a revoke mid-run does not stamp.
+    if not may_stamp_dry_run(db.get(Company, run.company_id), staff_actor=run.staff_actor):
         return
     # doc 42 §9.2: stamp only a playbook whose live version still equals the
     # version this run planned — a playbook edited mid-run was not simulated.

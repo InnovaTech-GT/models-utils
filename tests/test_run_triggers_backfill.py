@@ -1,11 +1,11 @@
-"""rtg2_run_trigger_backfill (doc 68 §3.4): chain, one-way, held. The data
+"""rtg2_run_trigger_backfill (doc 68 §3.4): chain, one-way. The data
 behaviour is proven on a real Postgres in tests/pg/test_rtg2_pg.py."""
 import inspect
 import re
 
 from _mi_helpers import load
 
-HEAD_AT_CUT = "rtg1_run_triggers"
+HEAD_AT_CUT = "nm1_network_managed"  # re-chained at compose 2026-11-16
 
 
 def rtg2():

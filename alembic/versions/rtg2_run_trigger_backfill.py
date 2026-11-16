@@ -1,14 +1,14 @@
 """Run triggers backfill: past cron suspensions and API runs get their new labels
 
 Revision ID: rtg2_run_trigger_backfill
-Revises: rtg1_run_triggers
+Revises: nm1_network_managed
 Create Date: 2026-11-13
 
-Doc 68 §3.4. Data only, no DDL. HELD: this revision is deliberately not part of
-the release that carries rtg1. Rewriting rows to a label an old process does not
-know makes that process raise LookupError when it loads the row, so it ships
-only once production already runs a worker and backend-erp that know the labels
-(68-A3). Its down_revision is rewritten to the models-utils head of that moment.
+Doc 68 §3.4. Data only, no DDL. Held out of the release that carried rtg1:
+rewriting rows to a label an old process does not know makes that process raise
+LookupError when it loads the row, so it ships only once production runs a
+worker and backend-erp that know the labels (68-A3). Built on rtg1, re-chained
+onto nm1_network_managed at compose (2026-11-16, 6.34.0).
 
   1. Runs a cron-user (system-cron@internal.erp) SUSPENSION run created as
      USER become AUTO_SUSPENSION. Past run-now suspensions by a tenant admin and
@@ -30,7 +30,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "rtg2_run_trigger_backfill"
-down_revision: str | Sequence[str] | None = "rtg1_run_triggers"
+down_revision: str | Sequence[str] | None = "nm1_network_managed"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
