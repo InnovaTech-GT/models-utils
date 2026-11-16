@@ -87,7 +87,7 @@ from database_utils.schemas.playbook import (
     normalize_definition,
 )
 from database_utils.utils import crypto
-from database_utils.utils.acs_bootstrap import acs_values, reads_acs
+from database_utils.utils.acs_bootstrap import acs_values, ensure_cpe_registration, reads_acs, uses_tr069
 from database_utils.utils.logging_utils import request_client
 from database_utils.utils.provisioning_gates import (
     ProvisioningGateError,
@@ -392,7 +392,8 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
     OUTPUT_KEY_CONFLICT (§9.4), a live run's MISSING_INPUT / INVALID_INPUT
     (input_problem over `provided`; a dry run gets «input.k» stand-ins
     instead) and, when a definition reads {{acs.*}}, the ACS checks of §9.7
-    (ensure=True also ensures the CPE's registration)."""
+    (ensure=True also ensures the CPE's registration). With ensure and a
+    `tr069` step but no {{acs.*}}, only the registration (doc 73 §3.2)."""
     ordered = order_for_purpose(list(resolved.steps), purpose)
     definitions: Dict[str, Dict[str, Any]] = {}
     for node in ordered:
@@ -405,11 +406,18 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
         errors = _input_errors(definitions, provided or {})
         if errors:
             raise ResolutionError(errors[0]["code"], "playbook inputs refused", errors=errors)
+    cpe = next((n for n in resolved.path if n.position == 0), None)
     if reads_acs(definitions.values()):
-        cpe = next((n for n in resolved.path if n.position == 0), None)
         # The values are checked and discarded: the worker reloads them.
         acs_values(db, client_service.company_id, cpe.serial_number if cpe else None,
                    item_id=cpe.item_id if cpe else None, ensure=ensure)
+    elif ensure and uses_tr069(definitions.values()):
+        # doc 73 §3.2: the run talks to the ACS even though no playbook pushes
+        # its URL (DHCP option 43 tenants). Without the registration the device
+        # is never tagged and every tr069 step ends DEVICE_NOT_FOUND.
+        ensure_cpe_registration(db, client_service.company_id,
+                                cpe.serial_number if cpe else None,
+                                item_id=cpe.item_id if cpe else None)
     return ordered, definitions, secret_specs
 
 

@@ -148,3 +148,72 @@ def test_preflight_raises_create_run_conflicts(db, plant, monkeypatch):
         preflight_run(db, plant.service, resolved, PURPOSE_ACTIVATION)
     assert exc.value.code == "SECRETS_KEY_UNAVAILABLE"
     preflight_run(db, plant.service, resolved, PURPOSE_ACTIVATION, dry_run=True)  # no KEK needed
+
+
+# ---- doc 73 §3: registration follows management (tr069 plans without acs.*) ----
+
+ONU_TR069 = {"configuration": [{"name": "set-cr", "driver": "tr069",
+                                "request": {"op": "setParameterValues",
+                                            "parameters": {"p": ["1", "xsd:string"]}}}]}
+
+
+@pytest.fixture()
+def tr069_plant(db, plant, monkeypatch):
+    # A DHCP-option-43 tenant: no ACS URL, no inform password, no {{acs.*}}.
+    monkeypatch.delenv("GENIEACS_CWMP_PUBLIC_URL", raising=False)
+    plant.playbooks["onu-activation"].definition = ONU_TR069
+    db.flush()
+    return plant
+
+
+def test_uses_tr069():
+    assert acs_bootstrap.uses_tr069([ONU_TR069])
+    assert acs_bootstrap.uses_tr069([{"rollback": [{"driver": "tr069"}]}])
+    assert not acs_bootstrap.uses_tr069([OLT_ACS, {"configuration": [{"driver": "telnet", "template": "tr069"}]}])
+
+
+def test_tr069_plan_without_acs_tokens_registers_the_cpe(db, tr069_plant):
+    create_run(db, tr069_plant.service, PURPOSE_ACTIVATION)
+    (reg,) = _registrations(db)
+    assert reg.company_id == tr069_plant.company_id
+    assert reg.serial_number == tr069_plant.cpe.serial_number.upper()
+    assert reg.inventory_item_id == tr069_plant.cpe.id and reg.created_by_user_id is None
+
+
+def test_tr069_plan_dry_run_and_preflight_write_nothing(db, tr069_plant):
+    from database_utils.utils.provisioning_resolution import resolve_provisioning
+    create_run(db, tr069_plant.service, PURPOSE_ACTIVATION, dry_run=True)
+    preflight_run(db, tr069_plant.service,
+                  resolve_provisioning(db, tr069_plant.service, PURPOSE_ACTIVATION), PURPOSE_ACTIVATION)
+    assert _registrations(db) == []
+
+
+def test_tr069_plan_refuses_a_serial_claimed_elsewhere(db, tr069_plant):
+    db.add(AcsDeviceRegistration(company_id=CO_B, serial_number=tr069_plant.cpe.serial_number.upper()))
+    db.flush()
+    with pytest.raises(ResolutionError) as exc:
+        create_run(db, tr069_plant.service, PURPOSE_ACTIVATION)
+    assert exc.value.code == "ACS_SERIAL_CLAIMED"
+    assert db.execute(sa.select(sa.func.count()).select_from(ProvisioningJob)).scalar() == 0
+
+
+def test_tr069_plan_reuses_the_existing_registration(db, tr069_plant):
+    create_run(db, tr069_plant.service, PURPOSE_ACTIVATION)
+    acs_bootstrap.ensure_cpe_registration(db, tr069_plant.company_id, tr069_plant.cpe.serial_number)
+    assert len(_registrations(db)) == 1
+
+
+def test_ensure_cpe_registration_needs_a_serial(db, plant):
+    with pytest.raises(ResolutionError) as exc:
+        acs_bootstrap.ensure_cpe_registration(db, plant.company_id, "  ")
+    assert exc.value.code == "ACS_NOT_CONFIGURED" and _registrations(db) == []
+
+
+@pytest.mark.parametrize("owner,expected", [(CO_B, "ACS_SERIAL_CLAIMED"), (None, "ACS_SERIAL_CLAIMED"), ("own", None)])
+def test_registration_conflict_is_read_only(db, plant, owner, expected):
+    db.add(AcsDeviceRegistration(company_id=plant.company_id if owner == "own" else owner,
+                                 serial_number="ONT-9"))
+    db.flush()
+    assert acs_bootstrap.registration_conflict(db, plant.company_id, " ont-9 ") == expected
+    assert acs_bootstrap.registration_conflict(db, plant.company_id, "UNKNOWN") is None
+    assert len(_registrations(db)) == 1
