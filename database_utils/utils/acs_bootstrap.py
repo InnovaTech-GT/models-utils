@@ -60,12 +60,17 @@ def reads_acs(definitions: Iterable[Any]) -> bool:
     return any(ACS_TOKEN.search(json.dumps(d, default=str)) for d in definitions)
 
 
+# Drivers that resolve the CPE through the ACS (tenant-tagged GenieACS device).
+ACS_DRIVERS = frozenset({"tr069", "connection_request"})
+
+
 def uses_tr069(definitions: Iterable[Any]) -> bool:
-    """True when any step anywhere in these definitions uses the `tr069` driver
-    (doc 73 §3.2): the run will talk to the ACS, so the CPE must be registered."""
+    """True when any step anywhere in these definitions uses an ACS driver
+    (`tr069` or `connection_request`, doc 73 §3.2): the run will talk to the
+    ACS, so the CPE must be registered."""
     def walk(node) -> bool:
         if isinstance(node, dict):
-            return node.get("driver") == "tr069" or any(walk(v) for v in node.values())
+            return node.get("driver") in ACS_DRIVERS or any(walk(v) for v in node.values())
         if isinstance(node, list):
             return any(walk(v) for v in node)
         return False

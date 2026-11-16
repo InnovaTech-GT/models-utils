@@ -87,7 +87,14 @@ from database_utils.schemas.playbook import (
     normalize_definition,
 )
 from database_utils.utils import crypto
-from database_utils.utils.acs_bootstrap import acs_values, ensure_cpe_registration, reads_acs, uses_tr069
+from database_utils.utils.acs_bootstrap import (
+    ACS_SERIAL_CLAIMED,
+    acs_values,
+    ensure_cpe_registration,
+    reads_acs,
+    registration_conflict,
+    uses_tr069,
+)
 from database_utils.utils.logging_utils import request_client
 from database_utils.utils.provisioning_gates import (
     ProvisioningGateError,
@@ -411,13 +418,25 @@ def _plan_checks(db: Session, client_service: ClientService, resolved: ResolvedP
         # The values are checked and discarded: the worker reloads them.
         acs_values(db, client_service.company_id, cpe.serial_number if cpe else None,
                    item_id=cpe.item_id if cpe else None, ensure=ensure)
-    elif ensure and uses_tr069(definitions.values()):
+    elif purpose not in TEARDOWN_PURPOSES and uses_tr069(definitions.values()):
         # doc 73 §3.2: the run talks to the ACS even though no playbook pushes
         # its URL (DHCP option 43 tenants). Without the registration the device
-        # is never tagged and every tr069 step ends DEVICE_NOT_FOUND.
-        ensure_cpe_registration(db, client_service.company_id,
-                                cpe.serial_number if cpe else None,
-                                item_id=cpe.item_id if cpe else None)
+        # is never tagged and every tr069 step ends DEVICE_NOT_FOUND. Teardown
+        # purposes never register (a CPE leaving service must not claim its
+        # serial). preflight / live checks raise the same refusals without
+        # writing, so lifecycle callers see them before their status write.
+        serial = cpe.serial_number if cpe else None
+        if ensure:
+            ensure_cpe_registration(db, client_service.company_id, serial,
+                                    item_id=cpe.item_id if cpe else None)
+        elif not dry_run:
+            if not (serial or "").strip():
+                raise ResolutionError("ACS_NOT_CONFIGURED",
+                                      "The service's CPE has no serial number to register in the ACS")
+            if registration_conflict(db, client_service.company_id, serial):
+                raise ResolutionError(ACS_SERIAL_CLAIMED,
+                                      f"The CPE serial {serial} is registered in the ACS outside this company "
+                                      "(another tenant or quarantine)")
     return ordered, definitions, secret_specs
 
 

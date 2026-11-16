@@ -217,3 +217,26 @@ def test_registration_conflict_is_read_only(db, plant, owner, expected):
     assert acs_bootstrap.registration_conflict(db, plant.company_id, " ont-9 ") == expected
     assert acs_bootstrap.registration_conflict(db, plant.company_id, "UNKNOWN") is None
     assert len(_registrations(db)) == 1
+
+
+def test_connection_request_counts_as_acs_driver():
+    assert acs_bootstrap.uses_tr069([{"configuration": [{"name": "cr", "driver": "connection_request"}]}])
+
+
+def test_teardown_purposes_never_register(db, tr069_plant):
+    tr069_plant.playbooks["onu-suspension"].definition = ONU_TR069
+    db.flush()
+    create_run(db, tr069_plant.service, "SUSPENSION")
+    assert _registrations(db) == []
+
+
+def test_preflight_raises_the_tr069_claim_before_any_write(db, tr069_plant):
+    from database_utils.utils.provisioning_resolution import resolve_provisioning
+    db.add(AcsDeviceRegistration(company_id=CO_B, serial_number=tr069_plant.cpe.serial_number.upper()))
+    db.flush()
+    resolved = resolve_provisioning(db, tr069_plant.service, PURPOSE_ACTIVATION)
+    with pytest.raises(ResolutionError) as exc:
+        preflight_run(db, tr069_plant.service, resolved, PURPOSE_ACTIVATION)
+    assert exc.value.code == "ACS_SERIAL_CLAIMED"
+    preflight_run(db, tr069_plant.service, resolved, PURPOSE_ACTIVATION, dry_run=True)  # dry: no refusal
+    assert len(_registrations(db)) == 1
