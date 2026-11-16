@@ -587,7 +587,7 @@ class BillingInvoice(Base):
     credit_cents = Column(Integer, nullable=False, default=0, server_default="0")  # credits applied (free month incl.)
     previous_balance_cents = Column(Integer, nullable=False, default=0, server_default="0")  # balance carried in
     carried_out_cents = Column(Integer, nullable=False, default=0, server_default="0")  # sub-Q5 remainder moved out
-    credit_detail = Column(JSON, nullable=True)  # [{reward_id, cents}], read by void
+    credit_detail = Column(JSON(none_as_null=True), nullable=True)  # [{reward_id, cents}], read by void
     refunded_cents = Column(Integer, nullable=False, default=0, server_default="0")  # sum of applied refunds
     recurrente_payment_id = Column(String, nullable=True, index=True)  # on_... of a saved-card charge
 

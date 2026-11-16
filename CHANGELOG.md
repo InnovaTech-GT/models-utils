@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
+### Fixed
+- **6.33.1** (2026-11-16) - **No migration.** `BillingInvoice.credit_detail` is `JSON(none_as_null=True)`: an invoice without referral credit now stores SQL NULL instead of the JSON literal `null` (the only reader, `credit_detail or []`, treats both as empty, so existing `null` rows need no backfill). Consumers: re-pin auth-erp (the writer) with backend-erp and provisioning-worker as usual. Test: `tests/test_referral_models.py::test_invoice_credit_detail_none_is_sql_null`.
+
 ### Added
 - **6.33.0** (doc 73, ACS registration follows management, 2026-11-15) - **No migration.** `_plan_checks` now ensures the CPE's ACS registration on any live run whose plan has a `tr069` step, not only when a playbook reads `{{acs.*}}` (tenants whose ONUs learn the ACS URL by DHCP option 43 never got one, so every tr069 step ended `DEVICE_NOT_FOUND`). New helpers in `utils/acs_bootstrap.py`: `ensure_cpe_registration` (public, idempotent), `registration_conflict` (read-only twin) and `uses_tr069`. URL / inform-password checks stay tied to `{{acs.*}}`. ACS drivers = `tr069` + `connection_request`; teardown purposes (SUSPENSION, DEPROVISION) never register; a live `preflight_run` raises the same refusals without writing.
 - **6.32.0** (doc 71, CSR operations fixes, 2026-11-13) - Additive revision `nm1_network_managed` (parent `rf1_referral_programs`, re-chained at compose). **Inert for old code**: the new columns default to false / NULL and nothing old reads them.
