@@ -88,6 +88,21 @@ matters when reading `__init__.py`:
   (deliberately absent from `ClientServiceUpdate`; written only by backend-erp's
   `recompute_install_state`)
 
+### Network-managed services and office tasks (doc 71, `nm1`, 6.32.0)
+
+- `ClientServiceOut` gains `network_managed: bool = False` (the column) and
+  two backend-COMPUTED fields: `network_run: Optional[ServiceNetworkRun]`
+  (the latest non-dry run) and `open_office_tasks: List[OfficeTaskRef] = []`.
+  Filled on detail, single-service responses and the list filtered by
+  `client_id`; None / `[]` elsewhere means "not computed".
+- `ServiceNetworkRun` `{id, purpose, status, error_code, outcome, created_at,
+  finished_at, unresolved=False}`; `OfficeTaskRef` `{id, office_action, name,
+  created_at}`.
+- `TaskOut` gains `office_action`, `provisioning_run_id`, `completed_by`,
+  `completed_by_name` (filled by backend-erp) and `completion_note`. Output
+  only: no Create/Update schema here carries any of them (`completion_note`
+  is written through the backend's own `TaskUpdateIn`).
+
 ### Brownfield adoption (doc 30) — `client_service` schema changes
 
 - `ClientServiceOut` gains `adopted_at`/`adopted_by_user_id`/`adoption_note`
