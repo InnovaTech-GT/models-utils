@@ -291,9 +291,16 @@ class ProvisioningRunMode(str, enum.Enum):
 
 
 class ProvisioningTrigger(str, enum.Enum):
-    USER = "USER"
-    WORKFLOW = "WORKFLOW"
-    API = "API"
+    """Who or what started a provisioning run/job (doc 68 §3.3). Native PG enum
+    `provisioningtrigger`, shared by provisioning_run and provisioning_job.
+    MCP/BOT/AUTO_* added by rtg1_run_triggers (labels only)."""
+    USER = "USER"  # a person in the web or mobile app
+    WORKFLOW = "WORKFLOW"  # a workflow (v2 engine, boosts, legacy v1)
+    API = "API"  # other machine callers (worker connectivity sweep jobs)
+    MCP = "MCP"  # a person through the MCP server (USER swapped by effective_trigger)
+    BOT = "BOT"  # the WhatsApp bot's purpose endpoint
+    AUTO_SUSPENSION = "AUTO_SUSPENSION"  # the dunning rule (cron or run-now)
+    AUTO_REACTIVATION = "AUTO_REACTIVATION"  # reconnection by a payment or a promise
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +654,12 @@ class ClientService(Base):
     # Stamped on the FIRST transition to INSTALLED (never cleared by a later
     # regression to NOT_INSTALLED — a historical fact, like activation_date).
     installed_at = Column(DateTime(timezone=True), nullable=True)
+    # nm1_network_managed (doc 71 §3): Uplink's playbooks made (or an admin
+    # attests they match) this service's network configuration, so the
+    # SUSPENSION / REACTIVATION / DEPROVISION / CPE_SWAP / BOOST playbooks may
+    # act on it. Machine-written (backend RUN_CLOSED settle, the admin toggle,
+    # the nm1 backfill); never on Create/Update schemas.
+    network_managed = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # Cycle 10 (doc 35 §5.2): set when someone re-parented a node above this
     # service's CPE, so the configuration path it was provisioned against is no
     # longer the path it sits on. Cleared by a SUCCEEDED non-dry-run ACTIVATION
@@ -891,7 +904,8 @@ class DunningRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     ran_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
-    # REPORT | ON (OFF tenants are not run).
+    # REPORT | ON, or OFF (cg1, doc 68 §1): the tenant is OFF and a client
+    # group's policy ran for its members.
     mode = Column(String(10), nullable=False)
     outcome = Column(Enum(DunningRunOutcome), nullable=False)
     candidates = Column(JSON, nullable=False, default=list)
@@ -904,7 +918,7 @@ class DunningRun(Base):
 
     __table_args__ = (
         Index("ix_dunning_run_company_ran_at", "company_id", "ran_at"),
-        CheckConstraint("mode IN ('REPORT', 'ON')", name="ck_dunning_run_mode"),
+        CheckConstraint("mode IN ('OFF', 'REPORT', 'ON')", name="ck_dunning_run_mode"),
     )
 
 
@@ -1467,6 +1481,49 @@ class Playbook(Base):
     jobs = relationship("ProvisioningJob", back_populates="playbook")
 
 
+# mpb1 (doc 70 §8, §10): the edit trail of a playbook. BASELINE rows come
+# from the revision's one-way data step.
+PLAYBOOK_REVISION_ACTIONS = ("BASELINE", "CREATE", "UPDATE", "DELETE", "BIND", "UNBIND")
+
+
+class PlaybookRevision(Base):
+    """One row per playbook write (create, update, delete, bind, unbind),
+    written in the same transaction by utils.playbook_revisions.record_revision.
+    `playbook_id` has NO FK on purpose: the trail outlives a deleted playbook."""
+    __tablename__ = "playbook_revision"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    playbook_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    playbook_name = Column(String, nullable=False)
+    # The playbook version after the change.
+    version = Column(Integer, nullable=False)
+    action = Column(String(16), nullable=False)
+    # NULL for DELETE / UNBIND.
+    definition = Column(JSON, nullable=True)
+    # BIND/UNBIND: {scope, target_id, purpose}.
+    target = Column(JSON, nullable=True)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_staff = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt,
+                        server_default=text("now()"))
+
+    actor = relationship("User", foreign_keys=[actor_user_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN (" + ", ".join(f"'{a}'" for a in PLAYBOOK_REVISION_ACTIONS) + ")",
+            name="ck_playbook_revision_action",
+        ),
+        Index("ix_playbook_revision_company_created", "company_id", text("created_at DESC")),
+        Index("ix_playbook_revision_playbook", "playbook_id", "created_at"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Playbook binding (Cycle 10, doc 35 §2.4, revision ng1_network_graph)
 #
@@ -1624,6 +1681,10 @@ class ProvisioningRun(Base):
     # children's log.warnings (and WARN_STEP_NOT_UNDONE on a rollback), rows
     # {code, step, label, hint, error, item_id, device_label, position}. NULL = none.
     warnings = Column(JSON, nullable=True)
+    # mpb1 (doc 70 §5.4): the run was opened by a staff actor (a superadmin
+    # acting inside this tenant). Only such a dry run, or one of a
+    # self-managed tenant, stamps playbook.last_dry_run_version.
+    staff_actor = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # The outcome code (PRECONDITION_FAILED, CONFIGURATION_FAILED,
     # VERIFICATION_FAILED, CANCELLED, STRANDED_RUN_EXPIRED, ROLLBACK_INCOMPLETE,
     # REVERTED) and its human detail. Written only by close_run / the rollback

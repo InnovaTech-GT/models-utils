@@ -41,11 +41,26 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    mutations via `asyncio.create_task`. `check_workflow_triggers` matches the
    resource type + event (`CREATED`/`UPDATED`/`DELETED`) against active
    `WorkflowTrigger` rows, including their `field_conditions` JSON.
+   **`provisioning_job` snapshots are reduced first** (6.30.0, doc 70 §6.2):
+   `provisioning_jobs.reduce_job_snapshot` drops `log` and `variables` and
+   replaces `error` with the job's cause code (`job_error_cause`), before the
+   conditions are matched and before the trigger event is stored, so a tenant
+   workflow never sees rendered commands, device output or inputs. Write a
+   condition on a job's error as `error equals PROVISIONING_FAILED` (or the
+   specific code), never on its raw text.
 2. **Execution** — `execute_workflow` walks the step DAG
    (`WorkflowStep` + `WorkflowStepEdge`), calling `execute_step` per node and
    recording `WorkflowExecution` / `WorkflowStepExecution` rows.
 3. **Step actions** (`StepActionType`):
-   - `UPDATE_FIELD` — mutate a field on the trigger entity
+   - `UPDATE_FIELD` — mutate a field on the trigger entity. `UPDATE_FIELD_DENYLIST`
+     (and `CREATE_ENTITY_FIELD_DENYLIST` for `CREATE_ENTITY`) fail the step on a
+     protected field before any write: order/invoice money state (PaymentService
+     is its single writer), `migration_source` on `client_service`/`service_plan`,
+     and `client.client_group_id` (cg1, doc 68 §1.4: a client's group decides
+     whether dunning may cut it, and backend-erp gates every assignment with
+     built-in ADMIN + `company.update` plus a same-tenant check; a v1 automation's
+     plain `setattr` would skip both and could even link another tenant's group).
+     The v2 engine has no generic field write
    - `CREATE_ENTITY` — create a related entity
    - `HTTP_REQUEST` — call an external `Integration` target; URLs are guarded
      by `utils/ssrf.py` `validate_url_no_ssrf` (SEC-6). A disabled integration

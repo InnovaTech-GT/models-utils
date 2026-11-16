@@ -126,6 +126,12 @@ async def check_workflow_triggers(
         )
         return
 
+    if resource_type == "provisioning_job":
+        # doc 70 §6.2: a job snapshot never carries its log, variables or raw
+        # error into a tenant's workflow (conditions and templates see the cause).
+        from database_utils.utils.provisioning_jobs import reduce_job_snapshot
+        before_data, after_data = reduce_job_snapshot(before_data), reduce_job_snapshot(after_data)
+
     try:
         matched = find_matching_workflows(
             db, company_id, resource_type, event_type, before_data, after_data
@@ -463,6 +469,10 @@ UPDATE_FIELD_DENYLIST: Dict[str, frozenset] = {
     "client_service": frozenset({"migration_source"}),
     # Same rationale for the ServicePlan migration marker.
     "service_plan": frozenset({"migration_source"}),
+    # cg1 (doc 68 §1.4): a client's group decides whether dunning may cut it.
+    # Assignment is gated (built-in ADMIN + company.update) and ownership-checked
+    # in backend-erp; a v1 automation's plain setattr would skip both.
+    "client": frozenset({"client_group_id"}),
 }
 
 # CREATE_ENTITY guards for the same invariant: the engine must never create
@@ -473,6 +483,7 @@ CREATE_ENTITY_FIELD_DENYLIST: Dict[str, frozenset] = {
     "order": frozenset({"paid", "payment_status", "payment_date", "total", "total_cents"}),
     "client_service": frozenset({"migration_source"}),
     "service_plan": frozenset({"migration_source"}),
+    "client": frozenset({"client_group_id"}),  # cg1, see UPDATE_FIELD_DENYLIST
 }
 
 # Resources an automation may TRIGGER on but never write or create, whatever
@@ -513,8 +524,9 @@ def _execute_update_field(
     if denied:
         raise ValueError(
             f"UPDATE_FIELD may not write protected field(s) {', '.join(denied)} "
-            f"on '{resource_type}': payment/money state has a single writer "
-            f"(PaymentService)"
+            f"on '{resource_type}': it has a single guarded writer outside "
+            f"automations (PaymentService for money state, backend-erp for "
+            f"a client's group)"
         )
 
     # Determine which resource(s) to update
@@ -608,8 +620,9 @@ def _execute_create_entity(
     if denied:
         raise ValueError(
             f"CREATE_ENTITY may not set protected field(s) {', '.join(denied)} "
-            f"on '{resource_type}': payment/money state has a single writer "
-            f"(PaymentService)"
+            f"on '{resource_type}': it has a single guarded writer outside "
+            f"automations (PaymentService for money state, backend-erp for "
+            f"a client's group)"
         )
 
     data["company_id"] = company_id

@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (127 revisions, head: **`et1_edge_telnet`**) — plus
+`alembic/versions/` (133 revisions, head: **`nm1_network_managed`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1422,6 +1422,73 @@ on that expression, bumping `updated_at` and keeping `created_at`. No CHECK on `
 backend registry is the single list). Downgrade drops the table. `tests/pg/test_ii1_pg.py`
 runs the real upsert and an idempotent downgrade/upgrade.
 
+## mpb1_managed_playbooks (6.30.0)
+
+Uplink-managed playbooks (doc 70 §10), parent `cg1_client_groups` (no merge revision).
+Hand-written, `lock_timeout`, `IF [NOT] EXISTS`.
+Adds `company.playbook_management` JSON NULL (the self-management request, NULL =
+Uplink-managed), `provisioning_run.staff_actor` BOOLEAN NOT NULL DEFAULT false (existing rows
+false: no superadmin could open a run before) and the `playbook_revision` table (no FK on
+`playbook_id`, `company_id` CASCADE, `actor_user_id` SET NULL, CHECK
+`ck_playbook_revision_action`, indexes `ix_playbook_revision_company_created` and
+`ix_playbook_revision_playbook`). **One-way data step:** one `BASELINE` revision per existing
+playbook (`gen_random_uuid()`, actor NULL, `actor_staff` false), skipped when the table already
+existed so a re-run never duplicates it. Downgrade drops the table and both columns and loses
+the edit history (the baseline is recomputable). `tests/test_mpb1_managed_playbooks.py` pins the
+chain, columns and schemas; `tests/pg/test_mpb1_pg.py` runs the baseline, the CHECK, the
+`staff_actor` server default, the company cascade and an idempotent downgrade/upgrade.
+
+## cg1_client_groups (6.29.0)
+
+Client groups (doc 68 §1), parent `vn1_visit_no_money`. Additive, hand-written, one
+transactional revision, no backfill (every client starts ungrouped = the tenant's dunning
+settings). New `client_group` (`name` VARCHAR(60) unique per company, `color` palette key
+default `grey`, nullable `auto_suspension_mode` / `min_overdue_orders`; CHECKs
+`ck_client_group_color` / `_mode` / `_min`; company FK CASCADE), `client.client_group_id`
+(FK SET NULL, index `ix_client_client_group`), and `ck_dunning_run_mode` dropped and
+re-created as `mode IN ('OFF','REPORT','ON')`. Upgrade is idempotent (`IF [NOT] EXISTS`).
+
+**Not code-rollback-safe once used**: an older backend-erp validates `dunning_run.mode` as
+`REPORT`/`ON`, so once an `OFF` run is stored its `GET /dunning/runs` answers 500. Remedy:
+`UPDATE dunning_run SET mode='REPORT' WHERE mode='OFF';` (founder-only on production).
+Downgrade runs that mapping, restores the narrow CHECK, then drops the index, the column and
+the table. `tests/test_cg1_client_groups.py` pins the chain and the model;
+`tests/pg/test_cg1_pg.py` covers the CHECKs, SET NULL / CASCADE, `OFF` runs and an
+idempotent round trip that maps `OFF` to `REPORT`.
+
+## vn1_visit_no_money (6.28.0)
+
+Collector reasons & promises (doc 68 §2), parent `rtg1_run_triggers`. Additive, hand-written: `lock_timeout` 5s,
+then `ALTER TYPE collectionvisitcode ADD VALUE IF NOT EXISTS 'noMoney'` in an autocommit block
+(the nc1a recipe). The label is **irreversible**: downgrade is a documented no-op, because PG
+cannot drop an enum label without rebuilding the type. A backend-erp older than the
+models-utils that knows `CollectionVisitCode.NO_MONEY` raises `LookupError` when it loads a
+`noMoney` visit row, so the three consumers move their pin together; the founder-only remedy
+is in doc 68 §2.4. `tests/test_vn1_visit_no_money.py` pins the chain and the binding;
+`tests/pg/test_vn1_pg.py` checks the label at `alembic upgrade head`.
+
+## nm1_network_managed (6.32.0)
+
+Network-managed services and office tasks (doc 71 §9), parent `rf1_referral_programs`
+(re-chained at compose from `et1_edge_telnet`; `down_revision` rewritten, no merge revision). Additive, hand-written (lock_timeout,
+IF [NOT] EXISTS, `DO` blocks for the constraints). `client_service.network_managed` BOOLEAN
+NOT NULL DEFAULT false; `task.office_action` VARCHAR(20) + `ck_task_office_action`
+(`office_action IS NULL OR (office_action IN ('NETWORK_CUT','NETWORK_RECONNECT',
+'NETWORK_REMOVE','NETWORK_SWAP','RUN_BY_HAND') AND job_kind IS NULL)`),
+`task.provisioning_run_id` UUID (`fk_task_provisioning_run_id` → `provisioning_run`, SET NULL,
+`ix_task_provisioning_run_id`), `task.completed_by` UUID (`fk_task_completed_by` → `"user"`,
+SET NULL), `task.completion_note` VARCHAR(500).
+
+**Backfill** (`BACKFILL_SQL`, doc 71 §9.2 frozen): `network_managed = true` where the service
+has a SUCCEEDED non-dry ACTIVATION / CPE_SWAP / SUSPENSION / REACTIVATION / BOOST run and no
+later SUCCEEDED non-dry DEPROVISION. A reverted ACTIVATION is ROLLED_BACK, so it never counts;
+standalone jobs (`run_id` NULL) and `adopted_at` are not evidence. It never writes false.
+`utils/network_managed.backfill_value` is the same predicate for one service;
+`tests/test_nm1_network_managed.py` runs both on one fixture set. Inert for old code.
+Downgrade drops the index, the CHECK, the FKs and the five columns `IF EXISTS`.
+`tests/pg/test_nm1_pg.py` (CI `pg` job) runs the backfill, the CHECK and a
+downgrade/re-upgrade on Postgres.
+
 ## et1_edge_telnet (6.26.0)
 
 Telnet on EDGE devices (doc 67, ONU CATV on/off), parent `ch1_client_chat`. Additive,
@@ -1446,3 +1513,33 @@ NULL (Telegram public @), `verified_at`, `last_inbound_at`). Unique `uq_client_c
 `ix_client_chat_address (integration_id, address)` and `ix_client_chat_company_client
 (company_id, client_id)`. Downgrade drops the table and both columns.
 `tests/pg/test_ch1_pg.py` runs the real upsert, the cascades and an idempotent round trip.
+
+## rtg1_run_triggers (6.27.0)
+
+Run triggers (doc 68 §3.4), parent `et1_edge_telnet`. Labels only, hand-written on the
+`mi1_mobile_enum_labels` pattern (`lock_timeout`, `ADD VALUE IF NOT EXISTS` inside
+`autocommit_block()`, `pg_enum` post-check): `provisioningtrigger` gains `MCP`, `BOT`,
+`AUTO_SUSPENSION` and `AUTO_REACTIVATION` (`NEW_LABELS`). No statement uses them and no row
+is rewritten; the one-way backfill of past rows is a separate, later revision
+(`rtg2_run_trigger_backfill`). IRREVERSIBLE: `downgrade()` is a documented no-op. Rollback
+hazard: a worker or backend on an older models-utils raises `LookupError` when it loads a row
+written with one of these labels, so a rollback below this pin needs the founder-only remedy
+in doc 68 §3.4. `tests/test_run_triggers.py` pins the chain and the labels against
+`ProvisioningTrigger`; `tests/pg/test_rtg1_pg.py` checks them at head.
+## rf1_referral_programs (6.31.0)
+
+Doc 69 (referral and partner programs on SaaS billing), parent `mpb1_managed_playbooks`. Purely additive, no
+data step, no PG enum (statuses VARCHAR + CHECK, `pl1` precedent); downgrade
+drops everything it adds. Columns: `company.referral_code` (`uq_company_referral_code`),
+`subscription.partner_since` / `balance_due_cents` (`ck_subscription_balance_due_nonneg`),
+`billing_invoice.credit_cents` / `previous_balance_cents` / `carried_out_cents` /
+`refunded_cents` (each `ck_billing_invoice_<col>_nonneg`, default 0, so existing rows
+read 0), `credit_detail`, `recurrente_payment_id` (indexed). Tables: `referral`,
+`referral_reward`, `billing_reversal`, `billing_card`, `company_identity`,
+`referral_identity` with the `ON DELETE` rules of doc 69 §5 (referral and
+identity history outlive a deleted company). Each constraint is declared inside
+its `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`, so a re-run is a
+no-op. Re-pointed at compose from its provisional parent to the head of that
+moment (no merge revision). `tests/test_referral_models.py` (SQLite)
+and `tests/pg/test_rf1_pg.py` (the CHECK/UNIQUE/index names on the migrated
+schema, the delete rules, the refusals, the downgrade/upgrade pair) pin it.

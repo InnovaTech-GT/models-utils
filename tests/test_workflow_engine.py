@@ -148,3 +148,43 @@ def test_mode_b_gates_on_the_items_device_type(db, plant):
 @pytest.mark.parametrize("mode", [_mode_a, _mode_b])
 def test_enqueue_passes_when_gates_pass(db, plant, mode):
     assert mode(db, plant)["enqueued"] is True
+
+
+# --- doc 70 §6.2: provisioning_job trigger snapshots are reduced ---------------
+
+async def test_provisioning_job_trigger_snapshot_is_reduced(db, monkeypatch):
+    import asyncio
+    import json
+    import uuid
+
+    from database_utils.models.workflow import TriggerEventType, Workflow, WorkflowTrigger
+    from database_utils.utils import workflow_engine
+
+    # check_workflow_triggers stores nothing in the caller's session: it schedules
+    # _execute_workflow_async (own SessionLocal). Capture its trigger_event.
+    seen = []
+
+    async def capture(**kw):
+        seen.append(kw["trigger_event"])
+
+    monkeypatch.setattr(workflow_engine, "_execute_workflow_async", capture)
+    co = uuid.uuid4()
+    wf = Workflow(id=uuid.uuid4(), name="on failure", company_id=co, is_active=True, engine_version=1)
+    db.add(wf)
+    db.add(WorkflowTrigger(workflow=wf, resource_type="provisioning_job", event_type=TriggerEventType.UPDATED,
+                           field_conditions={"field": "error", "operator": "equals",
+                                             "value": "PROVISIONING_FAILED"}))
+    db.flush()
+    sentinel, pb = "SENTINEL-raw", str(uuid.uuid4())
+    before = {"status": "RUNNING", "error": None, "playbook_id": pb, "log": None, "variables": {"p": sentinel}}
+    after = {"status": "FAILED", "error": f"ssh: {sentinel}", "playbook_id": pb, "attempts": 1,
+             "variables": {"p": sentinel}, "log": {"steps": [{"rendered": sentinel}]}}
+    await workflow_engine.check_workflow_triggers(db, co, "provisioning_job", "UPDATED", uuid.uuid4(),
+                                                  before_data=before, after_data=after)
+    await asyncio.sleep(0)
+    assert len(seen) == 1                      # the condition matched against the reduced value
+    stored = seen[0]
+    assert sentinel not in json.dumps(stored) and stored["after"]["error"] == "PROVISIONING_FAILED"
+    assert stored["after"]["playbook_id"] == pb and stored["after"]["attempts"] == 1
+    assert "log" not in stored["before"] and "variables" not in stored["after"]
+    assert after["log"] is not None            # the caller's dicts are not mutated
