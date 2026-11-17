@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (134 revisions, head: **`rtg2_run_trigger_backfill`**) — plus
+`alembic/versions/` (136 revisions, head: **`sm1_snmp_traffic_metrics`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1567,3 +1567,13 @@ runs the three statements against a real Postgres (cron suspension and its child
 reactivation runs unchanged, API to BOT, standalone API jobs unchanged, rerun, and a no-op
 when there is no cron user). Rehearsed on a throwaway restore of the Railway development
 database; only the cron-user suspension run, the API runs and their children moved.
+
+## cdn1_credit_detail_null (6.34.1)
+
+Parent `rtg2_run_trigger_backfill`. Data only, hand-written (`SET lock_timeout = '5s'`, one
+`UPDATE`, no DDL): `billing_invoice.credit_detail` rows holding the JSON literal `null` become
+SQL NULL. It pairs with the model change `BillingInvoice.credit_detail = Column(JSON(none_as_null=True))`,
+so new invoices without referral credit are written as SQL NULL too. The only reader
+(`credit_detail or []`) treats both as empty, so it is safe at any point of a deploy. Idempotent;
+`downgrade()` is a documented no-op. `tests/test_credit_detail_null.py` pins the chain;
+`tests/pg/test_cdn1_pg.py` runs the statement on a real Postgres.

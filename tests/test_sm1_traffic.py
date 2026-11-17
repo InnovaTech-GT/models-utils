@@ -119,4 +119,4 @@ def test_partition_name():
 
 def test_revision_chain():
     m = load("versions/sm1_snmp_traffic_metrics.py", "sm1_snmp_traffic_metrics")
-    assert (m.revision, m.down_revision) == ("sm1_snmp_traffic_metrics", "rtg2_run_trigger_backfill")
+    assert (m.revision, m.down_revision) == ("sm1_snmp_traffic_metrics", "cdn1_credit_detail_null")

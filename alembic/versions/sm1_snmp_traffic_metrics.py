@@ -1,7 +1,7 @@
 """SNMP traffic metrics: per-subscriber rates from the PPPoE queues
 
 Revision ID: sm1_snmp_traffic_metrics
-Revises: rtg2_run_trigger_backfill
+Revises: cdn1_credit_detail_null
 Create Date: 2026-11-08
 
 Additive. client_service.pppoe_username (+ partial unique index per company,
@@ -24,7 +24,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "sm1_snmp_traffic_metrics"
-down_revision: str | Sequence[str] | None = "rtg2_run_trigger_backfill"
+down_revision: str | Sequence[str] | None = "cdn1_credit_detail_null"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
