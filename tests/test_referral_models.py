@@ -179,3 +179,18 @@ def test_no_orm_relationship_to_company():
         assert not model.__mapper__.relationships, model.__name__
     names = {r.mapper.class_.__name__ for r in Company.__mapper__.relationships}
     assert not names & {"Referral", "ReferralReward", "BillingCard", "CompanyIdentity"}
+
+
+def test_invoice_credit_detail_none_is_sql_null(db):
+    """An invoice without referral credit stores SQL NULL, not the JSON literal null."""
+    co = _company(db)
+    s = Subscription(company_id=co.id, tier_id=co.tier_id, current_period_start=now_gt(),
+                     current_period_end=now_gt() + timedelta(days=30))
+    db.add(s)
+    db.flush()
+    inv = BillingInvoice(invoice_number=f"U-{uuid.uuid4().hex[:8]}", invoice_date=now_gt(),
+                         due_date=now_gt(), subtotal=80000, total=80000, subscription_id=s.id,
+                         credit_detail=None)
+    db.add(inv)
+    db.flush()
+    assert db.query(BillingInvoice.credit_detail.is_(None)).filter(BillingInvoice.id == inv.id).scalar()
