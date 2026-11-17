@@ -21,9 +21,11 @@ from database_utils.utils import traffic_partitions as tp
 from database_utils.utils.timezone_utils import GUATEMALA_TZ
 
 
-def _service(db, company=CO_A, user=None):
+def _service(db, company=CO_A, user=None, status=None):
     cs = ClientService(id=uuid.uuid4(), company_id=company, client_id=uuid.uuid4(),
                        service_plan_id=uuid.uuid4(), pppoe_username=user)
+    if status is not None:
+        cs.status = status
     db.add(cs)
     db.flush()
     return cs
@@ -90,6 +92,23 @@ def test_partition_helpers_are_noops_off_postgres(db):
     assert tp.ensure_traffic_5m_partitions(bind, date(2026, 11, 8), 3) == []
     assert tp.list_traffic_5m_partitions(bind) == []
     assert tp.drop_traffic_5m_partitions_before(bind, date(2026, 11, 8)) == []
+
+
+def test_cancelled_service_frees_the_pppoe_username(db):
+    _service(db, user="reusado", status="CANCELLED")
+    _service(db, user="reusado")  # a new subscriber gets the old user
+    db.commit()
+    index = next(i for i in ClientService.__table__.indexes if i.name == "uq_client_service_pppoe")
+    assert "CANCELLED" in str(index.dialect_options["postgresql"]["where"])
+
+
+def test_guatemala_day():
+    from datetime import timezone
+    assert tp.guatemala_day(date(2026, 11, 8)) == date(2026, 11, 8)
+    # 02:00 UTC is 20:00 of the previous day in Guatemala, 23:00 UTC is 17:00 the same day.
+    assert tp.guatemala_day(datetime(2026, 11, 9, 2, tzinfo=timezone.utc)) == date(2026, 11, 8)
+    assert tp.guatemala_day(datetime(2026, 11, 8, 23)) == date(2026, 11, 8)  # naive = UTC
+    assert tp.guatemala_day(datetime(2026, 11, 8, 23, 30, tzinfo=GUATEMALA_TZ)) == date(2026, 11, 8)
 
 
 def test_partition_name():

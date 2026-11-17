@@ -6,8 +6,9 @@ Create Date: 2026-11-08
 
 Additive. client_service.pppoe_username (+ partial unique index per company,
 backfilled from an existing "pppoe_user" in connection_params or
-provisioning_params; on a duplicate inside a company only one service gets
-it, preferring a non-cancelled and then the newest one), company.traffic_settings,
+provisioning_params on services that are not CANCELLED; on a duplicate inside
+a company only the newest one gets it; the index skips CANCELLED services, so
+an ISP can hand an old PPPoE user to a new subscriber), company.traffic_settings,
 and the tables traffic_5m (RANGE-partitioned by bucket_start, one partition
 per Guatemala day, no DEFAULT partition), traffic_1h, traffic_1d and
 saturation_event. Partitions from yesterday to seven days ahead are created
@@ -43,12 +44,12 @@ WITH cand AS (
                  LIMIT 1)
            )), '') AS u
       FROM client_service cs
-     WHERE cs.pppoe_username IS NULL
+     WHERE cs.pppoe_username IS NULL AND cs.status <> 'CANCELLED'
 ), ranked AS (
     SELECT id, u,
            row_number() OVER (
                PARTITION BY company_id, u
-               ORDER BY (status = 'CANCELLED'), created_at DESC, id
+               ORDER BY created_at DESC, id
            ) AS rn
       FROM cand
      WHERE u IS NOT NULL AND length(u) <= 64 AND u !~ '[[:space:]<>]'
@@ -59,7 +60,8 @@ UPDATE client_service cs
  WHERE cs.id = r.id AND r.rn = 1
    AND NOT EXISTS (
        SELECT 1 FROM client_service o
-        WHERE o.company_id = cs.company_id AND o.pppoe_username = r.u)
+        WHERE o.company_id = cs.company_id AND o.pppoe_username = r.u
+          AND o.status <> 'CANCELLED')
 """
 
 _RATES = (
@@ -93,7 +95,8 @@ def upgrade() -> None:
     c.execute(text(_BACKFILL))
     c.execute(text(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_service_pppoe "
-        "ON client_service (company_id, pppoe_username) WHERE pppoe_username IS NOT NULL"
+        "ON client_service (company_id, pppoe_username) "
+        "WHERE pppoe_username IS NOT NULL AND status <> 'CANCELLED'"
     ))
 
     c.execute(text("ALTER TABLE company ADD COLUMN IF NOT EXISTS traffic_settings JSON"))

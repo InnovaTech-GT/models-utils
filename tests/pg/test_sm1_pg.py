@@ -5,7 +5,7 @@ one rolled-back transaction."""
 import json
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import sqlalchemy as sa
@@ -78,16 +78,21 @@ def test_backfill_from_both_param_shapes_and_duplicates(conn):
     a = _service(conn, co, cl, plan, conn_params={"pppoe_user": " ana "})
     b = _service(conn, co, cl, plan, prov=[{"key": "vlan", "value": "10"},
                                            {"key": "pppoe_user", "value": "beto"}])
-    # Duplicate "carla": the cancelled one loses even though it is newer.
+    # "carla": a CANCELLED service never gets the user, even when it is newer.
     keep = _service(conn, co, cl, plan, created="now() - interval '2 days'", conn_params={"pppoe_user": "carla"})
     lose = _service(conn, co, cl, plan, status="CANCELLED", conn_params={"pppoe_user": "carla"})
+    gone = _service(conn, co, cl, plan, status="CANCELLED", conn_params={"pppoe_user": "dora"})
+    # Live duplicate "eva": the newest wins.
+    old_eva = _service(conn, co, cl, plan, created="now() - interval '3 days'", conn_params={"pppoe_user": "eva"})
+    new_eva = _service(conn, co, cl, plan, conn_params={"pppoe_user": "eva"})
     bad = _service(conn, co, cl, plan, conn_params={"pppoe_user": "with space"})
     weird = _service(conn, co, cl, plan, conn_params=["not", "an", "object"])
     _x(conn, "UPDATE client_service SET pppoe_username = NULL WHERE company_id = :co", co=co)
     sm1 = load("versions/sm1_snmp_traffic_metrics.py", "sm1_snmp_traffic_metrics")
     _x(conn, sm1._BACKFILL)
     assert (_user(conn, a), _user(conn, b)) == ("ana", "beto")
-    assert (_user(conn, keep), _user(conn, lose)) == ("carla", None)
+    assert (_user(conn, keep), _user(conn, lose), _user(conn, gone)) == ("carla", None, None)
+    assert (_user(conn, old_eva), _user(conn, new_eva)) == (None, "eva")
     assert (_user(conn, bad), _user(conn, weird)) == (None, None)
 
 
@@ -99,6 +104,29 @@ def test_pppoe_username_unique_per_company(conn):
     with pytest.raises(sa.exc.IntegrityError):
         with conn.begin_nested():
             _service(conn, co, cl, plan, user="dup")
+
+
+def test_cancelled_service_does_not_hold_the_pppoe_username(conn):
+    # An ISP re-issues an old PPPoE user: the cancelled holder keeps it, the new one is allowed.
+    co, cl, plan = _company(conn)
+    old = _service(conn, co, cl, plan, status="CANCELLED", user="reuse")
+    new = _service(conn, co, cl, plan, user="reuse")
+    assert (_user(conn, old), _user(conn, new)) == ("reuse", "reuse")
+    # Re-activating the cancelled one while the user is live elsewhere is refused.
+    with pytest.raises(sa.exc.IntegrityError):
+        with conn.begin_nested():
+            _x(conn, "UPDATE client_service SET status = 'ACTIVE' WHERE id = :i", i=old)
+
+
+def test_ensure_takes_a_utc_datetime_and_restores_lock_timeout(conn):
+    far = _today() + timedelta(days=50)
+    # 02:00 UTC of `far` is 20:00 of the previous Guatemala day.
+    utc = datetime.combine(far, datetime.min.time()).replace(hour=2, tzinfo=timezone.utc)
+    _x(conn, "SET LOCAL lock_timeout = '0'")
+    assert tp.ensure_traffic_5m_partitions(conn, utc, 1) == [tp.partition_name(far - timedelta(days=1))]
+    assert _x(conn, "SHOW lock_timeout").scalar() == "0"
+    naive_evening = datetime.combine(far, datetime.min.time()).replace(hour=23)  # read as UTC: 17:00 local
+    assert tp.ensure_traffic_5m_partitions(conn, naive_evening, 1) == [tp.partition_name(far)]
 
 
 def test_rows_land_in_their_day_partition(conn):
