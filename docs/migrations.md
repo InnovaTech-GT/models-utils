@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (133 revisions, head: **`nm1_network_managed`**) — plus
+`alembic/versions/` (134 revisions, head: **`rtg2_run_trigger_backfill`**) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1543,3 +1543,27 @@ no-op. Re-pointed at compose from its provisional parent to the head of that
 moment (no merge revision). `tests/test_referral_models.py` (SQLite)
 and `tests/pg/test_rf1_pg.py` (the CHECK/UNIQUE/index names on the migrated
 schema, the delete rules, the refusals, the downgrade/upgrade pair) pin it.
+## rtg2_run_trigger_backfill (6.34.0)
+
+Run triggers backfill (doc 68 §3.4), parent `nm1_network_managed` (built on `rtg1_run_triggers`,
+re-chained at compose 2026-11-16). Held out of the release that carried `rtg1` (68-A3): an older
+process raises `LookupError` on a label it does not know, so it shipped only once production ran a
+worker and backend-erp that know the `rtg1` labels.
+
+Data only, hand-written (`SET lock_timeout = '5s'`, three `UPDATE`s, no DDL):
+
+1. `provisioning_run` rows created as `USER` for purpose `SUSPENSION` by the cron system user
+   (`CRON_EMAIL = system-cron@internal.erp`) become `AUTO_SUSPENSION`. Past admin `run-now`
+   suspensions and past payment reactivations cannot be told apart from other `USER` runs and
+   stay `USER`. Without a cron user in the database this statement matches nothing.
+2. Every `API` run becomes `BOT`.
+3. A `provisioning_job` takes its run's label when that is `AUTO_SUSPENSION` or `BOT`. Standalone
+   `API` jobs (`run_id` NULL, the connectivity sweeps) are left alone. `DeviceActionLog` is
+   append-only and untouched.
+
+Idempotent (a rerun finds nothing to move). `downgrade()` is a documented no-op: the backfill
+is one-way. `tests/test_run_triggers_backfill.py` pins the chain; `tests/pg/test_rtg2_pg.py`
+runs the three statements against a real Postgres (cron suspension and its child, admin and
+reactivation runs unchanged, API to BOT, standalone API jobs unchanged, rerun, and a no-op
+when there is no cron user). Rehearsed on a throwaway restore of the Railway development
+database; only the cron-user suspension run, the API runs and their children moved.
