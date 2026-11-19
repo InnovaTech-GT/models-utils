@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from logging.config import fileConfig
 from dotenv import load_dotenv
@@ -32,6 +33,16 @@ import database_utils.models.isp
 # --- 5. Target metadata ---
 target_metadata = database.Base.metadata
 
+# sm1: the daily partitions of traffic_5m (traffic_5m_YYYYMMDD) are created and
+# dropped at runtime by utils.traffic_partitions, not by revisions. Hide them
+# (and their indexes) from autogenerate, or it proposes dropping them.
+_TRAFFIC_PARTITION = re.compile(r"^traffic_5m_\d{8}$")
+
+
+def include_name(name, type_, parent_names):
+    table = name if type_ == "table" else (parent_names or {}).get("table_name")
+    return not (table and _TRAFFIC_PARTITION.match(table))
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -48,6 +59,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_name=include_name,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         transaction_per_migration=True,
@@ -74,6 +86,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_name=include_name,
             # Each revision commits in its own transaction (doc 16 §2.0, BLOCKER fix):
             # - a failed revision no longer rolls back previously applied ones
             #   (documented retry-from-Rn procedure becomes valid),
