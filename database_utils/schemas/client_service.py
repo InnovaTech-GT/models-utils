@@ -8,6 +8,8 @@ readable only via direct DB inspection or a future admin-only export).
 The ba1 adopted_* fields follow the same rule: Out-only, never on any
 Create/Update schema.
 """
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, Any, List, Literal
 from uuid import UUID
@@ -17,6 +19,22 @@ from database_utils.models.isp import ClientServiceStatus, PURPOSE_ACTIVATION, S
 from database_utils.models.crm import RecurrenceEnum, RecurringOrderStatus
 from .service_plan import ProvisioningParam, ServicePlanOut, _coerce_params
 from .playbook import normalize_purpose
+
+
+# sm1: RouterOS wraps the username in the queue name "<pppoe-USER>", so no
+# whitespace and no angle brackets.
+_PPPOE_USERNAME = re.compile(r"^[^\s<>]{1,64}$")
+
+
+def _clean_pppoe_username(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    if v == "":
+        return None
+    if not _PPPOE_USERNAME.match(v):
+        raise ValueError("pppoe_username: 1-64 characters, no spaces or < >")
+    return v
 
 
 class ClientServiceBase(BaseModel):
@@ -40,11 +58,18 @@ class ClientServiceBase(BaseModel):
     # this side (the declaration is authoritative).
     provisioning_params: Optional[List[ProvisioningParam]] = None
     notes: Optional[str] = None
+    # sm1: joins the router's "<pppoe-USER>" queue to this service.
+    pppoe_username: Optional[str] = None
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
     def _accept_legacy_param_dict(cls, v):
         return _coerce_params(v)
+
+    @field_validator("pppoe_username", mode="before")
+    @classmethod
+    def _pppoe_username(cls, v):
+        return _clean_pppoe_username(v)
 
 
 class ClientServiceCreate(ClientServiceBase):
@@ -67,11 +92,18 @@ class ClientServiceUpdate(BaseModel):
     connection_params: Optional[Dict[str, Any]] = None
     provisioning_params: Optional[List[ProvisioningParam]] = None
     notes: Optional[str] = None
+    # sm1: joins the router's "<pppoe-USER>" queue to this service.
+    pppoe_username: Optional[str] = None
 
     @field_validator("provisioning_params", mode="before")
     @classmethod
     def _accept_legacy_param_dict(cls, v):
         return _coerce_params(v)
+
+    @field_validator("pppoe_username", mode="before")
+    @classmethod
+    def _pppoe_username(cls, v):
+        return _clean_pppoe_username(v)
 
 
 class ClientServiceBillingUpdate(BaseModel):
