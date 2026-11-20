@@ -1,4 +1,4 @@
-"""sm1: pppoe_username (unique per company, schema validation), traffic tables,
+"""sm1: traffic tables,
 traffic settings and the partition helpers off PostgreSQL."""
 import uuid
 from datetime import date, datetime, timedelta
@@ -15,15 +15,14 @@ from database_utils.models import (
     SaturationEvent,
     Traffic5m,
 )
-from database_utils.schemas.client_service import ClientServiceUpdate
 from database_utils.schemas.company import CompanyUpdate, TrafficSettings
 from database_utils.utils import traffic_partitions as tp
 from database_utils.utils.timezone_utils import GUATEMALA_TZ
 
 
-def _service(db, company=CO_A, user=None, status=None):
+def _service(db, company=CO_A, status=None):
     cs = ClientService(id=uuid.uuid4(), company_id=company, client_id=uuid.uuid4(),
-                       service_plan_id=uuid.uuid4(), pppoe_username=user)
+                       service_plan_id=uuid.uuid4())
     if status is not None:
         cs.status = status
     db.add(cs)
@@ -31,31 +30,8 @@ def _service(db, company=CO_A, user=None, status=None):
     return cs
 
 
-def test_pppoe_username_unique_per_company(db):
-    _service(db, user="juan")
-    _service(db, company=CO_B, user="juan")  # another tenant may reuse it
-    _service(db)
-    _service(db)  # several services without a username are fine
-    db.commit()
-    db.add(ClientService(id=uuid.uuid4(), company_id=CO_A, client_id=uuid.uuid4(),
-                         service_plan_id=uuid.uuid4(), pppoe_username="juan"))
-    with pytest.raises(IntegrityError):
-        db.commit()
-
-
-@pytest.mark.parametrize("raw,clean", [(" juan ", "juan"), ("", None), (None, None), ("a.b-c_1@isp", "a.b-c_1@isp")])
-def test_pppoe_username_is_cleaned(raw, clean):
-    assert ClientServiceUpdate(pppoe_username=raw).pppoe_username == clean
-
-
-@pytest.mark.parametrize("bad", ["juan perez", "<juan>", "x" * 65])
-def test_pppoe_username_rejects_what_breaks_the_queue_name(bad):
-    with pytest.raises(ValidationError):
-        ClientServiceUpdate(pppoe_username=bad)
-
-
 def test_traffic_row_and_saturation_event(db):
-    cs = _service(db, user="juan")
+    cs = _service(db)
     start = datetime(2026, 11, 8, 10, 5, tzinfo=GUATEMALA_TZ)
     db.add(Traffic5m(client_service_id=cs.id, company_id=CO_A, bucket_start=start,
                      down_avg_bps=8_000_000, down_max_bps=9_500_000,
@@ -92,14 +68,6 @@ def test_partition_helpers_are_noops_off_postgres(db):
     assert tp.ensure_traffic_5m_partitions(bind, date(2026, 11, 8), 3) == []
     assert tp.list_traffic_5m_partitions(bind) == []
     assert tp.drop_traffic_5m_partitions_before(bind, date(2026, 11, 8)) == []
-
-
-def test_cancelled_service_frees_the_pppoe_username(db):
-    _service(db, user="reusado", status="CANCELLED")
-    _service(db, user="reusado")  # a new subscriber gets the old user
-    db.commit()
-    index = next(i for i in ClientService.__table__.indexes if i.name == "uq_client_service_pppoe")
-    assert "CANCELLED" in str(index.dialect_options["postgresql"]["where"])
 
 
 def test_guatemala_day():

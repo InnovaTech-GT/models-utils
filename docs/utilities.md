@@ -95,6 +95,8 @@ the planner likes. Path order is load-bearing, so it is re-imposed, not trusted.
 
 ### `provisioning_resolution.py`
 
+`service_variables(client_service)` (6.36.0, doc 74) builds the variables fixed for a service, `service.*`, `client.*` (with custom fields) and `service_plan.*` (with per-service parameters), and returns `(variables, missing_service_params)`. `resolve_provisioning` calls it before adding the path and device frames. The SNMP traffic match (`traffic_match.py`: `check_match_template` refuses any namespace other than those three with `TEMPLATE_*`, and `render_match_key` returns None when a variable is missing or empty) renders over the same dict, so a template that works in a playbook renders the same value there.
+
 `resolve_provisioning(db, client_service, purpose=PURPOSE_ACTIVATION, *, dry_run=False)` starts at
 the service's CPE and walks to the root (`dry_run` only matters for `CPE_SWAP`'s
 `old_cpe.*`, below):

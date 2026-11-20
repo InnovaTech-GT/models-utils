@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (136 revisions, head: **`sm1_snmp_traffic_metrics`**) — plus
+`alembic/versions/` (137 revisions, head: **`tm1_traffic_match`**, on `sm1_snmp_traffic_metrics`) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and

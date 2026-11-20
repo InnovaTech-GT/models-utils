@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
+### Added
+- **6.36.0** (2026-11-19, doc 74) - SNMP traffic matching by tenant template. `TrafficSettings` gains `source` (`mikrotik_queue` | `interface`) and `match_template` (playbook language over `client.*` / `service.*` / `service_plan.*`, checked by `utils/traffic_match.check_match_template`, `TEMPLATE_*` codes; `render_match_key` renders it). `provisioning_resolution.service_variables(client_service)` is the one builder of those variables (resolve_provisioning calls it). Revision `tm1_traffic_match` (parent `sm1_snmp_traffic_metrics`, additive): `inventory_item.traffic_last_poll` JSON. `ClientService.pppoe_username` and its schema fields are no longer mapped (column kept until `tm2_drop_pppoe_username`). Consumers: re-pin backend-erp, auth-erp and provisioning-worker. Test: `tests/test_tm1_traffic_match.py`.
+
 ### Fixed
 - **6.34.1** (2026-11-16) - `BillingInvoice.credit_detail` is `JSON(none_as_null=True)`: an invoice without referral credit now stores SQL NULL instead of the JSON literal `null`. Data-only revision `cdn1_credit_detail_null` (parent `rtg2_run_trigger_backfill`) moves existing `null` rows to SQL NULL (idempotent, no DDL; the only reader, `credit_detail or []`, treats both as empty, so it is safe at any point of a deploy). Tests: `tests/test_credit_detail_null.py`, `tests/pg/test_cdn1_pg.py`. Consumers: re-pin auth-erp (the writer) with backend-erp and provisioning-worker as usual. Test: `tests/test_referral_models.py::test_invoice_credit_detail_none_is_sql_null`.
 
