@@ -74,3 +74,8 @@ def test_pppoe_username_is_no_longer_mapped():
 def test_revision_chain():
     m = load("versions/tm1_traffic_match.py", "tm1_traffic_match")
     assert (m.revision, m.down_revision) == ("tm1_traffic_match", "sm1_snmp_traffic_metrics")
+
+
+def test_tm2_revision_chain():
+    m = load("versions/tm2_drop_pppoe_username.py", "tm2_drop_pppoe_username")
+    assert (m.revision, m.down_revision) == ("tm2_drop_pppoe_username", "tm1_traffic_match")
