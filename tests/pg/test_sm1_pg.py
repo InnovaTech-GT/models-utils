@@ -1,5 +1,5 @@
-"""sm1_snmp_traffic_metrics on a real Postgres: pppoe_username backfill and
-uniqueness, traffic_5m daily partitions (routing, missing partition, helpers,
+"""sm1_snmp_traffic_metrics on a real Postgres (pppoe_username is gone since
+tm2_drop_pppoe_username, see test_tm2_pg.py): traffic_5m daily partitions (routing, missing partition, helpers,
 drop), CHECKs, cascades, and an idempotent downgrade/upgrade. Each test runs in
 one rolled-back transaction."""
 import json
@@ -53,69 +53,20 @@ def _company(conn):
     return co, cl, plan
 
 
-def _service(conn, co, cl, plan, created="now()", status="ACTIVE", conn_params=None, prov=None, user=None):
+def _service(conn, co, cl, plan, created="now()", status="ACTIVE", conn_params=None, prov=None):
     svc = uuid.uuid4()
     _x(conn, "INSERT INTO client_service (id, created_at, updated_at, company_id, client_id, "
-             f"service_plan_id, status, connection_params, provisioning_params, pppoe_username) "
+             f"service_plan_id, status, connection_params, provisioning_params) "
              f"VALUES (:id, {created}, now(), :co, :cl, :pl, :st, "
-             "CAST(:cp AS json), CAST(:pp AS json), :u)",
+             "CAST(:cp AS json), CAST(:pp AS json))",
        id=svc, co=co, cl=cl, pl=plan, st=status,
        cp=json.dumps(conn_params) if conn_params is not None else None,
-       pp=json.dumps(prov) if prov is not None else None, u=user)
+       pp=json.dumps(prov) if prov is not None else None)
     return svc
 
 
 def _today():
     return datetime.now(GUATEMALA_TZ).date()
-
-
-def _user(conn, svc):
-    return _x(conn, "SELECT pppoe_username FROM client_service WHERE id = :i", i=svc).scalar()
-
-
-def test_backfill_from_both_param_shapes_and_duplicates(conn):
-    co, cl, plan = _company(conn)
-    a = _service(conn, co, cl, plan, conn_params={"pppoe_user": " ana "})
-    b = _service(conn, co, cl, plan, prov=[{"key": "vlan", "value": "10"},
-                                           {"key": "pppoe_user", "value": "beto"}])
-    # "carla": a CANCELLED service never gets the user, even when it is newer.
-    keep = _service(conn, co, cl, plan, created="now() - interval '2 days'", conn_params={"pppoe_user": "carla"})
-    lose = _service(conn, co, cl, plan, status="CANCELLED", conn_params={"pppoe_user": "carla"})
-    gone = _service(conn, co, cl, plan, status="CANCELLED", conn_params={"pppoe_user": "dora"})
-    # Live duplicate "eva": the newest wins.
-    old_eva = _service(conn, co, cl, plan, created="now() - interval '3 days'", conn_params={"pppoe_user": "eva"})
-    new_eva = _service(conn, co, cl, plan, conn_params={"pppoe_user": "eva"})
-    bad = _service(conn, co, cl, plan, conn_params={"pppoe_user": "with space"})
-    weird = _service(conn, co, cl, plan, conn_params=["not", "an", "object"])
-    _x(conn, "UPDATE client_service SET pppoe_username = NULL WHERE company_id = :co", co=co)
-    sm1 = load("versions/sm1_snmp_traffic_metrics.py", "sm1_snmp_traffic_metrics")
-    _x(conn, sm1._BACKFILL)
-    assert (_user(conn, a), _user(conn, b)) == ("ana", "beto")
-    assert (_user(conn, keep), _user(conn, lose), _user(conn, gone)) == ("carla", None, None)
-    assert (_user(conn, old_eva), _user(conn, new_eva)) == (None, "eva")
-    assert (_user(conn, bad), _user(conn, weird)) == (None, None)
-
-
-def test_pppoe_username_unique_per_company(conn):
-    co, cl, plan = _company(conn)
-    _service(conn, co, cl, plan, user="dup")
-    co2, cl2, plan2 = _company(conn)
-    _service(conn, co2, cl2, plan2, user="dup")  # another tenant: fine
-    with pytest.raises(sa.exc.IntegrityError):
-        with conn.begin_nested():
-            _service(conn, co, cl, plan, user="dup")
-
-
-def test_cancelled_service_does_not_hold_the_pppoe_username(conn):
-    # An ISP re-issues an old PPPoE user: the cancelled holder keeps it, the new one is allowed.
-    co, cl, plan = _company(conn)
-    old = _service(conn, co, cl, plan, status="CANCELLED", user="reuse")
-    new = _service(conn, co, cl, plan, user="reuse")
-    assert (_user(conn, old), _user(conn, new)) == ("reuse", "reuse")
-    # Re-activating the cancelled one while the user is live elsewhere is refused.
-    with pytest.raises(sa.exc.IntegrityError):
-        with conn.begin_nested():
-            _x(conn, "UPDATE client_service SET status = 'ACTIVE' WHERE id = :i", i=old)
 
 
 def test_ensure_takes_a_utc_datetime_and_restores_lock_timeout(conn):
@@ -131,7 +82,7 @@ def test_ensure_takes_a_utc_datetime_and_restores_lock_timeout(conn):
 
 def test_rows_land_in_their_day_partition(conn):
     co, cl, plan = _company(conn)
-    svc = _service(conn, co, cl, plan, user="p1")
+    svc = _service(conn, co, cl, plan)
     b = datetime.combine(_today(), datetime.min.time(), GUATEMALA_TZ) + timedelta(hours=10)
     _x(conn, INSERT_5M, s=svc, co=co, b=b, da=100, dm=200, n=5)
     part = _x(conn, "SELECT tableoid::regclass::text FROM traffic_5m WHERE client_service_id = :s", s=svc).scalar()
@@ -140,7 +91,7 @@ def test_rows_land_in_their_day_partition(conn):
 
 def test_missing_partition_fails_and_helper_creates_it(conn):
     co, cl, plan = _company(conn)
-    svc = _service(conn, co, cl, plan, user="p2")
+    svc = _service(conn, co, cl, plan)
     far = _today() + timedelta(days=40)
     b = datetime.combine(far, datetime.min.time(), GUATEMALA_TZ)
     with pytest.raises(sa.exc.IntegrityError):  # no partition, no DEFAULT
@@ -163,7 +114,7 @@ def test_drop_partitions_before(conn):
 
 def test_checks(conn):
     co, cl, plan = _company(conn)
-    svc = _service(conn, co, cl, plan, user="p3")
+    svc = _service(conn, co, cl, plan)
     b = datetime.combine(_today(), datetime.min.time(), GUATEMALA_TZ)
     for da, dm, n in ((5, 1, 5), (-1, 1, 5), (1, 2, 0), (1, 2, 6)):
         with pytest.raises(sa.exc.IntegrityError):
@@ -179,7 +130,7 @@ def test_checks(conn):
 
 def test_deleting_a_service_cascades(conn):
     co, cl, plan = _company(conn)
-    svc = _service(conn, co, cl, plan, user="p4")
+    svc = _service(conn, co, cl, plan)
     b = datetime.combine(_today(), datetime.min.time(), GUATEMALA_TZ)
     _x(conn, INSERT_5M, s=svc, co=co, b=b, da=1, dm=1, n=1)
     _x(conn, "INSERT INTO traffic_1d (client_service_id, company_id, day, down_avg_bps, down_max_bps, "
