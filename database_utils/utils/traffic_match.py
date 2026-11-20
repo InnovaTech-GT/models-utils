@@ -38,8 +38,14 @@ def check_match_template(template: str) -> None:
 def render_match_key(template: str, variables: Dict[str, Any]) -> Optional[str]:
     """The counter name this service answers to, or None when a variable is
     missing or empty (an empty client code must not match a bare prefix)."""
-    from database_utils.utils.playbook_template import render_string
+    from database_utils.utils.playbook_template import TOKEN_SHAPE, render_string
 
+    # Each token on its own first: "<pppoe-{{client.code}}>" with an empty
+    # code would otherwise render the bare "<pppoe->" and match a stranger.
+    for m in TOKEN_SHAPE.finditer(template):
+        part, problems = render_string(m.group(0), variables)
+        if problems or not part.strip():
+            return None
     rendered, problems = render_string(template, variables)
     if problems:
         return None

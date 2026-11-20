@@ -38,6 +38,7 @@ def test_bad_templates_are_refused(bad, code):
 def test_missing_or_empty_variable_matches_nothing():
     assert render_match_key(CSR, {}) is None
     assert render_match_key("{{client.code}}", {"client.code": "  "}) is None
+    assert render_match_key(CSR, {"client.code": ""}) is None
 
 
 def test_settings_carry_source_and_template():
