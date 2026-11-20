@@ -50,6 +50,8 @@ TRAFFIC_SETTINGS_DEFAULTS = {
     "retention_5m_days": 7,
     "retention_1h_days": 90,
     "retention_1d_days": 730,
+    "source": "mikrotik_queue",
+    "match_template": None,
 }
 
 
