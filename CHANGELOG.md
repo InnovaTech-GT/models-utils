@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 On `develop` (Railway development), head `wf2_conversational`; `ch1_client_chat` (6.25.0) is next.
 
+### Removed
+- **6.37.0** (2026-11-19, doc 74 §9) - Destructive revision `tm2_drop_pppoe_username` (parent `tm1_traffic_match`) drops `client_service.pppoe_username` and `uq_client_service_pppoe`, unmapped since 6.36.0. Ship only after every consumer (backend-erp, auth-erp, provisioning worker on Railway and the relay droplet) runs a 6.36.0+ pin. Downgrade re-adds the empty column and index. Tests: `tests/pg/test_tm2_pg.py`, `tests/test_tm1_traffic_match.py::test_tm2_revision_chain`.
+
 ### Added
 - **6.36.0** (2026-11-19, doc 74) - SNMP traffic matching by tenant template. `TrafficSettings` gains `source` (`mikrotik_queue` | `interface`) and `match_template` (playbook language over `client.*` / `service.*` / `service_plan.*`, checked by `utils/traffic_match.check_match_template`, `TEMPLATE_*` codes; `render_match_key` renders it). `provisioning_resolution.service_variables(client_service)` is the one builder of those variables (resolve_provisioning calls it). Revision `tm1_traffic_match` (parent `sm1_snmp_traffic_metrics`, additive): `inventory_item.traffic_last_poll` JSON. `ClientService.pppoe_username` and its schema fields are no longer mapped (column kept until `tm2_drop_pppoe_username`). Consumers: re-pin backend-erp, auth-erp and provisioning-worker. Test: `tests/test_tm1_traffic_match.py`.
 
