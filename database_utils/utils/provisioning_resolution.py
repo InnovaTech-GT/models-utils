@@ -719,6 +719,80 @@ def _refusals(db: Session, client_service: Any, purpose: str,
     return list(unique.values())
 
 
+def service_variables(client_service) -> "tuple[Dict[str, Any], List[Dict[str, Any]]]":
+    """The variables fixed for a service: service.*, client.* (built-ins and
+    the tenant's custom fields) and service_plan.* (including per-service plan
+    parameters). Returns (variables, missing_service_params).
+
+    One builder for every consumer: resolve_provisioning adds the network
+    path and device frames on top, and the SNMP traffic match (doc 74) renders
+    the tenant's match template over exactly these, so a template that works
+    in a playbook renders the same value there. Needs client_service.client
+    and .service_plan loaded (or loadable)."""
+    missing_service_params: List[Dict[str, Any]] = []
+    shared: Dict[str, Any] = {"service.id": str(client_service.id)}
+
+    # getattr, not attribute access: resolution runs against detached/partial
+    # ClientService objects too (the workflow engine, tests), and a missing
+    # relationship must degrade to "no client variables", never crash a job.
+    client = getattr(client_service, "client", None)
+    if client is not None:
+        shared["client.id"] = str(client.id)
+        shared["client.name"] = client.name or ""
+        # cc1: the short per-company client id (legacy "CO0648" or random).
+        shared["client.code"] = getattr(client, "code", None) or ""
+        shared["client.email"] = client.email or ""
+        shared["client.phone"] = client.phone or ""
+        shared["client.address"] = client.address or ""
+        # The tenant's own client attributes, exactly as a service plan's
+        # provisioning parameters work — a per-subscriber value an operator
+        # defines in the CRM and templates in a playbook.
+        for key, value in iter_client_custom_fields(client):
+            token = f"client.{key}"
+            # Built-in fields win: a custom field keyed `name` must not shadow
+            # the subscriber's actual name in a template that already reads it.
+            if token in shared:
+                continue
+            shared[token] = value
+
+    plan = getattr(client_service, "service_plan", None)
+    if plan is not None:
+        shared["service_plan.id"] = str(plan.id)
+        shared["service_plan.name"] = plan.name or ""
+        if plan.download_mbps is not None:
+            shared["service_plan.download_mbps"] = plan.download_mbps
+        if plan.upload_mbps is not None:
+            shared["service_plan.upload_mbps"] = plan.upload_mbps
+        # Tenant-authored rows land under the plan's own namespace instead of
+        # being flattened into the global one, so a plan parameter can never
+        # collide with (or shadow) a system variable.
+        #
+        # A `service`-scoped row is DECLARED by the plan but VALUED by this
+        # service, and still resolves under the plan's namespace: the playbook
+        # author writes {{service_plan.<key>}} either way and never has to edit
+        # a template when a parameter's scope changes.
+        service_values = _service_param_values(client_service)
+        for key, value, scope in iter_provisioning_params(plan.provisioning_params):
+            if scope == SCOPE_SERVICE:
+                value = service_values.get(key)
+                if _is_blank(value):
+                    # Recorded, not raised: whether this is fatal depends on
+                    # the playbook actually referencing it (checked below).
+                    missing_service_params.append({
+                        "code": "MISSING_SERVICE_PARAM",
+                        "key": key,
+                        "token": f"service_plan.{key}",
+                        "service_plan_name": plan.name,
+                        "detail": (
+                            f"'{key}' is declared per-service on plan "
+                            f"'{plan.name}' but this service has no value for it"
+                        ),
+                    })
+                    continue
+            shared[f"service_plan.{key}"] = value
+    return shared, missing_service_params
+
+
 def resolve_provisioning(
     db: Session,
     client_service: ClientService,
@@ -826,67 +900,7 @@ def resolve_provisioning(
     for n in steps:
         n.playbook_version = playbooks[n.playbook_id].version
 
-    missing_service_params: List[Dict[str, Any]] = []
-    shared: Dict[str, Any] = {"service.id": str(client_service.id)}
-
-    # getattr, not attribute access: resolution runs against detached/partial
-    # ClientService objects too (the workflow engine, tests), and a missing
-    # relationship must degrade to "no client variables", never crash a job.
-    client = getattr(client_service, "client", None)
-    if client is not None:
-        shared["client.id"] = str(client.id)
-        shared["client.name"] = client.name or ""
-        # cc1: the short per-company client id (legacy "CO0648" or random).
-        shared["client.code"] = getattr(client, "code", None) or ""
-        shared["client.email"] = client.email or ""
-        shared["client.phone"] = client.phone or ""
-        shared["client.address"] = client.address or ""
-        # The tenant's own client attributes, exactly as a service plan's
-        # provisioning parameters work — a per-subscriber value an operator
-        # defines in the CRM and templates in a playbook.
-        for key, value in iter_client_custom_fields(client):
-            token = f"client.{key}"
-            # Built-in fields win: a custom field keyed `name` must not shadow
-            # the subscriber's actual name in a template that already reads it.
-            if token in shared:
-                continue
-            shared[token] = value
-
-    plan = getattr(client_service, "service_plan", None)
-    if plan is not None:
-        shared["service_plan.id"] = str(plan.id)
-        shared["service_plan.name"] = plan.name or ""
-        if plan.download_mbps is not None:
-            shared["service_plan.download_mbps"] = plan.download_mbps
-        if plan.upload_mbps is not None:
-            shared["service_plan.upload_mbps"] = plan.upload_mbps
-        # Tenant-authored rows land under the plan's own namespace instead of
-        # being flattened into the global one, so a plan parameter can never
-        # collide with (or shadow) a system variable.
-        #
-        # A `service`-scoped row is DECLARED by the plan but VALUED by this
-        # service, and still resolves under the plan's namespace: the playbook
-        # author writes {{service_plan.<key>}} either way and never has to edit
-        # a template when a parameter's scope changes.
-        service_values = _service_param_values(client_service)
-        for key, value, scope in iter_provisioning_params(plan.provisioning_params):
-            if scope == SCOPE_SERVICE:
-                value = service_values.get(key)
-                if _is_blank(value):
-                    # Recorded, not raised: whether this is fatal depends on
-                    # the playbook actually referencing it (checked below).
-                    missing_service_params.append({
-                        "code": "MISSING_SERVICE_PARAM",
-                        "key": key,
-                        "token": f"service_plan.{key}",
-                        "service_plan_name": plan.name,
-                        "detail": (
-                            f"'{key}' is declared per-service on plan "
-                            f"'{plan.name}' but this service has no value for it"
-                        ),
-                    })
-                    continue
-            shared[f"service_plan.{key}"] = value
+    shared, missing_service_params = service_variables(client_service)
 
     # cpe.* — the leaf that triggered the run. Always path[0]; ordering is
     # leaf -> root by contract, not by luck.

@@ -89,6 +89,23 @@ class TrafficSettings(BaseModel):
     retention_5m_days: int = Field(7, ge=1, le=31)
     retention_1h_days: int = Field(90, ge=7, le=400)
     retention_1d_days: int = Field(730, ge=30, le=3650)
+    # tm1 (doc 74): what the poller reads on the tenant's routers, and how a
+    # counter name links to a service. The template is the playbook language
+    # over client.* / service.* / service_plan.* (utils/traffic_match.py),
+    # rendered per service and compared exactly with the counter name.
+    # None = nothing is stored.
+    source: Literal["mikrotik_queue", "interface"] = "mikrotik_queue"
+    match_template: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("match_template")
+    @classmethod
+    def _match_template(cls, v):
+        if v is None or not v.strip():
+            return None
+        from database_utils.utils.traffic_match import check_match_template
+        v = v.strip()
+        check_match_template(v)
+        return v
 
     @model_validator(mode="after")
     def _rollups_outlive_detail(self):
