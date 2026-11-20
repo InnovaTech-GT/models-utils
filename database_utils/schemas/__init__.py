@@ -48,3 +48,5 @@ RegeneratePeriodResponse.model_rebuild()
 from .whatsapp_bot import *
 # wf1: workflow engine v2 (doc 63-workflow-engine)
 from .workflow_v2 import *
+# dm1: custom SNMP device metrics (doc 75)
+from .device_metric import *

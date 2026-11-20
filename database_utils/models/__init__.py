@@ -314,3 +314,12 @@ from .traffic import (
     TRAFFIC_DIRECTIONS,
     TRAFFIC_SETTINGS_DEFAULTS,
 )
+from .device_metric import (
+    DeviceMetric,
+    DeviceMetric5m,
+    DeviceMetric1h,
+    DeviceMetric1d,
+    DEVICE_METRIC_KINDS,
+    DEVICE_METRIC_LIMIT_PER_COMPANY,
+    DEVICE_METRIC_MAX_INSTANCES,
+)
