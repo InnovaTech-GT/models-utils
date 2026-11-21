@@ -154,6 +154,25 @@ nodes *are* `InventoryItem`s so there is **one catalog** and one identity.
 models-utils never parses `spec`, `viz` or `default_time_range`. Adding a
 presentation setting or a spec feature needs no migration.
 
+### Custom SNMP device metrics (`models/device_metric.py`, dm1, 6.38.0, doc 75)
+
+- **DeviceMetric** (`device_metric`) — a tenant-defined numeric OID the snmp-poller reads every
+  minute on every device of `device_type_id` **or** on one `inventory_item_id` (exactly one:
+  `ck_device_metric_one_scope`, in the revision only). `kind` `GAUGE` (stored as read) or
+  `COUNTER` (per-second rate; a counter that goes down gives no value). `label_oid` names each
+  table row (ifName, MikroTik gauge name, hrStorageDescr; NULL = the OID suffix), `instances`
+  keeps only those rows (empty = all, max 64), `subtract_from_oid` stores `total - value`
+  ("free memory"), `scale` is applied last. `last_poll` is the per-device preview
+  `{item_id: {at, instances, sample, error}}` backend-erp writes on ingest. Unique name per
+  company; 50 definitions per company (`DEVICE_METRIC_LIMIT_PER_COMPANY`, enforced by
+  backend-erp).
+- **DeviceMetric5m / DeviceMetric1h / DeviceMetric1d** (`device_metric_5m`/`_1h`/`_1d`) — one
+  row per metric, device, `instance` (`''` = scalar) and bucket (`bucket_start`, or `day` for
+  1d): `value_avg`/`value_min`/`value_max` (double) and `samples`. Plain tables (no partitions,
+  unlike `traffic_5m`); the 5-minute rows come from the poller, the rollups from the daily job;
+  retention follows the tenant's `traffic_settings`. An OLT table keyed by ONU would store one
+  series per ONU through `instance` — no schema change needed.
+
 ## Connections to Other Components
 
 - **backend-erp**: primary consumer (ISP routers + the provisioning worker)
