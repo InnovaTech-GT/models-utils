@@ -42,6 +42,15 @@ matters when reading `__init__.py`:
   [`schemas/playbook.py`](#cycle-10-network-graph-doc-35--schema-changes) —
   purposes now key playbook *bindings*, not topologies.
 
+### Device metrics (6.38.0, revision `dm1_device_metrics`, doc 75)
+
+`schemas/device_metric.py`: `DeviceMetricCreate` (exactly one of `device_type_id` /
+`inventory_item_id`, else `SCOPE_REQUIRED: ...`), `DeviceMetricUpdate` (partial, `extra=forbid`:
+the scope cannot change), `DeviceMetricOut`. `normalize_oid` strips one leading dot and refuses
+anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID: ...`); it runs on
+`oid`, `label_oid` and `subtract_from_oid`. `instances` are trimmed, de-duplicated, at most 64 of
+128 chars; `scale` finite, non-zero, |scale| ≤ 1e9.
+
 ## Connections to Other Components
 
 - **auth-erp** and **backend-erp** import schemas directly from this package
