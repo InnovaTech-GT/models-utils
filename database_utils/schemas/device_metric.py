@@ -44,8 +44,13 @@ class _MetricFields(BaseModel):
 
     @field_validator("name", "unit")
     @classmethod
-    def _strip(cls, v):
-        return v.strip() if isinstance(v, str) else v
+    def _strip(cls, v, info):
+        if not isinstance(v, str):
+            return v
+        v = v.strip()
+        if info.field_name == "name" and not v:
+            raise ValueError("name cannot be blank")  # min_length runs before this strip
+        return v or None
 
     @field_validator("oid", "label_oid", "subtract_from_oid")
     @classmethod

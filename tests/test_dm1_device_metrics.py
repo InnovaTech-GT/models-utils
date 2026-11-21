@@ -32,6 +32,14 @@ def test_create_needs_exactly_one_scope(plant):
     assert m.instances == ["a", "b"] and m.kind == "GAUGE" and m.scale == 1.0
 
 
+def test_blank_name_is_refused_and_blank_unit_is_none(plant):
+    with pytest.raises(ValidationError, match="blank"):
+        DeviceMetricCreate(name="   ", oid="1.3.6.1.2.1.1.3.0", inventory_item_id=plant.core.id)
+    with pytest.raises(ValidationError, match="blank"):
+        DeviceMetricUpdate(name="  ")
+    assert DeviceMetricUpdate(unit="  ").unit is None
+
+
 def test_limits_and_partial_update():
     with pytest.raises(ValidationError):
         DeviceMetricUpdate(instances=[str(i) for i in range(65)])
