@@ -89,6 +89,30 @@ class TestFilters:
         for raw in ("AABBCCDDEEFF", "aa-bb-cc-dd-ee-ff", "aabb.ccdd.eeff"):
             assert r("{{x | mac:colon}}", {"x": raw})[0] == "AA:BB:CC:DD:EE:FF"
 
+    @pytest.mark.parametrize("raw,n,expected", [
+        ("aa:bb:cc:dd:ee:ff", "1", "AABBCCDDEF00"),
+        ("AABBCCDDEF00", "-1", "AABBCCDDEEFF"),
+        ("00-00-00-00-00-00", "255", "0000000000FF"),
+        ("aabb.ccdd.eeff", "0", "AABBCCDDEEFF"),
+    ])
+    def test_mac_add(self, raw, n, expected):
+        assert r("{{x | mac_add:%s}}" % n, {"x": raw}) == (expected, [])
+
+    def test_mac_add_chains_into_mac(self):
+        assert r("{{x | mac_add:1 | mac:colon}}", {"x": "aabbccddeeff"})[0] == "AA:BB:CC:DD:EF:00"
+
+    @pytest.mark.parametrize("raw,n,fragment", [
+        ("FF:FF:FF:FF:FF:FF", "1", "overflows"),
+        ("00:00:00:00:00:00", "-1", "overflows"),
+        ("ABC123", "1", "is not a MAC address"),
+        ("aabbccddeeff", "256", "between -255 and 255"),
+        ("aabbccddeeff", "x", "whole number"),
+    ])
+    def test_mac_add_errors_leave_the_token_literal(self, raw, n, fragment):
+        template = "{{x | mac_add:%s}}" % n
+        out, problems = r(template, {"x": raw})
+        assert out == template and any(fragment in p for p in problems), problems
+
     def test_pad_left_never_truncates(self):
         """Silently cutting an identifier is worse than an over-long one."""
         assert r("{{x | pad_left:2}}", {"x": "abcdef"})[0] == "abcdef"
@@ -352,7 +376,7 @@ class TestSharedFixture:
     by hash: editing one copy without the other fails CI in that repo."""
 
     FIXTURE = "tests/fixtures/playbook_filters.json"
-    SHA256 = "4438578fbaf534ce9f3ae41fb743f56c4dc2f3fa20d90330dda76aa50a05e4b8"
+    SHA256 = "ef47cdeeb27dfa27963a7a8b03c61c2a43f900088f2ee80fa96f890a5c3e4bdf"
 
     def test_fixture_hash_is_locked(self):
         import hashlib, pathlib
