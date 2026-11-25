@@ -119,6 +119,9 @@ class PlaybookVariable(BaseModel):
     # clean_input. The cap is SAFE_TEXT's 64 (a WPA2 passphrase is 8-63).
     min_length: Optional[int] = None
     max_length: Optional[int] = None
+    # Security audit #96: masked in job logs / run views whatever its name
+    # (playbook_template.declared_secret_names).
+    secret: bool = False
 
     @model_validator(mode="after")
     def _lengths(self):

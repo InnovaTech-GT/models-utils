@@ -510,9 +510,21 @@ def resolve_variables(
     return resolved, missing
 
 
-def mask_secrets(variables: Dict[str, Any]) -> Dict[str, Any]:
-    """Mask secret-looking variables before persisting to job logs."""
+def declared_secret_names(definition) -> frozenset:
+    """`input.<key>` for every playbook variable declared `secret: true`
+    (security audit #96). Tolerates any stored shape."""
+    variables = (definition or {}).get("variables") if isinstance(definition, dict) else None
+    return frozenset(
+        f"input.{v['key']}"
+        for v in variables or []
+        if isinstance(v, dict) and v.get("secret") is True and v.get("key")
+    )
+
+
+def mask_secrets(variables: Dict[str, Any], extra_secret_names: frozenset = frozenset()) -> Dict[str, Any]:
+    """Mask secret-looking variables (and `extra_secret_names`, e.g.
+    `declared_secret_names(playbook.definition)`) before persisting to job logs."""
     return {
-        k: ("***" if is_secret_name(k) else v)
+        k: ("***" if is_secret_name(k) or k in extra_secret_names else v)
         for k, v in variables.items()
     }

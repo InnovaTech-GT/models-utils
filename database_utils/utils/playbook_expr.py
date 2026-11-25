@@ -55,11 +55,20 @@ from pydantic import BaseModel
 # Moved here from backend-erp provisioning/renderer.py (doc 40 §3.3.3) so the
 # schemas can refuse secret-named path roles and computed keys with the same
 # rule the renderer uses to mask values. renderer.py re-exports both names.
-_SECRET_HINTS = ("password", "secret", "token", "key", "credential")
+# Security audit #96 (founder D6) widened the list. `pin` is left out (ping,
+# mapping) and bare `pass` is matched only as a whole word (wifi_pass, not
+# is_passive). An author can also mark any variable `secret: true`
+# (playbook_template.declared_secret_names).
+_SECRET_HINTS = ("password", "secret", "token", "key", "credential", "passw", "passphrase", "pwd",
+                 "psk", "wpa")
+_SECRET_WORDS = frozenset({"pass"})
 
 
 def is_secret_name(name: str) -> bool:
-    return any(hint in name.lower() for hint in _SECRET_HINTS)
+    lowered = name.lower()
+    if any(hint in lowered for hint in _SECRET_HINTS):
+        return True
+    return not _SECRET_WORDS.isdisjoint(re.split(r"[^a-z0-9]+", lowered))
 
 
 # --- limits -----------------------------------------------------------------
