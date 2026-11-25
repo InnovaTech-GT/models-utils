@@ -476,6 +476,7 @@ The replacement is two orthogonal columns on the tenant singleton
 | `proxy_kind` | `none` \| `socks5` | is there a hop in front of that address, and of what sort |
 | `proxy_address` | `host:port`, NULL | the SOCKS5 listener; **required** when `proxy_kind='socks5'` (`ck_provisioning_settings_proxy_address`) |
 | `edge_mgmt_cidr` | private IPv4 network, NULL | et1 (doc 67): the ONU management range an EDGE telnet host must fall in (e.g. `10.90.0.0/16`), validated strict + inside RFC 1918 (10/8, 172.16/12, 192.168/16; loopback, link-local, 0/8, CGNAT refused) by `ProvisioningSettingsUpdate`; `""` clears. **NULL = EDGE telnet off**: no driver option, validation or run changes |
+| `cpe_web_cidrs` | comma-separated CIDRs, NULL | ow1 (doc 77): every `onu_web` request host must be a literal IP inside one of them (`utils/cpe_web.host_in_any_cidr`). IPv4/IPv6, strict, normalized and deduplicated, at most 32, no loopback/link-local/multicast/0-net overlap (`ProvisioningSettingsUpdate`); `""` clears. **NULL = the driver refuses every host** (`TARGET_NOT_ALLOWED`). Separate from `edge_mgmt_cidr` |
 | `gateway_host` | String, NULL | the gateway's address on the path WE dial; **required** when `dial_target='gateway'` (`ck_provisioning_settings_gateway_host`). Deliberately `String`, not `INET`: a ZeroTier value is RFC1918 and a public one may be a DDNS hostname, so no routability assertion is possible or wanted. The per-device external port stays `inventory_item.nat_port` |
 
 Four combinations, five scenarios, no schema change needed for a sixth:
@@ -645,7 +646,12 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
   company default, `username` ignored; required by a playbook with
   `session.enable`, e.g. the CSR AN5516). `pe1` re-creates
   `ck_device_credential_kind` from its own copy of `_CREDENTIAL_KIND_CHECK`,
-  pinned byte-identical by `tests/test_pe1_playbook_phases.py`
+  pinned byte-identical by `tests/test_pe1_playbook_phases.py`; **CPE_WEB** (`ow1`,
+  doc 77 D4: an ONU web UI login; the onu_web driver tries every matching one,
+  item > type, then `device_credential.priority` ascending (0..1000, default 0),
+  never a company default). `ow1` re-creates the CHECK again; its copy is
+  pinned by `tests/test_ow1_onu_web.py`, and its downgrade refuses while a
+  CPE_WEB row exists
 - `PROVISIONING_PHASES`: PRECONDITIONS, CONFIGURATION, VERIFICATION, ROLLBACK
   (`ck_provisioning_run_phase` / `ck_provisioning_job_phase`, NULL allowed) ·
   `TEARDOWN_PURPOSES`: SUSPENSION, DEPROVISION (`pe1`, doc 42)

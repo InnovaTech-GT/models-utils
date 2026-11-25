@@ -211,6 +211,41 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
 `WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`,
 `EDGE_TELNET_NO_ENABLE`, and the run-warning code `WARN_STEP_NOT_UNDONE`.
 
+## 6.40.0: the `onu_web` driver, custom-purpose skips, `mac_add` (doc 77)
+
+**Driver.** `onu_web` drives a Realtek ONU's web UI from the worker (the
+fixed-IP -> PPPoE migration). It is in `PLAYBOOK_DRIVERS`, `NETWORK_DRIVERS`,
+`REQUEST_DRIVERS` (its `request` is rendered value by value), `EDITOR_DRIVERS`
+and `ALLOWED_BY_TIER["EDGE"]` only. It is **not** in `NO_UNDO_DRIVERS`: a
+migrate needs a rollback step (`restore_backup`, `undoes: migrate`). The step
+validator requires `request.action` in `ONU_WEB_ACTIONS` (`status`, `migrate`,
+`restore_backup`) and a non-empty `request.hosts` list; the rest of the request
+shape belongs to the worker driver. Every host must fall in
+`provisioning_settings.cpe_web_cidrs` (`utils/cpe_web.host_in_any_cidr`).
+
+New codes, all deterministic (never retried): `FIRMWARE_UNSUPPORTED`,
+`RESTORE_REJECTED`, `BACKUP_NOT_FOUND`, `TARGET_NOT_ALLOWED`, `NOT_ELIGIBLE`.
+
+**Custom purposes skip unbound devices** (`resolve_provisioning`, D7). For a
+purpose outside `CANONICAL_PLAYBOOK_PURPOSES` (e.g. `PPPOE_PREP`), a device with
+no binding is skipped and `PLAYBOOK_NOT_BOUND` is never fatal. A path with no
+bound device at all is refused: `RESOLUTION_FAILED` with `errors[0].code =
+NO_PLAYBOOKS_BOUND`, followed by the `PLAYBOOK_NOT_BOUND` entries. Canonical
+purposes are unchanged (ACTIVATION always fatal, the others by the
+device-variable rule; a device-free canonical plan may still be empty).
+
+**`mac_add:N`** (`playbook_template.FILTERS`, D12): MAC + N, N in -255..255.
+The input may use any separator but must hold exactly 12 hex digits; the
+output is bare upper-case hex, the `mac:bare` shape, so chain
+`{{cpe.mac | mac_add:1 | mac:colon}}` for a separated form. Leaving the 48-bit
+range (`FF:FF:FF:FF:FF:FF | mac_add:1`) is a `TemplateError`, never a wrap.
+The shared fixture `tests/fixtures/playbook_filters.json` carries the cases;
+its hash changed, so frontend-erp's copy and SHA must follow.
+
+**GenieACS.** `genieacs_nbi.find_device_id` queries the given serial and its
+stripped upper-case form (D11), so a lower-case inventory serial finds an ONU
+that informs upper-case.
+
 ## Tests
 
 | File | Covers |
@@ -221,6 +256,8 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
 | `tests/test_playbook_schema_v2.py` (inputs) | 6.25.2: `min_length`/`max_length` refusals, the WIFI_PASSWORD variable keeps both through `model_dump`, `ProvisioningJobOut.variables` masked |
 | `tests/test_redaction.py` | `redact_secrets`. The executor-integration and `secret_safe_audit` cases stay in backend-erp |
 | `tests/test_playbook_drivers.py` | The tier matrix, `ping_probe`, `driver_options`, `mismatches` (incl. the EDGE telnet gate). The 422 wrapper cases stay in backend-erp |
+| `tests/test_ow1_onu_web.py` | 6.40.0: the ow1 chain and CHECK copies, the new columns/table/FKs/index, `priority` and `cpe_web_cidrs` schemas, `host_in_any_cidr` |
+| `tests/test_genieacs_nbi.py` | `find_device_id`: tenant tag, both serial cases |
 | `tests/test_edge_telnet.py` | `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity`, `edge_telnet_ready`, `edge_telnet_step_problem` |
 | `tests/test_connectivity.py` | A gate failure raises `ProvisioningGateError` with `errors[0]` equal to the old 409 body and creates no job; device-dial vs gateway-dial playbook selection; get-or-create reuse |
 | `tests/test_finish_job.py` | Follow-on order (… `advance_run`, then the event); a failing follow-on is rolled back alone (the outcome and the later follow-ons survive); `stamp_connectivity` never touches `status` |
