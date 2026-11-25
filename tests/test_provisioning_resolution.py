@@ -114,6 +114,37 @@ def test_a_playbook_owned_by_another_company_is_refused(db, plant):
     assert exc.value.code == "PLAYBOOK_INACTIVE"
 
 
+# --------------------------------------- custom purposes (doc 77 D7)
+
+def test_a_custom_purpose_skips_an_unbound_cpe_type(db, plant):
+    """PPPOE_PREP bound on the OLT and router only: the ONU (HG260) is skipped,
+    even though the bound playbooks read device variables."""
+    for key in ("OLT", "ROUTER"):
+        plant.bind_type(plant.types[key], "PPPOE_PREP", plant._playbook(f"{key}-prep"))
+    res = resolve_provisioning(db, plant.service, "PPPOE_PREP")
+    assert [n.category_key for n in res.steps] == ["OLT", "ROUTER"]
+
+
+def test_a_custom_purpose_with_nothing_bound_is_refused(db, plant):
+    with pytest.raises(ResolutionError) as exc:
+        resolve_provisioning(db, plant.service, "PPPOE_PREP")
+    assert exc.value.code == "RESOLUTION_FAILED"
+    assert exc.value.errors[0]["code"] == "NO_PLAYBOOKS_BOUND"
+    assert {e["code"] for e in exc.value.errors[1:]} == {"PLAYBOOK_NOT_BOUND"}
+
+
+def test_canonical_purposes_keep_the_device_variable_rule(db, plant):
+    """Unchanged: a device-reading SUSPENSION with an unbound OLT is fatal, and
+    a device-free one with every node unbound resolves to an empty plan."""
+    plant.unbind_type(plant.types["OLT"], "SUSPENSION")
+    with pytest.raises(ResolutionError) as exc:
+        resolve_provisioning(db, plant.service, "SUSPENSION")
+    assert exc.value.errors[0]["code"] == "PLAYBOOK_NOT_BOUND"
+    for key in ("ROUTER", "ONU"):
+        plant.unbind_type(plant.types[key], "SUSPENSION")
+    assert resolve_provisioning(db, plant.service, "SUSPENSION").steps == []
+
+
 # ------------------------------------------------------------- preconditions
 
 def test_unset_cpe_is_reported(db, plant):

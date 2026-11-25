@@ -75,6 +75,18 @@ class Codes:
     EDGE_TELNET_REQUIRES_WARN = "EDGE_TELNET_REQUIRES_WARN"
     # session.enable / config_mode on EDGE telnet: never send an enable secret to an ONU.
     EDGE_TELNET_NO_ENABLE = "EDGE_TELNET_NO_ENABLE"
+    # --- onu_web (doc 77, ONU web UI + fixed-IP -> PPPoE migration) ---
+    # All deterministic (never retried): a re-try sees the same ONU/settings.
+    # The ONU's active firmware matches no built-in profile; migrate refuses.
+    FIRMWARE_UNSUPPORTED = "FIRMWARE_UNSUPPORTED"
+    # The ONU answered the config restore with an error (not a disconnect).
+    RESTORE_REJECTED = "RESTORE_REJECTED"
+    # restore_backup found no sealed onu_config_backup for the run or the item.
+    BACKUP_NOT_FOUND = "BACKUP_NOT_FOUND"
+    # A request host is outside provisioning_settings.cpe_web_cidrs (or it is NULL).
+    TARGET_NOT_ALLOWED = "TARGET_NOT_ALLOWED"
+    # The backup's WAN layout is not the single fixed-IP row migrate expects.
+    NOT_ELIGIBLE = "NOT_ELIGIBLE"
     # Run-warning code only: a best-effort step applied in a run that rolled back.
     WARN_STEP_NOT_UNDONE = "WARN_STEP_NOT_UNDONE"
 
