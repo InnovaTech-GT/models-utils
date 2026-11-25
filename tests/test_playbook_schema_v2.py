@@ -658,3 +658,27 @@ def test_job_out_masks_secret_variables():
         "attempts": 0, "max_attempts": 3, "triggered_by": "USER", "created_at": datetime.now(),
         "variables": {"input.wifi_password": "Prueba2026!", "input.vlan": 10}})
     assert job.variables == {"input.wifi_password": "***", "input.vlan": 10}
+
+
+# --- onu_web (doc 77): request.action and request.hosts are required ---
+
+@pytest.mark.parametrize("request_", [
+    None,
+    {"hosts": ["10.0.0.1"]},
+    {"action": "factory_reset", "hosts": ["10.0.0.1"]},
+    {"action": "status"},
+    {"action": "status", "hosts": []},
+    {"action": "status", "hosts": "10.0.0.1"},
+])
+def test_onu_web_step_needs_an_action_and_hosts(request_):
+    step = {"name": "w", "driver": "onu_web", "template": "x"}
+    if request_ is not None:
+        step["request"] = request_
+    _err({"configuration": [step]}, "onu_web")
+
+
+@pytest.mark.parametrize("action", ["status", "migrate", "restore_backup"])
+def test_onu_web_step_accepts_each_action(action):
+    d = PlaybookDefinition.model_validate({"configuration": [
+        {"name": "w", "driver": "onu_web", "request": {"action": action, "hosts": ["10.0.0.1"]}}]})
+    assert d.configuration[0].request["action"] == action
