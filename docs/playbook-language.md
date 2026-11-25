@@ -211,6 +211,18 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
 `WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`,
 `EDGE_TELNET_NO_ENABLE`, and the run-warning code `WARN_STEP_NOT_UNDONE`.
 
+## 6.39.0: security audit hardening (#22, #95, #96)
+
+- **No control characters in substituted values (#22).** `render_string`
+  leaves a token unrendered and adds the problem
+  `"{{ <token> }} — CONTROL_CHARACTER: value contains a line break or control character"`
+  when the value it would substitute (after filters and `default`) contains any
+  of `\x00-\x08`, `\x0a-\x1f` or `\x7f` (`CONTROL_CHARS`). Tab is allowed, and
+  newlines written in the template itself (multi-line command blocks) are
+  untouched. Every caller already treats non-empty `problems` as fatal, so the
+  job fails before dispatch. This covers every namespace at once (`cpe.*`,
+  `client.*`, `input.*`, ...) and HTTP payloads too (founder D3: one rule).
+
 ## Tests
 
 | File | Covers |

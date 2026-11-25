@@ -342,6 +342,10 @@ def find_template_errors(text: str) -> List[str]:
     return list(dict.fromkeys(problems))
 
 
+# Every C0 control character except tab, plus DEL.
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
 def render_string(template: str, variables: Dict[str, Any]) -> Tuple[str, List[str]]:
     """Substitute {{…}} constructs. Returns (rendered, problems).
 
@@ -385,6 +389,15 @@ def render_string(template: str, variables: Dict[str, Any]) -> Tuple[str, List[s
 
         if value is None:
             problems.append(expr.name)
+            return match.group(0)
+        if CONTROL_CHARS.search(value):
+            # Security audit #22: a substituted value must never add a line
+            # (a second command on a CLI session). Tab is allowed; the
+            # template's own newlines are untouched.
+            problems.append(
+                f"{match.group(0)} — CONTROL_CHARACTER: value contains a line break "
+                f"or control character"
+            )
             return match.group(0)
         return value
 
