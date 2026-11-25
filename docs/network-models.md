@@ -652,7 +652,8 @@ strings so adding a value is a plain transactional `ALTER` of the CHECK, never t
   item > type, then `device_credential.priority` ascending (0..1000, default 0),
   never a company default). `ow1` re-creates the CHECK again; its copy is
   pinned by `tests/test_ow1_onu_web.py`, and its downgrade refuses while a
-  CPE_WEB row exists
+  CPE_WEB row exists (proven on Postgres by `tests/pg/test_ow1_pg.py`, with the
+  priority backfill and `onu_config_backup`'s CASCADE / SET NULL FKs)
 - `PROVISIONING_PHASES`: PRECONDITIONS, CONFIGURATION, VERIFICATION, ROLLBACK
   (`ck_provisioning_run_phase` / `ck_provisioning_job_phase`, NULL allowed) ·
   `TEARDOWN_PURPOSES`: SUSPENSION, DEPROVISION (`pe1`, doc 42)

@@ -257,7 +257,8 @@ inventory serial still misses.
 | `tests/test_playbook_schema_v2.py` (inputs) | 6.25.2: `min_length`/`max_length` refusals, the WIFI_PASSWORD variable keeps both through `model_dump`, `ProvisioningJobOut.variables` masked |
 | `tests/test_redaction.py` | `redact_secrets`. The executor-integration and `secret_safe_audit` cases stay in backend-erp |
 | `tests/test_playbook_drivers.py` | The tier matrix, `ping_probe`, `driver_options`, `mismatches` (incl. the EDGE telnet gate). The 422 wrapper cases stay in backend-erp |
-| `tests/test_ow1_onu_web.py` | 6.40.0: the ow1 chain and CHECK copies, the new columns/table/FKs/index, `priority` and `cpe_web_cidrs` schemas, `host_in_any_cidr` |
+| `tests/test_ow1_onu_web.py` | 6.40.0: the ow1 chain and CHECK copies, the new columns/table/FKs/index, `priority` and `cpe_web_cidrs` schemas, the CPE_WEB binding rule, `host_in_any_cidr` |
+| `tests/pg/test_ow1_pg.py` | 6.40.0 on Postgres: CPE_WEB accepted, `priority` backfills 0, downgrade refuses while a CPE_WEB row exists then round-trips, `onu_config_backup` FKs (run/job/credential SET NULL, item CASCADE) |
 | `tests/test_genieacs_nbi.py` | `find_device_id`: tenant tag, stripped/upper/lower serial forms |
 | `tests/test_edge_telnet.py` | `host_in_cidr`, `oui_of`, `identity_matches`, `extract_identity`, `edge_telnet_ready`, `edge_telnet_step_problem` |
 | `tests/test_connectivity.py` | A gate failure raises `ProvisioningGateError` with `errors[0]` equal to the old 409 body and creates no job; device-dial vs gateway-dial playbook selection; get-or-create reuse |
