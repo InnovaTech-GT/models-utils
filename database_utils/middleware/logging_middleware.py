@@ -12,7 +12,7 @@ This middleware automatically:
 import time
 import uuid
 import logging
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,6 +30,27 @@ from database_utils.utils.telemetry_utils import set_request_span_attributes
 # Accepted X-Uplink-Client values (doc 68 §3.4). Telemetry, not security: the
 # marker only lets create_run record MCP instead of USER; JWT + RBAC decide.
 CLIENT_MARKERS = frozenset({"mcp"})
+
+
+# Security audit #43: auth-erp's password_reset / invitations /
+# email_confirmation links carry a single-use token as the segment after
+# /validate/, and some flows pass one in the query string.
+_REDACTED = "***"
+_SECRET_QUERY_KEYS = frozenset({"token", "code", "signature", "key", "password"})
+
+
+def redact_path(path: str) -> str:
+    """Replace the segment after every `/validate/` with `***`."""
+    parts = (path or "").split("/")
+    for i in range(len(parts) - 1):
+        if parts[i] == "validate" and parts[i + 1]:
+            parts[i + 1] = _REDACTED
+    return "/".join(parts)
+
+
+def redact_query(params: Mapping[str, str]) -> dict:
+    """Mask the values of token-like query keys (case-insensitive)."""
+    return {k: (_REDACTED if k.lower() in _SECRET_QUERY_KEYS else v) for k, v in params.items()}
 
 
 def client_marker(value: Optional[str]) -> Optional[str]:
@@ -120,12 +141,15 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         client_host = request.client.host if request.client else "unknown"
         client_port = request.client.port if request.client else 0
 
+        # Never log a raw path or query: they can carry single-use tokens.
+        safe_path = redact_path(request.url.path)
+
         # Log incoming request
         log_data = {
             'event': 'request_started',
             'method': request.method,
-            'path': request.url.path,
-            'query_params': dict(request.query_params),
+            'path': safe_path,
+            'query_params': redact_query(request.query_params),
             'client_ip': client_host,
             'client_port': client_port,
             'user_agent': request.headers.get('user-agent'),
@@ -166,7 +190,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 f"Request failed: {str(e)}",
                 event='request_failed',
                 method=request.method,
-                path=request.url.path,
+                path=safe_path,
                 duration_ms=duration_ms,
                 error_type=type(e).__name__,
                 error_message=str(e),
@@ -183,7 +207,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 response_log_data = {
                     'event': 'request_completed',
                     'method': request.method,
-                    'path': request.url.path,
+                    'path': safe_path,
                     'status_code': response.status_code,
                     'duration_ms': round(duration_ms, 2),
                 }
@@ -201,7 +225,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 log_with_context(
                     self.logger,
                     log_level,
-                    f"Request completed: {request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f}ms)",
+                    f"Request completed: {request.method} {safe_path} - {response.status_code} ({duration_ms:.2f}ms)",
                     **response_log_data
                 )
 
