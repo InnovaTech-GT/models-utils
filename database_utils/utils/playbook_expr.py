@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from pydantic import BaseModel
@@ -62,10 +64,29 @@ from pydantic import BaseModel
 _SECRET_HINTS = ("password", "secret", "token", "key", "credential", "passw", "passphrase", "pwd",
                  "psk", "wpa")
 _SECRET_WORDS = frozenset({"pass"})
+# The pre-6.39 list. Reading a STORED playbook (PlaybookOut) judges its keys by
+# this one, so a row saved before #96 (capture key `wpa_mode`, computed key
+# `pass_count`) still lists/gets instead of 500ing; saves and masking use the
+# wide list.
+_LEGACY_SECRET_HINTS = ("password", "secret", "token", "key", "credential")
+_legacy_hints: ContextVar[bool] = ContextVar("legacy_secret_hints", default=False)
+
+
+@contextmanager
+def legacy_secret_names():
+    """Within this block `is_secret_name` uses the pre-6.39 hints. Only for
+    re-validating stored definitions on read; never for masking or saving."""
+    reset = _legacy_hints.set(True)
+    try:
+        yield
+    finally:
+        _legacy_hints.reset(reset)
 
 
 def is_secret_name(name: str) -> bool:
     lowered = name.lower()
+    if _legacy_hints.get():
+        return any(hint in lowered for hint in _LEGACY_SECRET_HINTS)
     if any(hint in lowered for hint in _SECRET_HINTS):
         return True
     return not _SECRET_WORDS.isdisjoint(re.split(r"[^a-z0-9]+", lowered))

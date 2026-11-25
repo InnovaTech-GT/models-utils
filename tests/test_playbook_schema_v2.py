@@ -658,3 +658,40 @@ def test_job_out_masks_secret_variables():
         "attempts": 0, "max_attempts": 3, "triggered_by": "USER", "created_at": datetime.now(),
         "variables": {"input.wifi_password": "Prueba2026!", "input.vlan": 10}})
     assert job.variables == {"input.wifi_password": "***", "input.vlan": 10}
+
+
+# ------------------------------- security audit #96 review: stored rows + declared secrets
+
+def _out(definition):
+    return PlaybookOut.model_validate({
+        "id": uuid4(), "company_id": uuid4(), "version": 1, "created_at": datetime.now(),
+        "name": "p", "definition": definition, "is_active": True})
+
+
+@pytest.mark.parametrize("key", ["wpa_mode", "psk_len", "ppp_pwd_set", "pass_count"])
+def test_stored_playbook_with_newly_secret_named_keys_stays_readable(key):
+    cap = _v2(configuration=[_step("cfg", capture=[{"key": key, "regex": "(a)"}])])
+    comp = _v2(computed=[{"key": key, "expr": "1 + 1"}])
+    for definition in (cap, comp):
+        _out(definition)                      # old rows still read
+        with pytest.raises(ValidationError):  # new saves are refused
+            PlaybookDefinition.model_validate(definition)
+
+
+def test_out_does_not_relax_the_pre_6_39_hints():
+    with pytest.raises(ValidationError):
+        _out(_v2(configuration=[_step("cfg", capture=[{"key": "api_token", "regex": "(a)"}])]))
+
+
+_CLAVE = {"key": "clave", "type": "TEXT", "secret": True}
+
+
+def test_filter_on_declared_secret_is_refused():
+    _err(_v2(variables=[_CLAVE], configuration=[_step("cfg", template="x {{ input.clave | upper }}")]),
+         "SECRET_FILTER")
+    PlaybookDefinition.model_validate(
+        _v2(variables=[_CLAVE], configuration=[_step("cfg", template="x {{ input.clave }}")]))
+    # an undeclared variable of the same name may still be filtered
+    PlaybookDefinition.model_validate(
+        _v2(configuration=[_step("cfg", template="x {{ input.clave | upper }}")]))
+

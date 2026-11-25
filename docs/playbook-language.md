@@ -238,6 +238,15 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
   `declared_secret_names(playbook.definition)`; until they do, only the
   widened heuristic applies. No existing test template applies a filter to a
   newly secret-named variable.
+  `PlaybookDefinition` refuses a filter on a `secret: true` variable with
+  `SECRET_FILTER: ...` (the same rule `parse_body` applies to secret-NAMED ones;
+  `computed` cannot read `input.*` at all). Stored rows: `PlaybookOut`
+  re-validates its definition inside `playbook_expr.legacy_secret_names()`,
+  which judges keys by the pre-6.39 hints, so a playbook saved with a capture
+  or computed key such as `wpa_mode` / `pass_count` still lists and reads; the
+  next save must rename it. Rendering and masking always use the wide list, so
+  a stored `{{ input.wpa_mode | upper }}` fails at render (fail closed) — count
+  those on a prod dump before release.
 
 ## Tests
 

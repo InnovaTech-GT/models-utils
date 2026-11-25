@@ -78,7 +78,7 @@ from database_utils.models.isp import (
     ProvisioningTrigger,
 )
 from database_utils.utils import playbook_expr
-from database_utils.utils.playbook_expr import is_secret_name
+from database_utils.utils.playbook_expr import is_secret_name, legacy_secret_names
 
 
 def normalize_purpose(v: str) -> str:
@@ -1011,7 +1011,32 @@ class PlaybookDefinition(BaseModel):
         self._validate_placement(phases)
         self._validate_captures_and_secrets(phases)
         self._validate_computed()
+        self._validate_declared_secrets(phases)
         return self
+
+    def _validate_declared_secrets(self, phases) -> None:
+        """A variable declared `secret: true` gets the same filter refusal as a
+        secret-NAMED one (playbook_template.parse_body): a transformed copy
+        cannot be masked in the job log. Computed entries cannot read input.*
+        at all (COMPUTE_NAME), so filters are the only gap."""
+        from database_utils.utils.playbook_template import TemplateError, parse_body
+
+        declared = {f"input.{v.key}" for v in self.variables if v.secret}
+        if not declared:
+            return
+        dumped = [s.model_dump() for _, steps in phases for s in steps]
+        dumped += [o.model_dump() for o in self.outputs]
+        for text in playbook_expr.strings(dumped):
+            for match in playbook_expr.TOKEN_SHAPE.finditer(text):
+                try:
+                    expr = parse_body(match.group("body"))
+                except TemplateError:
+                    continue
+                if expr.name in declared and expr.filters:
+                    raise ValueError(
+                        f"SECRET_FILTER: filters are not allowed on secret variable "
+                        f"'{expr.name}' (a transformed secret cannot be scrubbed from "
+                        "the job log)")
 
     def _validate_placement(self, phases) -> None:
         config_names = {s.name for s in self.configuration}
@@ -1230,6 +1255,14 @@ class PlaybookUpdate(BaseModel):
 
 class PlaybookOut(PlaybookBase):
     definition: PlaybookDefinitionOut
+
+    @field_validator("definition", mode="wrap")
+    @classmethod
+    def _read_stored_definition(cls, v, handler):
+        # Security audit #96 widened the secret-name hints; a row saved before
+        # that must still read (see playbook_expr.legacy_secret_names).
+        with legacy_secret_names():
+            return handler(v)
     id: UUID
     company_id: UUID
     version: int
