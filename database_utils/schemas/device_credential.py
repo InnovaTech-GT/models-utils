@@ -13,7 +13,7 @@ insert, and `Out` NEVER carries the ciphertext/dek/plaintext — only
 pointed at, so a credential with both FKs NULL IS the company default); the
 router verifies each binding is same-company.
 """
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
@@ -35,6 +35,8 @@ class DeviceCredentialBase(BaseModel):
     # inventory_item > device_type > unbound (both NULL = the company default).
     inventory_item_id: Optional[UUID] = None
     device_type_id: Optional[UUID] = None
+    # ow1 (doc 77 D4): try order among matching credentials (lower first).
+    priority: int = Field(0, ge=0, le=1000)
 
     @field_validator("kind")
     @classmethod
@@ -54,6 +56,8 @@ class DeviceCredentialUpdate(BaseModel):
     username: Optional[str] = None
     inventory_item_id: Optional[UUID] = None
     device_type_id: Optional[UUID] = None
+    # Omitted = keep; an explicit null is refused (NOT NULL column).
+    priority: Optional[int] = Field(None, ge=0, le=1000)
     # None = keep the existing secret; a value rotates it (router re-encrypts
     # and stamps last_rotated_at).
     secret: Optional[str] = None
@@ -64,6 +68,14 @@ class DeviceCredentialUpdate(BaseModel):
         if v is None:
             return v
         return _validate_kind(v)
+
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: Optional[int]) -> int:
+        if v is None:
+            raise ValueError("priority cannot be null")
+        return v
 
 
 class CredentialRotateRequest(BaseModel):

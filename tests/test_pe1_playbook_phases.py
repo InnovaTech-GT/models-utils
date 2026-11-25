@@ -26,8 +26,12 @@ def test_cli_enable_is_a_credential_kind():
 
 
 def test_credential_check_literal_matches_the_migration():
+    """pe1's CHECK is the one ow1 (doc 77) replaces; ow1 now matches the model
+    (tests/test_ow1_onu_web.py)."""
     pe1 = _load_pe1()
-    assert pe1._CREDENTIAL_KIND_CHECK == isp._CREDENTIAL_KIND_CHECK
+    from _mi_helpers import load
+    ow1 = load("versions/ow1_onu_web.py", "ow1_onu_web")
+    assert pe1._CREDENTIAL_KIND_CHECK == ow1._CREDENTIAL_KIND_CHECK_PRE
     assert "'CLI_ENABLE'" not in pe1._CREDENTIAL_KIND_CHECK_PRE
 
 

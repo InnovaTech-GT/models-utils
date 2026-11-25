@@ -321,6 +321,9 @@ CREDENTIAL_KINDS = (
     # bound like any other kind (item > type > company default). `username`
     # is ignored. Required by a playbook whose `session.enable` is set.
     "CLI_ENABLE",
+    # ow1 (doc 77 D4): an ONU web UI login (username + password). Several per
+    # firmware, tried in `priority` order; never a company default.
+    "CPE_WEB",
 )
 
 # tr1_transport_axis: the transport is TWO orthogonal per-tenant choices, not one
@@ -347,7 +350,7 @@ ACS_STALE_AFTER_SECONDS = 900
 # hand-written nc1a migration — kept as strings so both agree byte-for-byte.
 # pe1_playbook_phases re-created ck_device_credential_kind with CLI_ENABLE; its
 # own copy of this literal is pinned byte-identical by tests/test_pe1_playbook_phases.py.
-_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT','CLI_ENABLE')"
+_CREDENTIAL_KIND_CHECK = "kind IN ('SSH','TELNET','SNMP_COMMUNITY','TR069_CONNECTION_REQUEST','HTTP_BASIC','HTTP_BEARER','WIREGUARD','AGENT','CLI_ENABLE','CPE_WEB')"
 # spec §8: mgmt_port has had no range CHECK since nc2a and the xlsx importer
 # will happily write 0 or 70000. Both ports get one here.
 _NAT_PORT_CHECK = "nat_port IS NULL OR (nat_port BETWEEN 1 AND 65535)"
@@ -2016,6 +2019,9 @@ class DeviceCredential(Base):
     # display-safe, lets the UI confirm which secret is stored without exposing it.
     fingerprint = Column(String, nullable=True)
     last_rotated_at = Column(DateTime(timezone=True), nullable=True)
+    # ow1 (doc 77 D4): the order the onu_web driver tries several matching
+    # credentials in (lower first, within a binding tier). Other kinds ignore it.
+    priority = Column(Integer, nullable=False, default=0, server_default="0")
 
     company_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False, index=True
@@ -2183,6 +2189,10 @@ class ProvisioningSettings(Base):
     # an EDGE telnet host must fall in. NULL = EDGE telnet is OFF for the tenant
     # (the feature is fully inert).
     edge_mgmt_cidr = Column(String(43), nullable=True)
+    # doc 77 (ow1_onu_web): comma-separated IPv4/IPv6 CIDRs every onu_web
+    # request host must fall in. NULL = the onu_web driver refuses every host
+    # (TARGET_NOT_ALLOWED). Separate from edge_mgmt_cidr (a different range).
+    cpe_web_cidrs = Column(Text, nullable=True)
 
     # --- ACS config, moved off network_access (tr1_transport_axis) ----------
     # Informational ONLY and read-only in the UI: nothing in code reads it. Its
@@ -2241,6 +2251,49 @@ class ProvisioningSettings(Base):
         CheckConstraint(
             _PROVISIONING_CWMP_PAIR_CHECK, name="ck_provisioning_settings_cwmp_pair"
         ),
+    )
+
+
+class OnuConfigBackup(Base):
+    """An ONU's own config file, saved by the onu_web driver before a migrate
+    (doc 77 D3) so a rollback child job — or an office restore — can put it
+    back. The XML is envelope-encrypted exactly like device_credential (same
+    column names; AAD `company_id:backup_id`) and never leaves the worker in
+    clear. Purged after 30 days by the worker. No `updated_at`: rows are
+    write-once."""
+    __tablename__ = "onu_config_backup"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=now_gt)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company.id", ondelete="CASCADE"), nullable=False
+    )
+    inventory_item_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("inventory_item.id", ondelete="CASCADE"), nullable=False
+    )
+    provisioning_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("provisioning_run.id", ondelete="SET NULL"), nullable=True
+    )
+    provisioning_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("provisioning_job.id", ondelete="SET NULL"), nullable=True
+    )
+    # The credential that logged in (its id only, never the secret).
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("device_credential.id", ondelete="SET NULL"), nullable=True
+    )
+    firmware = Column(String(64), nullable=True)   # active firmware read on the status page
+    profile = Column(String(32), nullable=True)    # built-in driver profile; NULL = unsupported
+    sha256 = Column(String(64), nullable=False)    # hex digest of the plaintext XML
+    size_bytes = Column(Integer, nullable=False)
+    wifi_clients_before = Column(Integer, nullable=True)
+    # --- envelope encryption (device_credential's column names) ---
+    secret_ciphertext = Column(LargeBinary, nullable=False)  # 12-byte nonce prefixed
+    dek_wrapped = Column(LargeBinary, nullable=False)
+    kek_id = Column(String, nullable=False)
+
+    __table_args__ = (
+        Index("ix_onu_config_backup_item", "company_id", "inventory_item_id", "created_at"),
     )
 
 
