@@ -11,9 +11,20 @@ from pydantic import ValidationError
 
 from database_utils.models import Order, OrderItem
 from database_utils.models.isp import ClientService
-from database_utils.schemas.client_service import ClientServiceBillingUpdate, ClientServiceCreate
-from database_utils.schemas.order_item import OrderItemCreate, OrderItemInput, OrderItemUpdate
-from database_utils.schemas.service_plan import ServicePlanCreate, ServicePlanOut, ServicePlanUpdate
+from database_utils.schemas.client_service import (
+    ClientServiceBillingUpdate,
+    ClientServiceCreate,
+)
+from database_utils.schemas.order_item import (
+    OrderItemCreate,
+    OrderItemInput,
+    OrderItemUpdate,
+)
+from database_utils.schemas.service_plan import (
+    ServicePlanCreate,
+    ServicePlanOut,
+    ServicePlanUpdate,
+)
 
 
 @pytest.mark.parametrize("q", [0, -1])

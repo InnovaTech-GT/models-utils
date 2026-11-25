@@ -13,6 +13,7 @@ both CHECKs.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "sec1_quantity_checks"

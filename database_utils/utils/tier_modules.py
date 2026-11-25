@@ -9,7 +9,6 @@ suspension/cancellation.
 """
 from __future__ import annotations
 
-from typing import List, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session, joinedload
@@ -20,7 +19,7 @@ DEFAULT_MODULES = ("core", "admin")
 ENTITLED_STATUSES = ("ACTIVE", "TRIALING", "PAST_DUE")
 
 
-def company_modules(db: Session, company_id: Optional[UUID]) -> List[str]:
+def company_modules(db: Session, company_id: UUID | None) -> list[str]:
     if company_id is None:
         return list(DEFAULT_MODULES)
     subscription = (

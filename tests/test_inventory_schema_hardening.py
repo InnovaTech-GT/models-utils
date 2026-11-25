@@ -22,7 +22,10 @@ from database_utils.schemas.inventory import (
     InventoryItemUpdate,
     is_safe_probe_command,
 )
-from database_utils.utils.connectivity import DEFAULT_PROBE_COMMAND, enqueue_connectivity_check
+from database_utils.utils.connectivity import (
+    DEFAULT_PROBE_COMMAND,
+    enqueue_connectivity_check,
+)
 
 
 @pytest.mark.parametrize("cmd", ["display version", "show version", "SHOW running-config",

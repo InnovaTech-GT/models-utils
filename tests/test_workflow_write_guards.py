@@ -10,7 +10,12 @@ import pytest
 from conftest import CO_A, CO_B
 
 from database_utils.models import (
-    Client, InventoryItem, Order, PaymentStatus, ServicePlan, Task,
+    Client,
+    InventoryItem,
+    Order,
+    PaymentStatus,
+    ServicePlan,
+    Task,
 )
 from database_utils.models.isp import ClientService, DeviceType, ProvisioningJob
 from database_utils.utils.workflow_engine import (

@@ -8,7 +8,11 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 
-from database_utils.middleware.logging_middleware import LoggingMiddleware, redact_path, redact_query
+from database_utils.middleware.logging_middleware import (
+    LoggingMiddleware,
+    redact_path,
+    redact_query,
+)
 
 
 @pytest.mark.parametrize("raw,expected", [
