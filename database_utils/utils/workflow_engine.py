@@ -577,7 +577,9 @@ WORKFLOW_TASKS_PER_CLIENT_PER_DAY = 5
 def _refuse_task_flood(db: Session, company_id: UUID, client_id) -> None:
     """CREATE_ENTITY task: at most WORKFLOW_TASKS_PER_CLIENT_PER_DAY tasks per
     client in 24 h created by automations (`created_by IS NULL`, the system
-    actor — office/app tasks carry their user and do not count)."""
+    actor — office/app tasks carry their user and do not count). Every
+    system-created task counts, CREATE_TASK installation tasks included, though
+    CREATE_TASK itself is not capped."""
     if client_id is None:
         return
     from datetime import timedelta
@@ -752,6 +754,19 @@ def _execute_create_entity(
         client_id = data.get("client_id")
         if client_id is not None and not isinstance(client_id, UUID):
             client_id = data["client_id"] = UUID(str(client_id))  # FK check proved it parses
+        service_id = data.get("client_service_id")
+        if service_id is not None and not isinstance(service_id, UUID):
+            service_id = data["client_service_id"] = UUID(str(service_id))
+        if client_id is None and service_id is not None:
+            # A service-only task belongs to the service's client: record it
+            # and count it, or the cap is dodged by omitting client_id.
+            from database_utils.models.isp import ClientService
+            client_id = db.query(ClientService.client_id).filter(
+                ClientService.id == service_id,
+                ClientService.company_id == company_id,
+            ).scalar()
+            if client_id is not None:
+                data["client_id"] = client_id
         _refuse_task_flood(db, company_id, client_id)
     data["company_id"] = company_id
 

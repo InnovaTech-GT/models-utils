@@ -75,3 +75,29 @@ def test_other_tenant_tasks_do_not_count(db):
 def test_task_without_client_is_not_capped(db):
     for _ in range(7):
         _execute_create_entity(db, {"resource_type": "task", "data": {"name": "t"}}, {}, CO_A)
+
+
+def test_service_only_tasks_are_counted_against_the_service_client(db):
+    from database_utils.models import ServicePlan
+    from database_utils.models.isp import ClientService
+
+    c = _client(db)
+    plan = ServicePlan(company_id=CO_A, name="p-cap", download_mbps=10, upload_mbps=5)
+    db.add(plan)
+    db.flush()
+    s = ClientService(company_id=CO_A, client_id=c.id, service_plan_id=plan.id)
+    db.add(s)
+    db.flush()
+
+    def by_service():
+        return _execute_create_entity(
+            db, {"resource_type": "task", "data": {"name": "t", "client_service_id": str(s.id)}}, {}, CO_A)
+
+    out = by_service()
+    assert db.get(Task, uuid.UUID(out["resource_id"])).client_id == c.id
+    for _ in range(4):
+        by_service()
+    with pytest.raises(ValueError, match="TASK_RATE_LIMITED"):
+        by_service()
+    with pytest.raises(ValueError, match="TASK_RATE_LIMITED"):
+        _create(db, c.id)
