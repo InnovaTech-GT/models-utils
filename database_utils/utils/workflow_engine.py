@@ -568,6 +568,35 @@ def _assert_references_in_company(db: Session, model_class, values: dict, compan
             )
 
 
+# Security audit #116 (template path): an automation fired by an outside event
+# (a bot message, a webhook) must not flood the dispatch board. Same number as
+# the WhatsApp bot's per-sender cap (bot plan D5).
+WORKFLOW_TASKS_PER_CLIENT_PER_DAY = 5
+
+
+def _refuse_task_flood(db: Session, company_id: UUID, client_id) -> None:
+    """CREATE_ENTITY task: at most WORKFLOW_TASKS_PER_CLIENT_PER_DAY tasks per
+    client in 24 h created by automations (`created_by IS NULL`, the system
+    actor — office/app tasks carry their user and do not count)."""
+    if client_id is None:
+        return
+    from datetime import timedelta
+    from database_utils.models.crm import Task
+
+    since = now_gt() - timedelta(hours=24)
+    recent = db.query(Task).filter(
+        Task.company_id == company_id,
+        Task.client_id == client_id,
+        Task.created_by.is_(None),
+        Task.created_at >= since,
+    ).count()
+    if recent >= WORKFLOW_TASKS_PER_CLIENT_PER_DAY:
+        raise ValueError(
+            f"TASK_RATE_LIMITED: client {client_id} already has {recent} automation-created "
+            f"tasks in the last 24 h (max {WORKFLOW_TASKS_PER_CLIENT_PER_DAY})"
+        )
+
+
 def _refuse_paid_order_status(resource_type: str, entity, updates: dict) -> None:
     """Founder D1 (#35): an automation may cancel/reactivate an order with no
     money on it, never one that is PARTIAL / PAID / REFUNDED."""
@@ -715,6 +744,15 @@ def _execute_create_entity(
         )
 
     _assert_references_in_company(db, model_class, data, company_id)
+    if resource_type == "task":
+        if "created_by" in data:
+            raise ValueError(
+                "PROTECTED_FIELD: CREATE_ENTITY tasks are system-created; 'created_by' cannot be set"
+            )
+        client_id = data.get("client_id")
+        if client_id is not None and not isinstance(client_id, UUID):
+            client_id = data["client_id"] = UUID(str(client_id))  # FK check proved it parses
+        _refuse_task_flood(db, company_id, client_id)
     data["company_id"] = company_id
 
     entity = model_class(**data)

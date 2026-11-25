@@ -85,6 +85,13 @@ moved *down* from backend-erp in Cycle 3, so the engine's
      `UPDATE_FIELD` on `order.status` refuses an order whose `payment_status`
      is not `PENDING` (`PAID_ORDER: ...`, founder D1): an automation may still
      cancel or reactivate an order with no money on it.
+   - **Task cap (6.39.0, audit #116 template path).** `CREATE_ENTITY` on `task`
+     with a `client_id` fails with `TASK_RATE_LIMITED: ...` when that client
+     already has `WORKFLOW_TASKS_PER_CLIENT_PER_DAY` (5, the bot's per-sender
+     cap) tasks created by automations (`created_by IS NULL`) in the last 24 h,
+     scoped to the company; office/app tasks do not count. Such tasks are
+     system-created: setting `created_by` is refused (`PROTECTED_FIELD`). The
+     `CREATE_TASK` action (installation flow) is not capped.
 4. **Trigger-only resources** — `READ_ONLY_RESOURCE_TYPES` (`payment_link`, pl1, 6.20.0; `invoice`, `order_item` and `provisioning_job` since 6.39.0 — billing documents are PaymentService's, `order_item` has no `company_id`, and a provisioning job is created only through `ENQUEUE_PROVISIONING`, whose refusal message the step error names): a workflow may trigger on them, but `UPDATE_FIELD` and `CREATE_ENTITY` fail the step on them whatever the field, before any query. A payment link's state is decided by backend-erp asking the gateway and recorded through PaymentService; letting an automation write it would bypass that. The whole resource is refused, so a column added later is covered without touching a field list.
 5. **Trigger-context variables** — `utils/workflow_fields.py` handles
    variable/field substitution from the triggering entity's context.
