@@ -44,7 +44,7 @@ library, never the reverse).
 | `order_typing.py` | Order type/classification helpers |
 | `json_utils.py` | JSON serialization helpers |
 | `email_templates.py` | Jinja2 rendering of the email templates (see [email-service.md](email-service.md)) |
-| `error_handling.py` | `handle_exceptions` — wraps an async handler, re-raises `HTTPException`, converts anything else to a 500. Logs argument **types and keyword names only, never values**: every decorated handler receives its request body and the Capa 3 bodies carry plaintext secrets |
+| `error_handling.py` | `handle_exceptions` — wraps an async handler, re-raises `HTTPException`, converts anything else to a 500 whose detail is exactly `"Internal server error"` (6.39.0, audit #90: the exception text stays in the server log, never in the response). Logs argument **types and keyword names only, never values**: every decorated handler receives its request body and the Capa 3 bodies carry plaintext secrets |
 | `exception_handlers.py` | Standardized FastAPI exception handlers |
 | `logging_utils.py` | Loguru structured JSON logging setup; request-scoped contextvars (`set_request_context` / `clear_request_context`). `request_client_context` / `request_client()` hold the request's client marker (`"mcp"` or `None`, doc 68 §3.4); `set_request_context(client=)` always sets it, so no marker survives from an earlier request, and `clear_request_context()` resets it |
 | `telemetry_utils.py` | `get_tracer`, `set_request_span_attributes` — OTEL **API only**; SDK/exporter configured by the consuming services. Sets `request.id`, `enduser.id`, `company.id`, `enduser.role(s)`, and `uplink.client` when the request carries the allowlisted `X-Uplink-Client: mcp` marker (telemetry, not security) |
