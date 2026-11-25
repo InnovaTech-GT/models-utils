@@ -1202,8 +1202,18 @@ class PlaybookBase(BaseModel):
     definition: PlaybookDefinition
 
 
+def _refuse_reserved_name(v: Optional[str]) -> Optional[str]:
+    # Security audit #95. Not on PlaybookBase: PlaybookOut inherits it and must
+    # still read the code-created system rows.
+    from database_utils.utils.provisioning_gates import is_reserved_playbook_name
+
+    if v is not None and is_reserved_playbook_name(v):
+        raise ValueError(f"RESERVED_PLAYBOOK_NAME: '{v.strip()}' is a system playbook name")
+    return v
+
+
 class PlaybookCreate(PlaybookBase):
-    pass
+    _check_name = field_validator("name")(_refuse_reserved_name)
 
 
 class PlaybookUpdate(BaseModel):
@@ -1211,6 +1221,8 @@ class PlaybookUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     definition: Optional[PlaybookDefinition] = None
+
+    _check_name = field_validator("name")(_refuse_reserved_name)
 
 
 class PlaybookOut(PlaybookBase):

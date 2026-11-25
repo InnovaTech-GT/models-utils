@@ -115,3 +115,46 @@ def test_create_or_get_run_propagates_the_gate_and_keeps_the_session(db, plant, 
     assert _counts(db) == (0, 0)
     run, created = create_or_get_run(db, plant.service, PURPOSE_ACTIVATION, dry_run=True)
     assert created and run.dry_run
+
+
+# --- security audit #95: system playbook names are reserved ------------------
+from pydantic import ValidationError  # noqa: E402
+
+from database_utils.schemas.playbook import PlaybookCreate, PlaybookOut, PlaybookUpdate  # noqa: E402
+from database_utils.utils.timezone_utils import now_gt  # noqa: E402
+
+
+def _minimal_definition():
+    return {"configuration": [{"name": "cfg", "driver": "simulator", "template": "x"}]}
+
+
+@pytest.mark.parametrize("name", ["cpe_reboot", " CPE_Reboot ", "core_connectivity_check_ssh",
+                                  "core_connectivity_check_telnet-nat", "HUAWEI_ONU_ACTIVATE"])
+def test_reserved_name_predicate(name):
+    assert g.is_reserved_playbook_name(name)
+
+
+def test_unreserved_names():
+    assert not g.is_reserved_playbook_name("cpe_reboot_v2")
+    assert not g.is_reserved_playbook_name("")
+
+
+@pytest.mark.parametrize("name", ["cpe_reboot", " CPE_Reboot ", "core_connectivity_check_ssh"])
+def test_create_refuses_reserved_name(name):
+    with pytest.raises(ValidationError, match="RESERVED_PLAYBOOK_NAME"):
+        PlaybookCreate(name=name, definition=_minimal_definition())
+
+
+def test_update_rename_refused():
+    with pytest.raises(ValidationError, match="RESERVED_PLAYBOOK_NAME"):
+        PlaybookUpdate(name="cpe_reboot")
+    assert PlaybookUpdate(description="x").name is None
+    assert PlaybookCreate(name="my_reboot", definition=_minimal_definition())
+
+
+def test_out_reads_system_rows():
+    out = PlaybookOut.model_validate({
+        "id": uuid.uuid4(), "company_id": uuid.uuid4(), "version": 1, "created_at": now_gt(),
+        "name": "cpe_reboot", "definition": _minimal_definition(), "is_active": True,
+    })
+    assert out.name == "cpe_reboot"
