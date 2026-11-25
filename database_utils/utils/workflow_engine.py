@@ -1626,15 +1626,13 @@ def _execute_http_request(
         # fg1: a disabled ("disconnected") integration is never called out with.
         raise ValueError(f"Integration {integration_id} is disabled")
 
-    # Build URL
-    path = config.get("path", "")
-    url = integration.base_url.rstrip("/") + path
-
-    # SEC-6: block SSRF to internal / cloud-metadata / private addresses BEFORE
-    # attaching stored credentials or making any request.
-    from database_utils.utils.ssrf import validate_url_no_ssrf, SSRFValidationError
+    # SEC-6 / audit #20 #21: build the URL without letting the path re-host it,
+    # then pin the connection to the validated IP — BEFORE attaching stored
+    # credentials or making any request.
+    from database_utils.utils.ssrf import join_integration_url, pin_url, SSRFValidationError
     try:
-        validate_url_no_ssrf(url)
+        url = join_integration_url(integration.base_url, config.get("path", "") or "")
+        pinned = pin_url(url)
     except SSRFValidationError as e:
         raise ValueError(f"HTTP_REQUEST step blocked (SSRF guard): {e}")
 
@@ -1654,6 +1652,8 @@ def _execute_http_request(
         encoded = base64.b64encode(raw.encode()).decode()
         headers["Authorization"] = f"Basic {encoded}"
     # NONE: no auth headers added
+    headers = {k: v for k, v in headers.items() if k.lower() != "host"}
+    headers.update(pinned.headers)  # the pinned Host header always wins
 
     # Resolve template variables in the body
     body = _resolve_template(config.get("body"), context)
@@ -1662,7 +1662,10 @@ def _execute_http_request(
 
     try:
         with httpx.Client(timeout=30) as client:
-            response = client.request(method, url, headers=headers, json=body)
+            response = client.request(
+                method, pinned.url, headers=headers, json=body,
+                extensions=pinned.extensions, follow_redirects=False,
+            )
     except httpx.TimeoutException:
         raise ValueError(f"HTTP_REQUEST step timed out after 30s: {method} {url}")
     except httpx.RequestError as e:
