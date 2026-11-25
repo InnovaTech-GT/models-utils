@@ -53,18 +53,19 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
     # Invoice money/validity is written only by PaymentService (doc 16 §1);
     # these stay visible for trigger conditions but are engine-denylisted.
     "invoice": [
-        {"name": "issue_date", "type": "date", "fk_to": None},
+        {"name": "issue_date", "type": "date", "fk_to": None, "writable": False},
         {"name": "subtotal", "type": "number", "fk_to": None, "writable": False},
         {"name": "tax", "type": "number", "fk_to": None, "writable": False},
         {"name": "total", "type": "number", "fk_to": None, "writable": False},
-        {"name": "details", "type": "json", "fk_to": None},
+        {"name": "details", "type": "json", "fk_to": None, "writable": False},
         {"name": "is_valid", "type": "boolean", "fk_to": None, "writable": False},
-        {"name": "order_id", "type": "uuid", "fk_to": "order"},
+        {"name": "order_id", "type": "uuid", "fk_to": "order", "writable": False},
     ],
+    # Security audit #35: read-only for automations (READ_ONLY_RESOURCE_TYPES).
     "order_item": [
-        {"name": "order_id", "type": "uuid", "fk_to": "order"},
-        {"name": "service_plan_id", "type": "uuid", "fk_to": "service_plan"},
-        {"name": "quantity", "type": "number", "fk_to": None},
+        {"name": "order_id", "type": "uuid", "fk_to": "order", "writable": False},
+        {"name": "service_plan_id", "type": "uuid", "fk_to": "service_plan", "writable": False},
+        {"name": "quantity", "type": "number", "fk_to": None, "writable": False},
     ],
     # --- ISP resources ---
     "service_plan": [
@@ -116,10 +117,12 @@ RESOURCE_FIELDS: Dict[str, List[Dict[str, Any]]] = {
     ],
     # 'network_node' resource REMOVED (Cycle 2 D6, revision
     # c2d_graph_removal) — the free-form network graph no longer exists.
+    # Security audit #35: trigger conditions only. Jobs are owned by the
+    # provisioning worker; automations enqueue via ENQUEUE_PROVISIONING.
     "provisioning_job": [
-        {"name": "status", "type": "string", "fk_to": None},
-        {"name": "error", "type": "string", "fk_to": None},
-        {"name": "client_service_id", "type": "uuid", "fk_to": "client_service"},
+        {"name": "status", "type": "string", "fk_to": None, "writable": False},
+        {"name": "error", "type": "string", "fk_to": None, "writable": False},
+        {"name": "client_service_id", "type": "uuid", "fk_to": "client_service", "writable": False},
     ],
     # pl1: trigger conditions only. The engine refuses any write to a
     # payment_link (READ_ONLY_RESOURCE_TYPES), so every field is writable=False.
