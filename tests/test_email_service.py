@@ -58,3 +58,33 @@ async def test_send_join_request_decision_email_rejected():
         approved=False,
     )
     assert result is True
+
+
+# Security audit #43: the mock must never log the single-use token in a link.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,kwargs", [
+    ("send_invitation_email", dict(
+        invitation_link="https://app.example.com/es/accept-invitation?token=SECRETTOK",
+        company_name="Acme", invited_by="Boss")),
+    ("send_confirmation_email", dict(
+        confirmation_link="https://app.example.com/es/confirm-email?token=SECRETTOK",
+        user_name="Jane")),
+    ("send_password_reset_email", dict(
+        reset_link="https://app.example.com/es/reset-password?token=SECRETTOK",
+        user_name="Jane")),
+    ("send_password_reset_email", dict(
+        reset_link="https://app.example.com/validate/SECRETTOK", user_name="Jane")),
+])
+async def test_mock_email_never_logs_token(method, kwargs):
+    from loguru import logger
+
+    lines = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        assert await getattr(MockEmailService(), method)(to_email="user@example.com", **kwargs)
+    finally:
+        logger.remove(sink)
+    out = "".join(lines)
+    assert "SECRETTOK" not in out
+    assert "user@example.com" in out
+    assert "app.example.com" in out and "***" in out
