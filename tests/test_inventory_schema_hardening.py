@@ -36,7 +36,9 @@ def test_safe_probe_commands(cmd):
 
 @pytest.mark.parametrize("cmd", ["reboot", "display version\nreboot", "/system reboot", "x" * 101, "",
                                  "undo ont 0 1", "show ver\x1b", "/system reboot; /interface print",
-                                 "/ip print where name=[/system reboot]", "/interface print detail", "  ", None, 5])
+                                 "/ip print where name=[/system reboot]", "/interface print detail", "  ", None, 5,
+                                 "show running-config | redirect tftp://1.2.3.4/x", "show run | append flash:x",
+                                 "display current-configuration | save x", "show run > flash:x"])
 def test_unsafe_probe_commands(cmd):
     assert not is_safe_probe_command(cmd)
 

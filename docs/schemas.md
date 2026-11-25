@@ -155,8 +155,9 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
 ### Inventory hardening (6.39.0, security audit #69, #70, #12/#13)
 
 - `is_safe_probe_command(cmd) -> bool`: one line of at most 100 characters, no
-  control characters and no `;` `[` `]` `{` `}` `$` `` ` `` (command
-  separators / substitution), whose first word (lower-cased) is one of
+  control characters and no `;` `[` `]` `{` `}` `$` `` ` `` `|` `>` (command
+  separators / substitution, and pipes/redirects such as IOS `| redirect`,
+  `| append`, Junos `| save` that write files), whose first word (lower-cased) is one of
   `PROBE_COMMAND_VERBS = ("show", "display", "get")` (founder D7), or a RouterOS
   path command (starts with `/`) whose last word is `print`.
   `DeviceTypeCreate` / `DeviceTypeUpdate` refuse a `default_attributes`

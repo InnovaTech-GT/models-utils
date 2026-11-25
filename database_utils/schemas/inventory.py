@@ -261,12 +261,13 @@ def _identity_regex(v: Optional[str]) -> Optional[str]:
 # to free text.
 PROBE_COMMAND_VERBS = ("show", "display", "get")
 # Command separators / substitution (RouterOS `;` and `[...]`, shells `$`, `` ` ``).
-_PROBE_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f;\[\]{}$`]")
+_PROBE_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f;\[\]{}$`|>]")
 
 
 def is_safe_probe_command(cmd) -> bool:
     """One line of at most 100 characters, no control characters or command
-    separators, starting with a read-only verb (`PROBE_COMMAND_VERBS`) or a
+    separators, pipes or redirects (`| redirect`/`append`/`save` write files),
+    starting with a read-only verb (`PROBE_COMMAND_VERBS`) or a
     RouterOS path command (`/...`) ending in `print`."""
     if not isinstance(cmd, str) or len(cmd) > 100 or _PROBE_FORBIDDEN.search(cmd):
         return False
