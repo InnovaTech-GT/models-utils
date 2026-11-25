@@ -135,6 +135,13 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### Admin-set passwords need 8 characters (6.39.0, security audit #94)
+
+- `UserCreate.password`, `UserUpdate.password` and `SuperAdminCreate.password`
+  are `constr(min_length=8)` (was 6), matching invitation, reset and signup.
+  Existing 6- and 7-character passwords still log in (only the hash is
+  stored); UI copy should say "at least 8 characters".
+
 ### Quantity and price bounds (6.39.0, security audit #68)
 
 - `OrderItemBase.quantity` / `OrderItemUpdate.quantity`, `ClientServiceCreate.quantity`

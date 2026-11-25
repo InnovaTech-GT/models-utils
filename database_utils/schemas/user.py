@@ -30,7 +30,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     """Schema for creating a new user with role assignments"""
-    password: constr(min_length=6)
+    password: constr(min_length=8)
     company_id: Optional[UUID] = None
     role_ids: Optional[List[UUID]] = []
 
@@ -42,7 +42,7 @@ class UserUpdate(BaseModel):
     age: Optional[int] = None
     phone: Optional[str] = None
     photo_url: Optional[str] = None
-    password: Optional[constr(min_length=6)] = None
+    password: Optional[constr(min_length=8)] = None
     company_id: Optional[UUID] = None
     role_ids: Optional[List[UUID]] = None
 
@@ -83,5 +83,5 @@ class SuperAdminCreate(BaseModel):
     name: str
     email: EmailStr
     age: int
-    password: constr(min_length=6)
+    password: constr(min_length=8)
     is_super_admin: Optional[bool] = True

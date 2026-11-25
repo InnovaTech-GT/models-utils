@@ -57,6 +57,8 @@ release (drop-after-prod rule); see [limitations.md](limitations.md).
   Subscription/BillingInvoice
 - **Seeds**: `alembic/seeds/rbac_seed.py` (permissions/roles), `alembic/seeds/tier_seed.py` (importable as `seeds.*` because `env.py` adds the alembic dir to `sys.path`)
 - **Auth schemas** ([schemas.md](schemas.md)): Pydantic representations
+  (admin-set passwords on `UserCreate` / `UserUpdate` / `SuperAdminCreate`
+  need 8+ characters since 6.39.0)
 
 ## Key Implementation Details
 
