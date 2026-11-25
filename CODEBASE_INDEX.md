@@ -142,6 +142,7 @@ see [docs/schemas.md](docs/schemas.md) + [docs/email-service.md](docs/email-serv
 | `crypto.py` | AES-256-GCM envelope encryption for device credentials (Cycle 5): `CREDENTIALS_KEKS`, `CREDENTIALS_ACTIVE_KEK_ID`; wrap/unwrap DEKs, KEK rotation |
 | `workflow_fields.py` | Trigger-context variable/field handling |
 | `tier_limits.py`, `pagination_utils.py`, `timezone_utils.py`, `token_utils.py`, `password.py`, `order_typing.py`, `json_utils.py`, `email_templates.py`, `error_handling.py`, `exception_handlers.py`, `logging_utils.py` (request contextvars; `request_client()` = the request's `X-Uplink-Client` marker or `None`), `telemetry_utils.py` (`set_request_span_attributes` also sets `uplink.client` when marked), `router_factory.py`, `client_code.py` (cc1: `generate_client_code`, `normalize_client_code`), `task_status.py` (ts1: `derive_status`, `STATUS_FROM_STATE_KIND`) | Supporting helpers (see [docs/utilities.md](docs/utilities.md)) |
+| `tier_modules.py` | `company_modules(db, company_id)` — tier-module entitlement (ACTIVE/TRIALING/PAST_DUE → `tier.modules`, else `["core", "admin"]`), 6.39.0 |
 
 ## Alembic (`alembic/`)
 
