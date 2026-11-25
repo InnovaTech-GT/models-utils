@@ -260,6 +260,9 @@ def _identity_regex(v: Optional[str]) -> Optional[str]:
 # be a read-only command. Add a vendor's read-only verb here; never fall back
 # to free text.
 PROBE_COMMAND_VERBS = ("show", "display", "get")
+# Bare read-only commands for CLIs whose top level has none of the verbs above
+# (Fiberhome AN5516: `help`). Only the exact word, never with arguments.
+PROBE_COMMAND_BARE = ("help", "list")
 # Command separators / substitution (RouterOS `;` and `[...]`, shells `$`, `` ` ``).
 _PROBE_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f;\[\]{}$`|>]")
 
@@ -267,7 +270,8 @@ _PROBE_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f;\[\]{}$`|>]")
 def is_safe_probe_command(cmd) -> bool:
     """One line of at most 100 characters, no control characters or command
     separators, pipes or redirects (`| redirect`/`append`/`save` write files),
-    starting with a read-only verb (`PROBE_COMMAND_VERBS`) or a
+    starting with a read-only verb (`PROBE_COMMAND_VERBS`), exactly one bare
+    command (`PROBE_COMMAND_BARE`), or a
     RouterOS path command (`/...`) ending in `print`."""
     if not isinstance(cmd, str) or len(cmd) > 100 or _PROBE_FORBIDDEN.search(cmd):
         return False
@@ -275,6 +279,8 @@ def is_safe_probe_command(cmd) -> bool:
     if not words:
         return False
     if words[0] in PROBE_COMMAND_VERBS:
+        return True
+    if len(words) == 1 and words[0] in PROBE_COMMAND_BARE:
         return True
     return words[0].startswith("/") and words[-1] == "print"
 
@@ -284,7 +290,7 @@ def _check_default_attributes(v: Optional[Dict[str, Any]]) -> Optional[Dict[str,
         if not is_safe_probe_command(v["probe_command"]):
             raise ValueError(
                 "PROBE_COMMAND_UNSAFE: probe_command must be one read-only command "
-                f"({', '.join(PROBE_COMMAND_VERBS)} ..., or a RouterOS '/... print')"
+                f"({', '.join(PROBE_COMMAND_VERBS)} ..., {' or '.join(PROBE_COMMAND_BARE)}, or a RouterOS '/... print')"
             )
     return v
 
