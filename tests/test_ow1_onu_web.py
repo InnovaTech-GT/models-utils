@@ -23,7 +23,7 @@ def _ow1():
 
 def test_revision_chain():
     m = _ow1()
-    assert m.revision == "ow1_onu_web" and m.down_revision == "dm1_device_metrics"
+    assert m.revision == "ow1_onu_web" and m.down_revision == "sec1_quantity_checks"
     assert len(m.revision) <= 32
 
 

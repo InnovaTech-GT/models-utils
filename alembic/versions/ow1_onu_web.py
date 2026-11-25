@@ -1,7 +1,7 @@
 """onu_web driver: CPE_WEB credentials + priority, cpe_web_cidrs, onu_config_backup (doc 77)
 
 Revision ID: ow1_onu_web
-Revises: dm1_device_metrics
+Revises: sec1_quantity_checks
 Create Date: 2026-11-24
 
 Additive (models-utils 6.40.0):
@@ -13,8 +13,8 @@ onu_config_backup      new: an ONU's config file, envelope-encrypted with
                          device_credential's column names; index
                          (company_id, inventory_item_id, created_at)
 
-Chained on dm1_device_metrics, the head of this branch; re-chain onto
-sec1_quantity_checks (v1.14.0) before composing into develop.
+Chain: built on dm1_device_metrics, re-chained at compose onto
+sec1_quantity_checks (6.39.0, v1.14.0); down_revision rewritten, no merge revision.
 
 The CHECK literals are this revision's own copies (revisions are immutable);
 tests/test_ow1_onu_web.py pins _CREDENTIAL_KIND_CHECK byte-identical to
@@ -31,7 +31,7 @@ from sqlalchemy.sql import text
 from alembic import op
 
 revision: str = "ow1_onu_web"
-down_revision: str | Sequence[str] | None = "dm1_device_metrics"
+down_revision: str | Sequence[str] | None = "sec1_quantity_checks"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
