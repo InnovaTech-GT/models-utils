@@ -2,10 +2,19 @@ from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from typing import Any, Dict
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from loguru import logger
 import aiosmtplib
 
 from database_utils.utils.email_templates import render_email
+from database_utils.utils.logging_utils import redact_path, redact_query
+
+
+def _redact_link(link: str) -> str:
+    """Security audit #43: a link with its single-use token masked, for logs."""
+    parts = urlsplit(link or "")
+    query = urlencode(redact_query(dict(parse_qsl(parts.query, keep_blank_values=True))), safe="*")
+    return urlunsplit(parts._replace(path=redact_path(parts.path), query=query))
 
 
 # Localized subjects for the Uplink transactional emails that carry a locale.
@@ -104,7 +113,7 @@ class MockEmailService(EmailService):
             f"[MOCK EMAIL] Invitation sent to {to_email} (locale={locale})\n"
             f"Company: {company_name}\n"
             f"Invited by: {invited_by}\n"
-            f"Link: {invitation_link}"
+            f"Link: {_redact_link(invitation_link)}"
         )
         return True
 
@@ -132,7 +141,7 @@ class MockEmailService(EmailService):
     ) -> bool:
         logger.info(
             f"[MOCK EMAIL] Confirmation email sent to {to_email} ({user_name}, locale={locale})\n"
-            f"Link: {confirmation_link}"
+            f"Link: {_redact_link(confirmation_link)}"
         )
         return True
 
@@ -142,7 +151,7 @@ class MockEmailService(EmailService):
     ) -> bool:
         logger.info(
             f"[MOCK EMAIL] Password reset email sent to {to_email} ({user_name}, locale={locale})\n"
-            f"Link: {reset_link}"
+            f"Link: {_redact_link(reset_link)}"
         )
         return True
 

@@ -18,7 +18,9 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from database_utils.utils.logging_utils import (
+from database_utils.utils.logging_utils import (  # noqa: F401  (redact_* re-exported)
+    redact_path,
+    redact_query,
     set_request_context,
     clear_request_context,
     log_with_context,
@@ -120,12 +122,15 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         client_host = request.client.host if request.client else "unknown"
         client_port = request.client.port if request.client else 0
 
+        # Never log a raw path or query: they can carry single-use tokens.
+        safe_path = redact_path(request.url.path)
+
         # Log incoming request
         log_data = {
             'event': 'request_started',
             'method': request.method,
-            'path': request.url.path,
-            'query_params': dict(request.query_params),
+            'path': safe_path,
+            'query_params': redact_query(request.query_params),
             'client_ip': client_host,
             'client_port': client_port,
             'user_agent': request.headers.get('user-agent'),
@@ -166,7 +171,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 f"Request failed: {str(e)}",
                 event='request_failed',
                 method=request.method,
-                path=request.url.path,
+                path=safe_path,
                 duration_ms=duration_ms,
                 error_type=type(e).__name__,
                 error_message=str(e),
@@ -183,7 +188,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 response_log_data = {
                     'event': 'request_completed',
                     'method': request.method,
-                    'path': request.url.path,
+                    'path': safe_path,
                     'status_code': response.status_code,
                     'duration_ms': round(duration_ms, 2),
                 }
@@ -201,7 +206,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 log_with_context(
                     self.logger,
                     log_level,
-                    f"Request completed: {request.method} {request.url.path} - {response.status_code} ({duration_ms:.2f}ms)",
+                    f"Request completed: {request.method} {safe_path} - {response.status_code} ({duration_ms:.2f}ms)",
                     **response_log_data
                 )
 

@@ -757,6 +757,8 @@ class ClientService(Base):
             postgresql_where=text("adopted_at IS NOT NULL"),
         ),
         CheckConstraint(_INSTALL_STATE_CHECK, name="ck_client_service_install_state"),
+        # sec1_quantity_checks (security audit #68).
+        CheckConstraint("quantity >= 1", name="ck_client_service_quantity_positive"),
     )
 
     @validates("status")

@@ -478,7 +478,7 @@ UPDATE_FIELD_DENYLIST: Dict[str, frozenset] = {
 # CREATE_ENTITY guards for the same invariant: the engine must never create
 # invoices at all, and orders it creates must never be born with payment/money
 # state (that is PaymentService's exclusive domain).
-CREATE_ENTITY_FORBIDDEN_TYPES: frozenset = frozenset({"invoice"})
+CREATE_ENTITY_FORBIDDEN_TYPES: frozenset = frozenset({"invoice", "provisioning_job"})
 CREATE_ENTITY_FIELD_DENYLIST: Dict[str, frozenset] = {
     "order": frozenset({"paid", "payment_status", "payment_date", "total", "total_cents"}),
     "client_service": frozenset({"migration_source"}),
@@ -491,14 +491,124 @@ CREATE_ENTITY_FIELD_DENYLIST: Dict[str, frozenset] = {
 # payment gateway and recorded through PaymentService; letting UPDATE_FIELD
 # set status=PAID or CREATE_ENTITY forge a link would bypass all of it. Whole
 # resource, not a field list, so a column added later is covered too.
-READ_ONLY_RESOURCE_TYPES: frozenset = frozenset({"payment_link"})
+# invoice / order_item (security audit #35): billing documents and their lines
+# are written only by PaymentService and the order builders. order_item has no
+# company_id, so a write could not even be tenant-scoped.
+# provisioning_job: owned by the worker; automations go through
+# ENQUEUE_PROVISIONING (gates + ownership checks), never a raw write.
+READ_ONLY_RESOURCE_TYPES: frozenset = frozenset(
+    {"payment_link", "invoice", "order_item", "provisioning_job"}
+)
+
+# Security audit #18/#19: refused for every resource type, in both write paths.
+# company_id would move a row to another tenant; id / created_at are identity.
+WORKFLOW_PROTECTED_FIELDS: frozenset = frozenset({"id", "company_id", "created_at"})
 
 
 def _refuse_read_only(action: str, resource_type: str) -> None:
+    if resource_type == "provisioning_job":
+        raise ValueError(
+            f"{action} may not write 'provisioning_job': it is trigger-only; use the "
+            f"ENQUEUE_PROVISIONING action, which runs the provisioning gates and "
+            f"ownership checks"
+        )
     if resource_type in READ_ONLY_RESOURCE_TYPES:
         raise ValueError(
             f"{action} may not write '{resource_type}': it is trigger-only; its state "
-            f"is decided by backend-erp with the payment gateway and PaymentService"
+            f"is decided by backend-erp (payment gateway, PaymentService, order builders)"
+        )
+
+
+def _refuse_protected(action: str, resource_type: str, fields) -> None:
+    hit = sorted(set(fields) & WORKFLOW_PROTECTED_FIELDS)
+    if hit:
+        raise ValueError(
+            f"PROTECTED_FIELD: {action} may not set {', '.join(hit)} on '{resource_type}'"
+        )
+
+
+def _model_for_table(table):
+    from database_utils.database import Base
+    for mapper in Base.registry.mappers:
+        if table in mapper.tables:
+            return mapper.class_
+    return None
+
+
+def _assert_references_in_company(db: Session, model_class, values: dict, company_id: UUID) -> None:
+    """Every non-null foreign key in `values` must point at a row of the same
+    company (security audit #19). A target table with no company_id (global
+    tables, or none that can be scoped) is refused outright."""
+    columns = model_class.__table__.columns
+    for field, value in values.items():
+        if field not in columns or value is None:
+            continue
+        fks = columns[field].foreign_keys
+        if not fks:
+            continue
+        fk = next(iter(fks))
+        target_table = fk.column.table
+        target = _model_for_table(target_table)
+        if target is None or "company_id" not in target_table.columns:
+            raise ValueError(
+                f"FOREIGN_REFERENCE: {field} points at '{target_table.name}', "
+                f"which an automation may not reference"
+            )
+        try:
+            ref = value if isinstance(value, UUID) else UUID(str(value))
+        except (ValueError, TypeError):
+            raise ValueError(f"FOREIGN_REFERENCE: {field} is not a valid id ({value!r})")
+        found = db.query(target_table.c[fk.column.name]).filter(
+            target_table.c[fk.column.name] == ref,
+            target_table.c.company_id == company_id,
+        ).first()
+        if found is None:
+            raise ValueError(
+                f"FOREIGN_REFERENCE: {field} {ref} is not a '{target_table.name}' of this company"
+            )
+
+
+# Security audit #116 (template path): an automation fired by an outside event
+# (a bot message, a webhook) must not flood the dispatch board. Same number as
+# the WhatsApp bot's per-sender cap (bot plan D5).
+WORKFLOW_TASKS_PER_CLIENT_PER_DAY = 5
+
+
+def _refuse_task_flood(db: Session, company_id: UUID, client_id) -> None:
+    """CREATE_ENTITY task: at most WORKFLOW_TASKS_PER_CLIENT_PER_DAY tasks per
+    client in 24 h created by automations (`created_by IS NULL`, the system
+    actor — office/app tasks carry their user and do not count). Every
+    system-created task counts, CREATE_TASK installation tasks included, though
+    CREATE_TASK itself is not capped."""
+    if client_id is None:
+        return
+    from datetime import timedelta
+    from database_utils.models.crm import Task
+
+    since = now_gt() - timedelta(hours=24)
+    recent = db.query(Task).filter(
+        Task.company_id == company_id,
+        Task.client_id == client_id,
+        Task.created_by.is_(None),
+        Task.created_at >= since,
+    ).count()
+    if recent >= WORKFLOW_TASKS_PER_CLIENT_PER_DAY:
+        raise ValueError(
+            f"TASK_RATE_LIMITED: client {client_id} already has {recent} automation-created "
+            f"tasks in the last 24 h (max {WORKFLOW_TASKS_PER_CLIENT_PER_DAY})"
+        )
+
+
+def _refuse_paid_order_status(resource_type: str, entity, updates: dict) -> None:
+    """Founder D1 (#35): an automation may cancel/reactivate an order with no
+    money on it, never one that is PARTIAL / PAID / REFUNDED."""
+    if resource_type != "order" or "status" not in updates:
+        return
+    from database_utils.models.crm import PaymentStatus
+    if entity.payment_status != PaymentStatus.PENDING:
+        raise ValueError(
+            f"PAID_ORDER: UPDATE_FIELD may not change the status of order {entity.id} "
+            f"(payment_status={getattr(entity.payment_status, 'value', entity.payment_status)})"
         )
 
 
@@ -520,6 +630,7 @@ def _execute_update_field(
 
     updates = config.get("updates", {})
 
+    _refuse_protected("UPDATE_FIELD", resource_type, updates)
     denied = sorted(set(updates) & UPDATE_FIELD_DENYLIST.get(resource_type, frozenset()))
     if denied:
         raise ValueError(
@@ -528,6 +639,10 @@ def _execute_update_field(
             f"automations (PaymentService for money state, backend-erp for "
             f"a client's group)"
         )
+    # Column-only writes: relationships and unknown names are skipped.
+    columns = model_class.__table__.columns
+    updates = {f: v for f, v in updates.items() if f in columns}
+    _assert_references_in_company(db, model_class, updates, company_id)
 
     # Determine which resource(s) to update
     resource_id_source = config.get("resource_id_source", "trigger")
@@ -547,14 +662,16 @@ def _execute_update_field(
             model_class.company_id == company_id,
         ).all()
 
+        for entity in entities:
+            _refuse_paid_order_status(resource_type, entity, updates)
+
         updated_ids = []
         updated_fields = []
         for entity in entities:
             for field, value in updates.items():
-                if hasattr(entity, field):
-                    setattr(entity, field, value)
-                    if field not in updated_fields:
-                        updated_fields.append(field)
+                setattr(entity, field, value)
+                if field not in updated_fields:
+                    updated_fields.append(field)
             updated_ids.append(str(entity.id))
 
         db.flush()
@@ -583,11 +700,12 @@ def _execute_update_field(
         if not entity:
             raise ValueError(f"{resource_type} {resource_id} not found")
 
+        _refuse_paid_order_status(resource_type, entity, updates)
+
         updated_fields = []
         for field, value in updates.items():
-            if hasattr(entity, field):
-                setattr(entity, field, value)
-                updated_fields.append(field)
+            setattr(entity, field, value)
+            updated_fields.append(field)
 
         db.flush()
         return {"updated_fields": updated_fields, "resource_id": str(resource_id)}
@@ -616,6 +734,8 @@ def _execute_create_entity(
     model_class = model_map[resource_type]
     data = dict(config.get("data", {}))
 
+    _refuse_protected("CREATE_ENTITY", resource_type, data)
+
     denied = sorted(set(data) & CREATE_ENTITY_FIELD_DENYLIST.get(resource_type, frozenset()))
     if denied:
         raise ValueError(
@@ -625,6 +745,29 @@ def _execute_create_entity(
             f"a client's group)"
         )
 
+    _assert_references_in_company(db, model_class, data, company_id)
+    if resource_type == "task":
+        if "created_by" in data:
+            raise ValueError(
+                "PROTECTED_FIELD: CREATE_ENTITY tasks are system-created; 'created_by' cannot be set"
+            )
+        client_id = data.get("client_id")
+        if client_id is not None and not isinstance(client_id, UUID):
+            client_id = data["client_id"] = UUID(str(client_id))  # FK check proved it parses
+        service_id = data.get("client_service_id")
+        if service_id is not None and not isinstance(service_id, UUID):
+            service_id = data["client_service_id"] = UUID(str(service_id))
+        if client_id is None and service_id is not None:
+            # A service-only task belongs to the service's client: record it
+            # and count it, or the cap is dodged by omitting client_id.
+            from database_utils.models.isp import ClientService
+            client_id = db.query(ClientService.client_id).filter(
+                ClientService.id == service_id,
+                ClientService.company_id == company_id,
+            ).scalar()
+            if client_id is not None:
+                data["client_id"] = client_id
+        _refuse_task_flood(db, company_id, client_id)
     data["company_id"] = company_id
 
     entity = model_class(**data)
@@ -1536,15 +1679,13 @@ def _execute_http_request(
         # fg1: a disabled ("disconnected") integration is never called out with.
         raise ValueError(f"Integration {integration_id} is disabled")
 
-    # Build URL
-    path = config.get("path", "")
-    url = integration.base_url.rstrip("/") + path
-
-    # SEC-6: block SSRF to internal / cloud-metadata / private addresses BEFORE
-    # attaching stored credentials or making any request.
-    from database_utils.utils.ssrf import validate_url_no_ssrf, SSRFValidationError
+    # SEC-6 / audit #20 #21: build the URL without letting the path re-host it,
+    # then pin the connection to the validated IP — BEFORE attaching stored
+    # credentials or making any request.
+    from database_utils.utils.ssrf import join_integration_url, pin_url, SSRFValidationError
     try:
-        validate_url_no_ssrf(url)
+        url = join_integration_url(integration.base_url, config.get("path", "") or "")
+        pinned = pin_url(url)
     except SSRFValidationError as e:
         raise ValueError(f"HTTP_REQUEST step blocked (SSRF guard): {e}")
 
@@ -1564,6 +1705,8 @@ def _execute_http_request(
         encoded = base64.b64encode(raw.encode()).decode()
         headers["Authorization"] = f"Basic {encoded}"
     # NONE: no auth headers added
+    headers = {k: v for k, v in headers.items() if k.lower() != "host"}
+    headers.update(pinned.headers)  # the pinned Host header always wins
 
     # Resolve template variables in the body
     body = _resolve_template(config.get("body"), context)
@@ -1572,7 +1715,10 @@ def _execute_http_request(
 
     try:
         with httpx.Client(timeout=30) as client:
-            response = client.request(method, url, headers=headers, json=body)
+            response = client.request(
+                method, pinned.url, headers=headers, json=body,
+                extensions=pinned.extensions, follow_redirects=False,
+            )
     except httpx.TimeoutException:
         raise ValueError(f"HTTP_REQUEST step timed out after 30s: {method} {url}")
     except httpx.RequestError as e:

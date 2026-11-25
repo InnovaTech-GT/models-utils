@@ -211,6 +211,43 @@ New codes: `CPE_NOT_IN_ACS`, `EDGE_HOST_STALE` (retryable), `EDGE_HOST_OUT_OF_RA
 `WRONG_DEVICE`, `EDGE_TELNET_NOT_CONFIGURED`, `EDGE_TELNET_REQUIRES_WARN`,
 `EDGE_TELNET_NO_ENABLE`, and the run-warning code `WARN_STEP_NOT_UNDONE`.
 
+## 6.39.0: security audit hardening (#22, #95, #96)
+
+- **No control characters in substituted values (#22).** `render_string`
+  leaves a token unrendered and adds the problem
+  `"{{ <token> }} — CONTROL_CHARACTER: value contains a line break or control character"`
+  when the value it would substitute (after filters and `default`) contains any
+  of `\x00-\x08`, `\x0a-\x1f` or `\x7f` (`CONTROL_CHARS`). Tab is allowed, and
+  newlines written in the template itself (multi-line command blocks) are
+  untouched. Every caller already treats non-empty `problems` as fatal, so the
+  job fails before dispatch. This covers every namespace at once (`cpe.*`,
+  `client.*`, `input.*`, ...) and HTTP payloads too (founder D3: one rule).
+- **System playbook names are reserved (#95).** `provisioning_gates.is_reserved_playbook_name(name)`
+  (trimmed, case-insensitive match on `SYSTEM_PLAYBOOK_NAMES`); `PlaybookCreate`
+  and `PlaybookUpdate` (on rename) raise `RESERVED_PLAYBOOK_NAME: ...`.
+  `PlaybookOut` still reads the code-created system rows.
+- **Secret names (#96, founder D6).** `playbook_expr.is_secret_name` hints are now
+  `password`, `secret`, `token`, `key`, `credential`, `passw`, `passphrase`,
+  `pwd`, `psk`, `wpa` (substrings), plus `pass` as a whole word (`wifi_pass`,
+  never `is_passive`); `pin` stays out (ping, mapping). An author can mark any
+  variable explicitly: `PlaybookVariable.secret: bool = False`.
+  `playbook_template.declared_secret_names(definition) -> frozenset` returns
+  `input.<key>` for every `secret: true` variable, and
+  `mask_secrets(variables, extra_secret_names=frozenset())` masks both. The
+  worker executor and backend-erp `run_redaction.py` must pass
+  `declared_secret_names(playbook.definition)`; until they do, only the
+  widened heuristic applies. No existing test template applies a filter to a
+  newly secret-named variable.
+  `PlaybookDefinition` refuses a filter on a `secret: true` variable with
+  `SECRET_FILTER: ...` (the same rule `parse_body` applies to secret-NAMED ones;
+  `computed` cannot read `input.*` at all). Stored rows: `PlaybookOut`
+  re-validates its definition inside `playbook_expr.legacy_secret_names()`,
+  which judges keys by the pre-6.39 hints, so a playbook saved with a capture
+  or computed key such as `wpa_mode` / `pass_count` still lists and reads; the
+  next save must rename it. Rendering and masking always use the wide list, so
+  a stored `{{ input.wpa_mode | upper }}` fails at render (fail closed) — count
+  those on a prod dump before release.
+
 ## Tests
 
 | File | Covers |
