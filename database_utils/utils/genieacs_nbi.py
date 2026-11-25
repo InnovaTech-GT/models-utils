@@ -74,7 +74,10 @@ def find_device_id(client: httpx.Client, company_id, serial: str) -> Optional[st
     tag. Never trusts a caller-supplied device id — this is the tenant
     chokepoint (canon C4): a device outside the tag never matches."""
     tag = tenant_tag(company_id)
-    serial_or = {"$or": [{path: serial} for path in _SERIAL_PATHS]}
+    # Case-tolerant (doc 77 D11): inventory may hold "GPON00c7af66" while the
+    # ONU informs "GPON00C7AF66". Mongo matching is exact, so ask for both.
+    serials = list(dict.fromkeys([serial, serial.strip().upper()]))
+    serial_or = {"$or": [{path: s} for s in serials for path in _SERIAL_PATHS]}
     query = {"$and": [{"_tags": tag}, serial_or]}
     resp = client.get("/devices/", params={"query": json.dumps(query), "projection": "_id"})
     resp.raise_for_status()
