@@ -135,6 +135,14 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### ClientUpdate has no `company_id` (6.39.0, security audit #6)
+
+- `ClientUpdate.company_id` is removed: a client PATCH can never move the row to
+  another tenant. Pydantic's default `extra="ignore"` drops the key, so an old
+  caller that still sends it keeps working and the row stays put. backend-erp
+  `routers/clients.py` must drop its `client_in.company_id` branch in the same
+  pin bump (it would raise `AttributeError`).
+
 ### Client groups (6.29.0 `cg1`, doc 68 §1) — `client` schema changes
 
 - `ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]` — a
