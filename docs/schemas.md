@@ -158,8 +158,10 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   control characters and no `;` `[` `]` `{` `}` `$` `` ` `` `|` `>` (command
   separators / substitution, and pipes/redirects such as IOS `| redirect`,
   `| append`, Junos `| save` that write files), whose first word (lower-cased) is one of
-  `PROBE_COMMAND_VERBS = ("show", "display", "get")` (founder D7), or a RouterOS
-  path command (starts with `/`) whose last word is `print`.
+  `PROBE_COMMAND_VERBS = ("show", "display", "get")` (founder D7), or exactly
+  one bare word from `PROBE_COMMAND_BARE = ("help", "list")` (Fiberhome AN5516
+  has no show/display at its top level; CSR's OLT probes with `help`), or a
+  RouterOS path command (starts with `/`) whose last word is `print`.
   `DeviceTypeCreate` / `DeviceTypeUpdate` refuse a `default_attributes`
   whose `probe_command` fails it with `PROBE_COMMAND_UNSAFE: ...`. Not on
   `DeviceTypeBase`, so `DeviceTypeOut` still reads an old row;
