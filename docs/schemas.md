@@ -135,6 +135,27 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### Inventory hardening (6.39.0, security audit #69, #70, #12/#13)
+
+- `is_safe_probe_command(cmd) -> bool`: one line of at most 100 characters, no
+  control characters and no `;` `[` `]` `{` `}` `$` `` ` `` (command
+  separators / substitution), whose first word (lower-cased) is one of
+  `PROBE_COMMAND_VERBS = ("show", "display", "get")` (founder D7), or a RouterOS
+  path command (starts with `/`) whose last word is `print`.
+  `DeviceTypeCreate` / `DeviceTypeUpdate` refuse a `default_attributes`
+  whose `probe_command` fails it with `PROBE_COMMAND_UNSAFE: ...`. Not on
+  `DeviceTypeBase`, so `DeviceTypeOut` still reads an old row;
+  `connectivity.enqueue_connectivity_check` falls back to
+  `DEFAULT_PROBE_COMMAND` (and logs a warning) for a stored unsafe value.
+- `INVENTORY_MGMT_FIELDS = frozenset({"mgmt_host", "mgmt_port", "cli_protocol", "nat_port"})`:
+  the one list backend-erp uses to require `provisioning_settings.update` on a
+  PATCH / xlsx import that touches the dial target (founder D4; models-utils
+  adds no permission).
+- `EquipmentEventBase` holds every event field; `EquipmentEventCreate(Base)`
+  refuses `event_metadata` with a `swap` key (`RESERVED_METADATA_KEY: swap` —
+  only backend-erp's CPE swap writes it, building the row directly);
+  `EquipmentEventOut(Base)` reads real swap events unchanged.
+
 ### ClientUpdate has no `company_id` (6.39.0, security audit #6)
 
 - `ClientUpdate.company_id` is removed: a client PATCH can never move the row to

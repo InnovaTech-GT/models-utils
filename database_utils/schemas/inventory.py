@@ -255,6 +255,39 @@ def _identity_regex(v: Optional[str]) -> Optional[str]:
     return v
 
 
+# Security audit #69 (founder D7): the connectivity sweep runs a device type's
+# `default_attributes.probe_command` on core devices on every tick, so it must
+# be a read-only command. Add a vendor's read-only verb here; never fall back
+# to free text.
+PROBE_COMMAND_VERBS = ("show", "display", "get")
+# Command separators / substitution (RouterOS `;` and `[...]`, shells `$`, `` ` ``).
+_PROBE_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f;\[\]{}$`]")
+
+
+def is_safe_probe_command(cmd) -> bool:
+    """One line of at most 100 characters, no control characters or command
+    separators, starting with a read-only verb (`PROBE_COMMAND_VERBS`) or a
+    RouterOS path command (`/...`) ending in `print`."""
+    if not isinstance(cmd, str) or len(cmd) > 100 or _PROBE_FORBIDDEN.search(cmd):
+        return False
+    words = cmd.strip().lower().split()
+    if not words:
+        return False
+    if words[0] in PROBE_COMMAND_VERBS:
+        return True
+    return words[0].startswith("/") and words[-1] == "print"
+
+
+def _check_default_attributes(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if isinstance(v, dict) and "probe_command" in v and v["probe_command"] not in (None, ""):
+        if not is_safe_probe_command(v["probe_command"]):
+            raise ValueError(
+                "PROBE_COMMAND_UNSAFE: probe_command must be one read-only command "
+                f"({', '.join(PROBE_COMMAND_VERBS)} ..., or a RouterOS '/... print')"
+            )
+    return v
+
+
 class DeviceTypeBase(BaseModel):
     name: str
     # Cycle 3 E4: device_category.key (a plain string, server-resolved and
@@ -313,7 +346,12 @@ class DeviceTypeBase(BaseModel):
 
 
 class DeviceTypeCreate(DeviceTypeBase):
-    pass
+    # Not on DeviceTypeBase: DeviceTypeOut inherits it and must still read a
+    # stored row that predates the rule (connectivity falls back instead).
+    @field_validator("default_attributes")
+    @classmethod
+    def check_default_attributes(cls, v):
+        return _check_default_attributes(v)
 
 
 class DeviceTypeUpdate(BaseModel):
@@ -335,6 +373,11 @@ class DeviceTypeUpdate(BaseModel):
     # sent alone against the stored is_serialized.
     port_template: Optional[List[PortTemplateGroup]] = None
     path_role: Optional[str] = None
+
+    @field_validator("default_attributes")
+    @classmethod
+    def check_default_attributes(cls, v):
+        return _check_default_attributes(v)
 
     @field_validator("port_template")
     @classmethod
@@ -454,6 +497,13 @@ class InventoryItemCreate(InventoryItemBase):
     # The create form assigns the client and the service in the same call.
     client_id: Optional[UUID] = None
     client_service_id: Optional[UUID] = None
+
+
+# Security audit #12/#13 (founder D4): the fields that decide where the
+# provisioning worker dials. backend-erp requires `provisioning_settings.update`
+# whenever any of them is in a PATCH's model_fields_set or an import row, and
+# clears `mgmt_host_key` when `mgmt_host` changes.
+INVENTORY_MGMT_FIELDS: frozenset = frozenset({"mgmt_host", "mgmt_port", "cli_protocol", "nat_port"})
 
 
 class InventoryItemUpdate(BaseModel):
@@ -590,7 +640,7 @@ class InventoryReceiveOut(BaseModel):
 
 # --- EquipmentEvent ---
 
-class EquipmentEventCreate(BaseModel):
+class EquipmentEventBase(BaseModel):
     event_type: EquipmentEventType
     notes: Optional[str] = None
     event_metadata: Optional[Dict[str, Any]] = None
@@ -602,7 +652,19 @@ class EquipmentEventCreate(BaseModel):
     technician_id: Optional[UUID] = None
 
 
-class EquipmentEventOut(EquipmentEventCreate):
+class EquipmentEventCreate(EquipmentEventBase):
+    # Security audit #70: `event_metadata.swap` marks a backend-erp CPE swap
+    # (latest_swap_event, old_cpe.*). backend-erp builds those rows directly;
+    # the API never lets a client forge one.
+    @field_validator("event_metadata")
+    @classmethod
+    def refuse_reserved_keys(cls, v):
+        if isinstance(v, dict) and "swap" in v:
+            raise ValueError("RESERVED_METADATA_KEY: swap")
+        return v
+
+
+class EquipmentEventOut(EquipmentEventBase):
     id: UUID
     company_id: UUID
     item_id: UUID
