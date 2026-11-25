@@ -43,6 +43,17 @@ def test_unsafe_probe_commands(cmd):
     assert not is_safe_probe_command(cmd)
 
 
+@pytest.mark.parametrize("cmd", ["help", "list", " HELP "])
+def test_bare_help_list_are_safe(cmd):
+    # Fiberhome AN5516 top level has no show/display verb; CSR probes with `help`.
+    assert is_safe_probe_command(cmd)
+
+
+@pytest.mark.parametrize("cmd", ["help reboot", "list x", "helpme", "help;reboot"])
+def test_help_list_only_bare(cmd):
+    assert not is_safe_probe_command(cmd)
+
+
 def test_verbs_constant():
     assert PROBE_COMMAND_VERBS == ("show", "display", "get")
 
