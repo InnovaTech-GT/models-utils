@@ -35,7 +35,7 @@ _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _BAD_PATH_CHARS = re.compile(r"[\\@\s\x00-\x1f\x7f]")
 
 
-def _embedded_ipv4(ip) -> list:
+def embedded_ipv4(ip) -> list:
     """IPv4 addresses an IPv6 address carries (mapped, 6to4, NAT64, Teredo)."""
     if ip.version != 6:
         return []
@@ -58,7 +58,7 @@ def is_blocked_ip(ip) -> bool:
     embeds an IPv4 address is judged by the embedded one too."""
     if isinstance(ip, str):
         ip = ipaddress.ip_address(ip)
-    for inner in _embedded_ipv4(ip):
+    for inner in embedded_ipv4(ip):
         if is_blocked_ip(inner):
             return True
     return (not ip.is_global) or ip.is_multicast

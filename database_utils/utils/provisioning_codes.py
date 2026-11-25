@@ -22,6 +22,9 @@ class Codes:
     # code, not three.
     PROXY_NOT_PROVISIONED = "PROXY_NOT_PROVISIONED"
     MGMT_HOST_NOT_SET = "MGMT_HOST_NOT_SET"
+    # Security audit #33: the dial target is loopback / link-local / metadata /
+    # `*.internal` / an operator-denied CIDR (transport.dial_host_refusal).
+    DIAL_TARGET_BLOCKED = "DIAL_TARGET_BLOCKED"
     NO_ROUTE = "NO_ROUTE"
     CONNECT_REFUSED = "CONNECT_REFUSED"
     CONNECT_TIMEOUT = "CONNECT_TIMEOUT"

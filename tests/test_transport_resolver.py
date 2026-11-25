@@ -286,3 +286,59 @@ def test_two_proxied_tenants_never_share_a_hop(db):
     )
     assert endpoint2 is None
     assert error2 == "TRANSPORT_UNAVAILABLE"
+
+
+# --- security audit #33: dial-target validation -------------------------------
+import pytest  # noqa: E402
+
+from database_utils.utils.provisioning_codes import Codes  # noqa: E402
+from database_utils.utils.transport import dial_host_refusal  # noqa: E402
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.9.9.9", "0.0.0.0", "::1", "[::1]", "::",
+                                  "::ffff:127.0.0.1", "169.254.169.254", "fe80::1", "224.0.0.5",
+                                  "localhost", "LOCALHOST.", "x.localhost", "acs.railway.internal",
+                                  "postgres.railway.internal", "x.local"])
+def test_device_dial_refuses_worker_local_targets(db, host):
+    co = _company_id(db)
+    item = _item(db, co, mgmt_host=host)
+    assert resolve_endpoint(db, item, co, 22) == (None, "DIAL_TARGET_BLOCKED")
+    assert Codes.DIAL_TARGET_BLOCKED == "DIAL_TARGET_BLOCKED"
+
+
+@pytest.mark.parametrize("host", ["10.1.5.37", "192.168.88.1", "172.16.0.9", "100.64.3.2",
+                                  "olt1.isp.example", "200.6.1.1", "fd12::5", "local-olt.isp.example"])
+def test_device_dial_allows_customer_networks(db, host):
+    co = _company_id(db)
+    item = _item(db, co, mgmt_host=host)
+    endpoint, error = resolve_endpoint(db, item, co, 22)
+    assert error is None and endpoint.host == host
+
+
+def test_gateway_host_is_checked(db):
+    co = _company_id(db)
+    _settings(db, co, dial_target="gateway", gateway_host="127.0.0.1")
+    item = _item(db, co, nat_port=2201)
+    assert resolve_endpoint(db, item, co, 22) == (None, "DIAL_TARGET_BLOCKED")
+
+
+def test_proxy_address_is_not_checked_here(db):
+    co = _company_id(db)
+    _settings(db, co, proxy_kind="socks5", proxy_address="pylon.railway.internal:1080")
+    item = _item(db, co, mgmt_host="10.1.5.37")
+    endpoint, error = resolve_endpoint(db, item, co, 22)
+    assert error is None and endpoint.proxy == "pylon.railway.internal:1080"
+
+
+def test_env_deny_cidrs(db, monkeypatch):
+    monkeypatch.setenv("PROVISIONING_DIAL_DENY_CIDRS", "10.250.0.0/16, fd00::/8, not-a-cidr")
+    co = _company_id(db)
+    for host in ("10.250.1.1", "fd12::5", "::ffff:10.250.0.9"):
+        assert resolve_endpoint(db, _item(db, co, mgmt_host=host), co, 22) == (None, "DIAL_TARGET_BLOCKED")
+    endpoint, error = resolve_endpoint(db, _item(db, co, mgmt_host="10.1.5.37"), co, 22)
+    assert error is None
+
+
+def test_dial_host_refusal_direct():
+    assert dial_host_refusal("10.0.0.1") is None
+    assert dial_host_refusal("::ffff:169.254.169.254") == "DIAL_TARGET_BLOCKED"
