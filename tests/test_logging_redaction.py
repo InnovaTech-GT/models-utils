@@ -71,3 +71,19 @@ async def test_failed_request_never_logs_token():
     with pytest.raises(RuntimeError):
         await mw.dispatch(Request(scope), call_next)
     assert "SECRETTOKEN" not in "\n".join(cap.lines)
+
+
+async def test_exception_handler_log_redacts_path():
+    from fastapi import HTTPException
+
+    from database_utils.utils import exception_handlers
+
+    cap = _Capture()
+    exception_handlers.exception_logger.addHandler(cap)
+    try:
+        scope = {"type": "http", "method": "GET", "path": "/validate/SECRETTOKEN",
+                 "query_string": b"", "headers": [], "client": ("1.2.3.4", 5)}
+        await exception_handlers.http_exception_handler(Request(scope), HTTPException(404, "nope"))
+    finally:
+        exception_handlers.exception_logger.removeHandler(cap)
+    assert cap.lines and "SECRETTOKEN" not in "\n".join(cap.lines)

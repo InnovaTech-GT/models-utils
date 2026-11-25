@@ -12,13 +12,15 @@ This middleware automatically:
 import time
 import uuid
 import logging
-from typing import Callable, Mapping, Optional
+from typing import Callable, Optional
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from database_utils.utils.logging_utils import (
+from database_utils.utils.logging_utils import (  # noqa: F401  (redact_* re-exported)
+    redact_path,
+    redact_query,
     set_request_context,
     clear_request_context,
     log_with_context,
@@ -30,27 +32,6 @@ from database_utils.utils.telemetry_utils import set_request_span_attributes
 # Accepted X-Uplink-Client values (doc 68 §3.4). Telemetry, not security: the
 # marker only lets create_run record MCP instead of USER; JWT + RBAC decide.
 CLIENT_MARKERS = frozenset({"mcp"})
-
-
-# Security audit #43: auth-erp's password_reset / invitations /
-# email_confirmation links carry a single-use token as the segment after
-# /validate/, and some flows pass one in the query string.
-_REDACTED = "***"
-_SECRET_QUERY_KEYS = frozenset({"token", "code", "signature", "key", "password"})
-
-
-def redact_path(path: str) -> str:
-    """Replace the segment after every `/validate/` with `***`."""
-    parts = (path or "").split("/")
-    for i in range(len(parts) - 1):
-        if parts[i] == "validate" and parts[i + 1]:
-            parts[i + 1] = _REDACTED
-    return "/".join(parts)
-
-
-def redact_query(params: Mapping[str, str]) -> dict:
-    """Mask the values of token-like query keys (case-insensitive)."""
-    return {k: (_REDACTED if k.lower() in _SECRET_QUERY_KEYS else v) for k, v in params.items()}
 
 
 def client_marker(value: Optional[str]) -> Optional[str]:
