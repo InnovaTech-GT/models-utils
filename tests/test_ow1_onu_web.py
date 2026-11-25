@@ -79,8 +79,8 @@ def test_credential_priority_schema():
 
 
 def test_cpe_web_cidrs_schema_normalizes():
-    u = ProvisioningSettingsUpdate(cpe_web_cidrs=" 10.0.0.0/8 , 10.0.0.0/8,2001:DB8:0::/32 ,")
-    assert u.cpe_web_cidrs == "10.0.0.0/8,2001:db8::/32"
+    u = ProvisioningSettingsUpdate(cpe_web_cidrs=" 10.0.0.0/8 , 10.0.0.0/8,192.168.1.0/24 ,")
+    assert u.cpe_web_cidrs == "10.0.0.0/8,192.168.1.0/24"
     assert ProvisioningSettingsUpdate(cpe_web_cidrs="").cpe_web_cidrs is None
     assert ProvisioningSettingsUpdate(cpe_web_cidrs=" , ").cpe_web_cidrs is None
     assert ProvisioningSettingsUpdate(cpe_web_cidrs=None).cpe_web_cidrs is None
@@ -92,6 +92,7 @@ def test_cpe_web_cidrs_schema_normalizes():
     "0.0.0.0/0", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "::/0", "fe80::/10",
     "::1/128", "10.0.0.0/8;192.168.0.0/16",
     "fd12::/16", "fc00::/7", "fd00::/8", "240.0.0.0/4", "255.255.255.255/32",  # Railway ULA, reserved
+    "2001:db8::/32", "::ffff:10.0.0.0/104", "10.0.0.0/8,2001:db8::/32",  # IPv4 only
 ])
 def test_cpe_web_cidrs_schema_rejects(bad):
     with pytest.raises(ValidationError):
@@ -113,9 +114,11 @@ def test_cpe_web_cidrs_cap():
     ("10.1.2.3", "10.0.0.0/8", True),
     (" 10.70.2.9 ", "192.168.0.0/16,10.70.0.0/16", True),
     ("11.0.0.1", "10.0.0.0/8", False),
-    ("2001:db8::5", "10.0.0.0/8,2001:db8::/32", True),
+    ("2001:db8::5", "10.0.0.0/8,2001:db8::/32", False),  # IPv6 CIDR fails the list closed
+    ("2001:db8::5", "10.0.0.0/8", False),           # IPv6 hosts are refused
     ("fd12::5", "10.0.0.0/8,fd12::/16", False),    # a forbidden CIDR fails the whole list closed
-    ("::ffff:10.1.1.1", "10.0.0.0/8", True),       # v4-mapped is judged as v4
+    ("::ffff:10.1.1.1", "10.0.0.0/8", False),      # v4-mapped is IPv6: refused, never unmapped
+    ("::ffff:a01:101", "10.0.0.0/8", False),
     ("::ffff:127.0.0.1", "10.0.0.0/8", False),
     ("onu.local", "10.0.0.0/8", False),            # names are never resolved
     ("10.1.2.3", None, False),                     # NULL setting: nothing allowed

@@ -562,9 +562,17 @@ class PlaybookStep(BaseModel):
                 raise ValueError(f"step '{self.name}': onu_web driver requires 'request' with "
                                  f"'action' one of {list(ONU_WEB_ACTIONS)}")
             hosts = req.get("hosts")
-            if not isinstance(hosts, list) or not hosts:
+            if (not isinstance(hosts, list) or not hosts
+                    or not all(isinstance(h, str) and h.strip() for h in hosts)):
                 raise ValueError(f"step '{self.name}': onu_web 'request.hosts' must be a "
-                                 "non-empty list")
+                                 "non-empty list of non-blank strings")
+            # A write (or a status that may reboot) must be pinned to the ONU.
+            if ((req["action"] != "status" or req.get("reboot_if_wifi_empty"))
+                    and not (isinstance(req.get("expect_serial"), str)
+                             and req["expect_serial"].strip())):
+                raise ValueError(f"step '{self.name}': onu_web 'request.expect_serial' is "
+                                 "required for migrate, restore_backup and a status with "
+                                 "reboot_if_wifi_empty")
         elif self.driver == "tr069":
             if not self.request and not self.template:
                 raise ValueError(

@@ -219,9 +219,13 @@ fixed-IP -> PPPoE migration). It is in `PLAYBOOK_DRIVERS`, `NETWORK_DRIVERS`,
 and `ALLOWED_BY_TIER["EDGE"]` only. It is **not** in `NO_UNDO_DRIVERS`: a
 migrate needs a rollback step (`restore_backup`, `undoes: migrate`). The step
 validator requires `request.action` in `ONU_WEB_ACTIONS` (`status`, `migrate`,
-`restore_backup`) and a non-empty `request.hosts` list; the rest of the request
-shape belongs to the worker driver. Every host must fall in
-`provisioning_settings.cpe_web_cidrs` (`utils/cpe_web.host_in_any_cidr`).
+`restore_backup`), a non-empty `request.hosts` list whose every element is a
+non-blank string, and a non-blank `request.expect_serial` for `migrate`,
+`restore_backup` and for a `status` whose `reboot_if_wifi_empty` is truthy
+(a write, or a status that may reboot, must be pinned to the ONU); the rest of the request
+shape belongs to the worker driver. Every host must be a literal IPv4
+address in `provisioning_settings.cpe_web_cidrs` (IPv4-only;
+`utils/cpe_web.host_in_any_cidr` refuses every IPv6 host, IPv4-mapped included).
 
 New codes, all deterministic (never retried): `FIRMWARE_UNSUPPORTED`,
 `RESTORE_REJECTED`, `BACKUP_NOT_FOUND`, `TARGET_NOT_ALLOWED`, `NOT_ELIGIBLE`.

@@ -669,6 +669,15 @@ def test_job_out_masks_secret_variables():
     {"action": "status"},
     {"action": "status", "hosts": []},
     {"action": "status", "hosts": "10.0.0.1"},
+    {"action": "status", "hosts": ["10.0.0.1", ""]},
+    {"action": "status", "hosts": ["  "]},
+    {"action": "status", "hosts": [10]},
+    {"action": "status", "hosts": [None]},
+    {"action": "migrate", "hosts": ["10.0.0.1"]},
+    {"action": "restore_backup", "hosts": ["10.0.0.1"]},
+    {"action": "migrate", "hosts": ["10.0.0.1"], "expect_serial": " "},
+    {"action": "migrate", "hosts": ["10.0.0.1"], "expect_serial": 123},
+    {"action": "status", "hosts": ["10.0.0.1"], "reboot_if_wifi_empty": True},
 ])
 def test_onu_web_step_needs_an_action_and_hosts(request_):
     step = {"name": "w", "driver": "onu_web", "template": "x"}
@@ -680,5 +689,16 @@ def test_onu_web_step_needs_an_action_and_hosts(request_):
 @pytest.mark.parametrize("action", ["status", "migrate", "restore_backup"])
 def test_onu_web_step_accepts_each_action(action):
     d = PlaybookDefinition.model_validate({"configuration": [
-        {"name": "w", "driver": "onu_web", "request": {"action": action, "hosts": ["10.0.0.1"]}}]})
+        {"name": "w", "driver": "onu_web", "request": {
+            "action": action, "hosts": ["10.0.0.1", "{{device.ip}}"],
+            "expect_serial": "{{cpe.serial}}"}}]})
     assert d.configuration[0].request["action"] == action
+
+
+@pytest.mark.parametrize("request_", [
+    {"action": "status", "hosts": ["10.0.0.1"]},
+    {"action": "status", "hosts": ["10.0.0.1"], "reboot_if_wifi_empty": False},
+])
+def test_onu_web_plain_status_needs_no_expect_serial(request_):
+    PlaybookDefinition.model_validate({"configuration": [
+        {"name": "w", "driver": "onu_web", "request": request_}]})
