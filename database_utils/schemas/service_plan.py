@@ -86,8 +86,16 @@ class ServicePlanBase(BaseModel):
         return _coerce_params(v)
 
 
+def _non_negative_price(v, info):
+    """Security audit #68: zero is a free plan; negative is never a price.
+    On Create/Update only, so ServicePlanOut still reads a legacy row."""
+    if v is not None and v < 0:
+        raise ValueError(f"NEGATIVE_PRICE: {info.field_name} cannot be negative")
+    return v
+
+
 class ServicePlanCreate(ServicePlanBase):
-    pass
+    _check_prices = field_validator("price", "price_cents", "installation_price_cents")(_non_negative_price)
 
 
 class ServicePlanUpdate(BaseModel):
@@ -106,6 +114,8 @@ class ServicePlanUpdate(BaseModel):
     kind: Optional[CatalogKind] = None
     stock: Optional[int] = None
     service_id: Optional[UUID] = None
+
+    _check_prices = field_validator("price", "price_cents", "installation_price_cents")(_non_negative_price)
 
     @field_validator("provisioning_params", mode="before")
     @classmethod

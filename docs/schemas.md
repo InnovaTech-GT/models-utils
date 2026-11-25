@@ -135,6 +135,16 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### Quantity and price bounds (6.39.0, security audit #68)
+
+- `OrderItemBase.quantity` / `OrderItemUpdate.quantity`, `ClientServiceCreate.quantity`
+  and `ClientServiceBillingUpdate.quantity`: `ge=1` (DB backstop: the
+  `sec1_quantity_checks` CHECKs).
+- `ServicePlanCreate` / `ServicePlanUpdate` refuse a negative `price`,
+  `price_cents` or `installation_price_cents` (`NEGATIVE_PRICE: ...`); zero
+  stays allowed (free plans). Not on `ServicePlanBase`, so `ServicePlanOut`
+  still reads a legacy negative row.
+
 ### Inventory hardening (6.39.0, security audit #69, #70, #12/#13)
 
 - `is_safe_probe_command(cmd) -> bool`: one line of at most 100 characters, no

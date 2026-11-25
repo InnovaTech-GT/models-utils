@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 from uuid import UUID
 from .service_plan import ServicePlanOut
@@ -6,7 +6,9 @@ from .service_plan import ServicePlanOut
 
 class OrderItemBase(BaseModel):
     service_plan_id: UUID
-    quantity: int
+    # Security audit #68: a zero/negative line would credit the client. The DB
+    # backstop is ck_order_item_quantity_positive (sec1_quantity_checks).
+    quantity: int = Field(ge=1)
 
 
 class OrderItemInput(OrderItemBase):
@@ -19,7 +21,7 @@ class OrderItemCreate(OrderItemBase):
 
 class OrderItemUpdate(BaseModel):
     service_plan_id: Optional[UUID] = None
-    quantity: Optional[int] = None
+    quantity: Optional[int] = Field(default=None, ge=1)
 
 
 class OrderItemOut(BaseModel):

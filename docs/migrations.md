@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (139 revisions, head: **`dm1_device_metrics`** (6.38.0, doc 75, additive: `device_metric` + `device_metric_5m`/`_1h`/`_1d`), on `tm2_drop_pppoe_username` ← `tm1_traffic_match` ← `sm1_snmp_traffic_metrics`) — plus
+`alembic/versions/` (140 revisions, head: **`sec1_quantity_checks`** (6.39.0, security audit #68, additive: `ck_order_item_quantity_positive` + `ck_client_service_quantity_positive`), on `dm1_device_metrics` (6.38.0, doc 75, additive: `device_metric` + `device_metric_5m`/`_1h`/`_1d`) ← `tm2_drop_pppoe_username` ← `tm1_traffic_match` ← `sm1_snmp_traffic_metrics`) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and
@@ -1577,3 +1577,16 @@ so new invoices without referral credit are written as SQL NULL too. The only re
 (`credit_detail or []`) treats both as empty, so it is safe at any point of a deploy. Idempotent;
 `downgrade()` is a documented no-op. `tests/test_credit_detail_null.py` pins the chain;
 `tests/pg/test_cdn1_pg.py` runs the statement on a real Postgres.
+
+## sec1_quantity_checks (6.39.0, security audit #68)
+
+Parent `dm1_device_metrics`. Additive, hand-written (`SET LOCAL lock_timeout = '5s'`): adds
+`ck_order_item_quantity_positive` and `ck_client_service_quantity_positive`
+(`CHECK (quantity >= 1)`), the DB backstop for writers that bypass the schemas (xlsx import,
+backend-erp `catalog_resolution`); the models declare the same CHECKs so SQLite `create_all`
+enforces them in tests. The upgrade first counts rows with `quantity < 1` in both tables and
+raises `RuntimeError` naming both counts if any exist, so it never half-applies — fix the
+data, then re-run. Idempotent (drop-if-exists before add). `downgrade()` drops both CHECKs.
+`tests/test_quantity_bounds.py` pins the chain; `tests/pg/test_sec1_pg.py` checks both CHECKs
+at head, the refusing pre-check and a downgrade/upgrade round trip. Rehearse on a fresh prod
+dump before release (expected: the pre-check reports 0 rows).
