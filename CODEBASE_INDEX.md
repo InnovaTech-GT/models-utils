@@ -60,7 +60,7 @@ device_action_log, collection_area (ca1: `CollectionAreaCreate`/`Update`/`Out`, 
 subscription (doc 69: `SubscriptionWithTier` credit/balance/partner fields, `SubscriptionExceptionUpdate.partner`), payment_method, billing_invoice (doc 69: credit/balance/refund cents + computed `discounted`), referral (doc 69, not star-imported: `RewardOut`, `ReferralAdminOut`, `TenantReferralsOut`, `RewardDecision`, `ReversalOut`, `ReversalLink`, `REFERRAL_STAGES`), invitation,
 audit_log, device_category, email_verification, password_reset, pagination
 (`PaginatedResponse[T]`); **Cycle 4**: insight (v2: opaque `spec`/`viz`/`default_time_range`, `InsightChartSpec` deleted); **Cycle 5**: acs_registration,
-device_credential, provisioning_settings (`network_access` deleted by
+device_credential (ow1: `require_cpe_web_binding`, CPE_WEB never a company default), provisioning_settings (`network_access` deleted by
 `tr1_transport_axis`). (`schemas/network.py`
 — the old graph schema — was deleted with the graph removal (c2d); unrelated to
 the Cycle-5 network-config schemas above.) **Cycle 7** adds no modules — it

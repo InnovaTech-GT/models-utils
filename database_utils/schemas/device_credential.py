@@ -13,7 +13,7 @@ insert, and `Out` NEVER carries the ciphertext/dek/plaintext — only
 pointed at, so a credential with both FKs NULL IS the company default); the
 router verifies each binding is same-company.
 """
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
@@ -25,6 +25,15 @@ def _validate_kind(v: str) -> str:
     if v not in CREDENTIAL_KINDS:
         raise ValueError(f"kind must be one of {sorted(CREDENTIAL_KINDS)}")
     return v
+
+
+def require_cpe_web_binding(kind, inventory_item_id, device_type_id) -> None:
+    """Doc 77 D4: a CPE_WEB credential is never a company default — it must be
+    bound to an item or a device type. Create checks it here; Update is
+    partial, so the router must call this on the MERGED row."""
+    if kind == "CPE_WEB" and inventory_item_id is None and device_type_id is None:
+        raise ValueError("CPE_WEB_BINDING_REQUIRED: a CPE_WEB credential needs "
+                         "inventory_item_id or device_type_id (never a company default)")
 
 
 class DeviceCredentialBase(BaseModel):
@@ -48,6 +57,11 @@ class DeviceCredentialCreate(DeviceCredentialBase):
     # Plaintext secret — encrypted by the router via crypto.py before insert
     # and never persisted in the clear. Required on create.
     secret: str
+
+    @model_validator(mode="after")
+    def cpe_web_needs_a_binding(self):
+        require_cpe_web_binding(self.kind, self.inventory_item_id, self.device_type_id)
+        return self
 
 
 class DeviceCredentialUpdate(BaseModel):

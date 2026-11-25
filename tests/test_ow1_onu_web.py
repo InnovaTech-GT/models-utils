@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from database_utils.models import isp
 from database_utils.models.isp import DeviceCredential, OnuConfigBackup, ProvisioningSettings
 from database_utils.schemas.device_credential import (
-    DeviceCredentialCreate, DeviceCredentialOut, DeviceCredentialUpdate,
+    DeviceCredentialCreate, DeviceCredentialOut, DeviceCredentialUpdate, require_cpe_web_binding,
 )
 from database_utils.schemas.provisioning_settings import (
     ProvisioningSettingsOut, ProvisioningSettingsUpdate,
@@ -51,8 +51,21 @@ def test_columns_and_table():
     assert [c.name for c in ix.columns] == ["company_id", "inventory_item_id", "created_at"]
 
 
-def test_credential_priority_schema():
+def test_cpe_web_is_never_a_company_default():
     base = {"name": "f", "kind": "CPE_WEB", "username": "admin", "secret": "s"}
+    with pytest.raises(ValidationError, match="CPE_WEB_BINDING_REQUIRED"):
+        DeviceCredentialCreate(**base)
+    DeviceCredentialCreate(**base, device_type_id=uuid.uuid4())
+    DeviceCredentialCreate(**base, inventory_item_id=uuid.uuid4())
+    DeviceCredentialCreate(**{**base, "kind": "SSH"})  # other kinds may be the default
+    require_cpe_web_binding("SSH", None, None)
+    with pytest.raises(ValueError, match="CPE_WEB_BINDING_REQUIRED"):
+        require_cpe_web_binding("CPE_WEB", None, None)
+
+
+def test_credential_priority_schema():
+    base = {"name": "f", "kind": "CPE_WEB", "username": "admin", "secret": "s",
+            "device_type_id": uuid.uuid4()}
     assert DeviceCredentialCreate(**base).priority == 0
     assert DeviceCredentialCreate(**base, priority=1000).priority == 1000
     for bad in (-1, 1001):
