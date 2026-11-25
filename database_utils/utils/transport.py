@@ -39,10 +39,73 @@ collapsed into one `PROXY_NOT_PROVISIONED`.
 """
 from __future__ import annotations
 
+import ipaddress
+import os
+import socket
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from loguru import logger
+
 from database_utils.models.isp import ProvisioningSettings
+from database_utils.utils.provisioning_codes import Codes
+from database_utils.utils.ssrf import embedded_ipv4
+
+# Hostname suffixes that only ever name the worker's own side of the network
+# (`*.railway.internal` = the platform's private services, mDNS, loopback).
+_WORKER_LOCAL_SUFFIXES = (".localhost", ".internal", ".local")
+
+
+def _deny_cidrs() -> list:
+    """PROVISIONING_DIAL_DENY_CIDRS (comma list), read per call: the
+    per-deployment calibration knob (e.g. Railway's private fd00::/8)."""
+    nets = []
+    for raw in os.getenv("PROVISIONING_DIAL_DENY_CIDRS", "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(raw, strict=False))
+        except ValueError:
+            logger.warning(f"PROVISIONING_DIAL_DENY_CIDRS: ignoring invalid entry {raw!r}")
+    return nets
+
+
+def dial_host_refusal(host: str) -> Optional[str]:
+    """`Codes.DIAL_TARGET_BLOCKED` when `host` names the worker itself rather
+    than a customer device (security audit #33), else None.
+
+    Refused: IP literals (IPv4 embedded in IPv6 unwrapped) that are loopback,
+    unspecified, link-local (incl. 169.254.169.254 metadata) or multicast; any
+    IP inside PROVISIONING_DIAL_DENY_CIDRS; and `localhost` / `*.localhost` /
+    `*.internal` / `*.local`. RFC 1918, CGNAT and public addresses are allowed —
+    customer devices live there behind SOCKS or the relay. Hostnames are NOT
+    resolved: over SOCKS the proxy resolves them. Non-canonical IPv4 literals
+    ('127.1', '2130706433', '0x7f000001', '0177.0.0.1', '0') are parsed the
+    way glibc inet_aton/getaddrinfo would and judged as the address they mean."""
+    h = (host or "").strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    try:
+        ip = ipaddress.ip_address(h.split("%", 1)[0])
+    except ValueError:
+        name = h.rstrip(".")
+        if name == "localhost" or name.endswith(_WORKER_LOCAL_SUFFIXES):
+            return Codes.DIAL_TARGET_BLOCKED
+        try:
+            # inet_aton accepts the shorthand/decimal/hex/octal forms the
+            # resolver would turn into an address; a real hostname fails here.
+            ip = ipaddress.IPv4Address(socket.inet_aton(name))
+        except OSError:
+            return None
+    deny = _deny_cidrs()
+    for cand in [ip, *embedded_ipv4(ip)]:
+        if (cand.is_loopback or cand.is_unspecified or cand.is_link_local
+                or cand.is_multicast):
+            return Codes.DIAL_TARGET_BLOCKED
+        if any(cand.version == net.version and cand in net for net in deny):
+            return Codes.DIAL_TARGET_BLOCKED
+    return None
 
 
 @dataclass(frozen=True)
@@ -92,6 +155,8 @@ def resolve_endpoint(
       * PROXY_NOT_PROVISIONED — proxy_kind='socks5' with a blank proxy_address
       * TRANSPORT_UNAVAILABLE — a caller-supplied `settings` row belonging to a
                                 different company
+      * DIAL_TARGET_BLOCKED   — the final host names the worker's own side
+                                (`dial_host_refusal`; proxy_address is not checked)
 
     `settings` lets a caller that already loaded the row pass it in; when omitted
     it is queried here.
@@ -129,6 +194,9 @@ def resolve_endpoint(
             return None, "NAT_MAPPING_NOT_SET"
         if proxy_missing:
             return None, "PROXY_NOT_PROVISIONED"
+        refusal = dial_host_refusal(gateway_host)
+        if refusal:
+            return None, refusal
         return ResolvedEndpoint(gateway_host, int(item.nat_port), proxy, "gateway"), None
 
     if proxy_missing:
@@ -136,6 +204,9 @@ def resolve_endpoint(
     host = (item.mgmt_host or "").strip()
     if not host:
         return None, "MGMT_HOST_NOT_SET"
+    refusal = dial_host_refusal(host)
+    if refusal:
+        return None, refusal
     return ResolvedEndpoint(host, item.mgmt_port or default_port, proxy, "device"), None
 
 

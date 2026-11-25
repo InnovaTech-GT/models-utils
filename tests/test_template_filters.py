@@ -430,3 +430,32 @@ class TestClientNameForADeviceCli:
         `trim` before it if that is what you meant."""
         out, _ = render_string('{{x | replace:" ","_"}}', {"x": " a b "})
         assert out == "_a_b_"
+
+
+# --- security audit #22: substituted values never carry line breaks ----------
+@pytest.mark.parametrize("bad", ["abc\nreboot", "abc\r\nquit", "x\x00", "x\x1b[2J", "x\x7f", "a\rb"])
+def test_substituted_control_chars_are_refused(bad):
+    out, problems = render_string("ont add {{ cpe.serial }}", {"cpe.serial": bad})
+    assert out == "ont add {{ cpe.serial }}"
+    assert any("CONTROL_CHARACTER" in p for p in problems)
+
+
+def test_control_chars_refused_after_filters():
+    out, problems = render_string("x {{ v | upper }}", {"v": "a\nb"})
+    assert out == "x {{ v | upper }}" and any("CONTROL_CHARACTER" in p for p in problems)
+
+
+def test_template_newlines_and_tabs_still_render():
+    out, problems = render_string("a {{ x }}\nb\t{{ x }}", {"x": "v"})
+    assert (out, problems) == ("a v\nb\tv", [])
+    out, problems = render_string("{{ x }}", {"x": "a\tb"})
+    assert (out, problems) == ("a\tb", [])
+
+
+def test_default_with_control_char_is_refused():
+    tpl = '{{ x | default:"a\x1bb" }}'
+    out, problems = render_string(tpl, {})
+    assert out == tpl and any("CONTROL_CHARACTER" in p for p in problems)
+    # A newline inside the braces never forms a token: it stays literal text.
+    tpl = '{{ x | default:"a\nb" }}'
+    assert render_string(tpl, {})[0] == tpl

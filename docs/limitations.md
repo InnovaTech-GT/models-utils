@@ -115,9 +115,17 @@ chosen in doc 35, and each is a thing a real carrier can walk into.
   in `SYSTEM_PLAYBOOK_NAMES` — including a tenant's own playbook created or
   renamed to one (e.g. `huawei_onu_activate` on a tenant never seeded with it).
   Carried over verbatim from backend-erp; it matters more now that this is the
-  only gate for every run producer. Fix: base the exemption on something a
-  tenant cannot set (an `is_system` column, or the seed's creator), and have
-  backend-erp's playbook create/rename reject names in `SYSTEM_PLAYBOOK_NAMES`.
+  only gate for every run producer. **Mitigated in 6.39.0 (security audit
+  #95):** `PlaybookCreate` / `PlaybookUpdate` refuse a reserved name
+  (`is_reserved_playbook_name`, trimmed and case-insensitive →
+  `RESERVED_PLAYBOOK_NAME: ...`), so a tenant can no longer mint a
+  system-named row through the API; system rows are created only by code
+  (connectivity get-or-create, seeding). Still open: backend-erp must refuse a
+  `definition` PATCH on a system-named row (409 `SYSTEM_PLAYBOOK_READ_ONLY`,
+  except the doc 70 staff path), and rows created before 6.39.0 with a
+  reserved name keep the exemption (pre-release count on a prod dump). The
+  durable fix is still an exemption a tenant cannot set (an `is_system`
+  column, or the seed's creator).
 
 ## Provisioning runs (5.1.0, provisioning concurrency) — shipped limitations
 

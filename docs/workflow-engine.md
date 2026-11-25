@@ -74,7 +74,28 @@ moved *down* from backend-erp in Cycle 3, so the engine's
    - `CREATE_TASK` — creates a task. `status` is optional: PENDING or ASSIGNED follow the resolved technicians, IN_PROGRESS and DONE are kept. Assignees (`assignee_source` fixed / client_technician) are limited to company users holding the **TECHNICIAN** role — the same rule backend-erp enforces with 422 `ASSIGNEE_NOT_TECHNICIAN`. A non-technician (or unknown/other-tenant) id is not an error for an automation: it is skipped, logged (`logger.warning`) and reported in the step result as `skipped_assignee_ids` + `warning`; `client_technician` falls back to the fixed list when the client's technician is rejected; with nobody left the task is created unassigned (PENDING) for the dispatcher.
    (`CREATE_ORDER` and `CREATE_TASK` were added by the irreversible
    `c1e_install_actions` `ALTER TYPE` migration.)
-4. **Trigger-only resources** — `READ_ONLY_RESOURCE_TYPES` (today `payment_link`, pl1, 6.20.0): a workflow may trigger on them, but `UPDATE_FIELD` and `CREATE_ENTITY` fail the step on them whatever the field, before any query. A payment link's state is decided by backend-erp asking the gateway and recorded through PaymentService; letting an automation write it would bypass that. The whole resource is refused, so a column added later is covered without touching a field list.
+   - **Tenant guards on both write paths (6.39.0, security audit #18/#19/#35).**
+     `WORKFLOW_PROTECTED_FIELDS` (`id`, `company_id`, `created_at`) fail the step
+     with `PROTECTED_FIELD: ...` for every resource type. Only real columns are
+     written (relationship attributes and unknown names are skipped, as unknown
+     fields always were). Every non-null foreign key in the write goes through
+     `_assert_references_in_company`: the referenced row must exist with the
+     step's `company_id`, and a target table with no `company_id` (e.g. the
+     global `device_category`) is refused — `FOREIGN_REFERENCE: <field> ...`.
+     `UPDATE_FIELD` on `order.status` refuses an order whose `payment_status`
+     is not `PENDING` (`PAID_ORDER: ...`, founder D1): an automation may still
+     cancel or reactivate an order with no money on it.
+   - **Task cap (6.39.0, audit #116 template path).** `CREATE_ENTITY` on `task`
+     with a `client_id` (or only a `client_service_id`, whose client is then
+     written onto the task and counted) fails with `TASK_RATE_LIMITED: ...` when that client
+     already has `WORKFLOW_TASKS_PER_CLIENT_PER_DAY` (5, the bot's per-sender
+     cap) tasks created by automations (`created_by IS NULL`) in the last 24 h,
+     scoped to the company; office/app tasks do not count. Such tasks are
+     system-created: setting `created_by` is refused (`PROTECTED_FIELD`). The
+     `CREATE_TASK` action (installation flow) is not capped, but its tasks are
+     system-created too, so they count toward the 5. A client named only in
+     the title/description is not counted.
+4. **Trigger-only resources** — `READ_ONLY_RESOURCE_TYPES` (`payment_link`, pl1, 6.20.0; `invoice`, `order_item` and `provisioning_job` since 6.39.0 — billing documents are PaymentService's, `order_item` has no `company_id`, and a provisioning job is created only through `ENQUEUE_PROVISIONING`, whose refusal message the step error names): a workflow may trigger on them, but `UPDATE_FIELD` and `CREATE_ENTITY` fail the step on them whatever the field, before any query. A payment link's state is decided by backend-erp asking the gateway and recorded through PaymentService; letting an automation write it would bypass that. The whole resource is refused, so a column added later is covered without touching a field list.
 5. **Trigger-context variables** — `utils/workflow_fields.py` handles
    variable/field substitution from the triggering entity's context.
 

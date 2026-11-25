@@ -358,6 +358,10 @@ def find_template_errors(text: str) -> List[str]:
     return list(dict.fromkeys(problems))
 
 
+# Every C0 control character except tab, plus DEL.
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
 def render_string(template: str, variables: Dict[str, Any]) -> Tuple[str, List[str]]:
     """Substitute {{…}} constructs. Returns (rendered, problems).
 
@@ -401,6 +405,15 @@ def render_string(template: str, variables: Dict[str, Any]) -> Tuple[str, List[s
 
         if value is None:
             problems.append(expr.name)
+            return match.group(0)
+        if CONTROL_CHARS.search(value):
+            # Security audit #22: a substituted value must never add a line
+            # (a second command on a CLI session). Tab is allowed; the
+            # template's own newlines are untouched.
+            problems.append(
+                f"{match.group(0)} — CONTROL_CHARACTER: value contains a line break "
+                f"or control character"
+            )
             return match.group(0)
         return value
 
@@ -513,9 +526,21 @@ def resolve_variables(
     return resolved, missing
 
 
-def mask_secrets(variables: Dict[str, Any]) -> Dict[str, Any]:
-    """Mask secret-looking variables before persisting to job logs."""
+def declared_secret_names(definition) -> frozenset:
+    """`input.<key>` for every playbook variable declared `secret: true`
+    (security audit #96). Tolerates any stored shape."""
+    variables = (definition or {}).get("variables") if isinstance(definition, dict) else None
+    return frozenset(
+        f"input.{v['key']}"
+        for v in variables or []
+        if isinstance(v, dict) and v.get("secret") is True and v.get("key")
+    )
+
+
+def mask_secrets(variables: Dict[str, Any], extra_secret_names: frozenset = frozenset()) -> Dict[str, Any]:
+    """Mask secret-looking variables (and `extra_secret_names`, e.g.
+    `declared_secret_names(playbook.definition)`) before persisting to job logs."""
     return {
-        k: ("***" if is_secret_name(k) else v)
+        k: ("***" if is_secret_name(k) or k in extra_secret_names else v)
         for k, v in variables.items()
     }

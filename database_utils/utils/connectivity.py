@@ -19,6 +19,7 @@ from database_utils.models.isp import (
     ProvisioningJob,
     ProvisioningTrigger,
 )
+from database_utils.schemas.inventory import is_safe_probe_command
 from database_utils.utils.playbook_revisions import record_revision
 from database_utils.utils.provisioning_gates import ProvisioningGateError, gate_failure
 from database_utils.utils.provisioning_runs import effective_trigger
@@ -155,7 +156,15 @@ def enqueue_connectivity_check(
 
     probe_command = DEFAULT_PROBE_COMMAND
     if item.device_type and isinstance(item.device_type.default_attributes, dict):
-        probe_command = item.device_type.default_attributes.get("probe_command") or DEFAULT_PROBE_COMMAND
+        stored = item.device_type.default_attributes.get("probe_command")
+        if stored and is_safe_probe_command(stored):
+            probe_command = stored
+        elif stored:
+            # Security audit #69: a row saved before the rule never runs.
+            logger.warning(
+                f"device_type {item.device_type.id}: unsafe stored probe_command ignored, "
+                f"using {DEFAULT_PROBE_COMMAND!r}"
+            )
 
     job = ProvisioningJob(
         company_id=item.company_id,

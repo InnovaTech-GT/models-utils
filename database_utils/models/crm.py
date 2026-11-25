@@ -363,6 +363,9 @@ class OrderItem(Base):
 
     __table_args__ = (
         Index("ix_order_item_service_plan", "service_plan_id"),
+        # sec1_quantity_checks (security audit #68): backstop for writers that
+        # bypass the schemas (xlsx import, catalog_resolution).
+        CheckConstraint("quantity >= 1", name="ck_order_item_quantity_positive"),
     )
 
 

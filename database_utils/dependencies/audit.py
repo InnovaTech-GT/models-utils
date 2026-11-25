@@ -8,7 +8,9 @@ comprehensive audit logging to any endpoint.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+import os
 from typing import Optional
 from fastapi import Request
 
@@ -16,42 +18,52 @@ from fastapi import Request
 logger = logging.getLogger(__name__)
 
 
+def _trusted_proxies() -> list:
+    nets = []
+    for raw in os.getenv("TRUSTED_PROXY_CIDRS", "").split(","):
+        raw = raw.strip()
+        if raw:
+            try:
+                nets.append(ipaddress.ip_network(raw, strict=False))
+            except ValueError:
+                logger.warning(f"TRUSTED_PROXY_CIDRS: ignoring invalid entry {raw!r}")
+    return nets
+
+
+def _is_trusted(ip: str, nets: list) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr.version == n.version and addr in n for n in nets)
+
+
 def get_client_ip(request: Request) -> Optional[str]:
     """
-    Extract the client IP address from the request.
+    The client IP for audit logs (security audit #99).
 
-    Checks multiple headers in order of preference:
-    1. X-Forwarded-For (for proxied requests)
-    2. X-Real-IP (alternative proxy header)
-    3. request.client.host (direct connection)
-
-    Args:
-        request: FastAPI Request object
+    `X-Forwarded-For` is trusted only when the direct peer
+    (`request.client.host`) is inside env `TRUSTED_PROXY_CIDRS` (comma list;
+    default empty = trust nothing), and then the RIGHT-most address that is not
+    itself a trusted proxy wins: everything left of it was written by the
+    client and is spoofable. `X-Real-IP` is ignored.
 
     Returns:
         str: IP address of the client, or None if not available
     """
-    # Try X-Forwarded-For header (most common for proxied requests)
+    if not request.client:
+        logger.warning("Could not determine client IP address")
+        return None
+    peer = request.client.host
+    nets = _trusted_proxies()
     forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        # X-Forwarded-For can contain multiple IPs (client, proxy1, proxy2, ...)
-        # The first one is the original client
-        ip = forwarded_for.split(",")[0].strip()
-        logger.debug(f"IP from X-Forwarded-For: {ip}")
-        return ip
-
-    # Try X-Real-IP header
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        logger.debug(f"IP from X-Real-IP: {real_ip}")
-        return real_ip
-
-    # Fall back to direct client IP
-    if request.client:
-        ip = request.client.host
-        logger.debug(f"IP from request.client: {ip}")
-        return ip
-
-    logger.warning("Could not determine client IP address")
-    return None
+    if forwarded_for and _is_trusted(peer, nets):
+        for hop in reversed([h.strip() for h in forwarded_for.split(",")]):
+            try:
+                ipaddress.ip_address(hop)
+            except ValueError:
+                continue
+            if not _is_trusted(hop, nets):
+                return hop
+    return peer
 
