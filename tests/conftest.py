@@ -14,9 +14,14 @@ Both splitters are passive. ACTIVATION and SUSPENSION playbooks are bound to
 the router, olt and onu device TYPES.
 """
 
+import os
 import uuid
 
-import pytest
+# Security audit #23: the JWT module only falls back to its development key
+# under ENVIRONMENT=test. Set before any database_utils import.
+os.environ.setdefault("ENVIRONMENT", "test")
+
+import pytest  # noqa: E402
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 

@@ -34,9 +34,49 @@ def test_missing_secret_raises_in_production(monkeypatch):
         _reload_jwt(monkeypatch, ENVIRONMENT="production")
 
 
-def test_missing_secret_falls_back_outside_production(monkeypatch):
-    m = _reload_jwt(monkeypatch)  # no ENVIRONMENT, no SECRET_KEY
-    assert m.secret_key == "default-secret-key-for-development"
+@pytest.mark.parametrize("env", [" Production ", "PRODUCTION"])
+def test_missing_secret_raises_in_production_any_spelling(monkeypatch, env):
+    with pytest.raises(RuntimeError):
+        _reload_jwt(monkeypatch, ENVIRONMENT=env)
+
+
+def test_missing_secret_refused_when_environment_unset(monkeypatch):
+    # Security audit #23: no well-known signing key outside ENVIRONMENT=test.
+    m = _reload_jwt(monkeypatch)  # import still succeeds (worker/cron never sign)
+    assert not hasattr(m, "secret_key")
+    with pytest.raises(RuntimeError, match="SECRET_KEY must be set"):
+        m.create_token({"id": "u"})
+    with pytest.raises(RuntimeError, match="SECRET_KEY must be set"):
+        m.decode_token("a.b.c")
+
+
+@pytest.mark.parametrize("env", ["development", "staging", "prod", "local"])
+def test_missing_secret_refused_outside_test(monkeypatch, env):
+    m = _reload_jwt(monkeypatch, ENVIRONMENT=env)
+    with pytest.raises(RuntimeError, match="SECRET_KEY must be set"):
+        m.get_secret_key()
+
+
+def test_missing_secret_falls_back_only_in_test(monkeypatch):
+    m = _reload_jwt(monkeypatch, ENVIRONMENT="test")
+    assert m.decode_token(m.create_token({"id": "u"}))["id"] == "u"
+
+
+def test_secret_key_read_per_call(monkeypatch):
+    m = _reload_jwt(monkeypatch, SECRET_KEY="a" * 32)
+    token = m.create_token({"id": "u"})
+    monkeypatch.setenv("SECRET_KEY", "b" * 32)
+    with pytest.raises(Exception):
+        m.decode_token(token)
+    assert m.get_secret_key() == "b" * 32
+
+
+@pytest.mark.parametrize("env,expected", [("production", True), (" Production ", True),
+                                          ("development", False), ("", False), ("test", False)])
+def test_is_production(monkeypatch, env, expected):
+    m = _reload_jwt(monkeypatch, SECRET_KEY="x" * 32)
+    monkeypatch.setenv("ENVIRONMENT", env)
+    assert m.is_production() is expected
 
 
 @pytest.fixture(autouse=True)

@@ -27,13 +27,34 @@ mobile_access_expire = int(os.getenv("MOBILE_ACCESS_TOKEN_EXPIRE", "60"))
 TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_REFRESH = "refresh"
 
-# Signing key. Fail fast in production rather than silently falling back to a
-# well-known string (which would allow token forgery). Dev/test keep a fallback.
-secret_key = os.getenv("SECRET_KEY")
-if not secret_key:
-    if os.getenv("ENVIRONMENT") == "production":
-        raise RuntimeError("SECRET_KEY environment variable must be set in production")
-    secret_key = "default-secret-key-for-development"
+_TEST_ONLY_SECRET = "default-secret-key-for-development"
+
+
+def is_production() -> bool:
+    """ENVIRONMENT is production (trimmed, any case), read on each call."""
+    return os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+
+
+def get_secret_key() -> str:
+    """The JWT signing key, read on each use (security audit #23).
+
+    SECRET_KEY when set. Without it, the well-known development literal only
+    under ENVIRONMENT=test; anywhere else signing or verifying raises, so a
+    misconfigured service can never mint forgeable tokens. Import itself stays
+    non-fatal (outside production) because every consumer imports this module,
+    including the worker and cron, which never sign."""
+    key = os.getenv("SECRET_KEY")
+    if key:
+        return key
+    env = os.getenv("ENVIRONMENT", "")
+    if env.strip().lower() == "test":
+        return _TEST_ONLY_SECRET
+    raise RuntimeError(f"SECRET_KEY must be set (ENVIRONMENT={env})")
+
+
+# Fail fast at import in production.
+if is_production() and not os.getenv("SECRET_KEY"):
+    raise RuntimeError("SECRET_KEY environment variable must be set in production")
 
 ALGORITHM = "HS256"
 
@@ -44,7 +65,7 @@ def create_token(
     to_encode = data.copy()
     expire = now_gt() + (expires_delta or timedelta(minutes=access_expire))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, get_secret_key(), algorithm=ALGORITHM)
 
 
 def create_access_token(usuario, expires_minutes: Optional[int] = None, sid=None):
@@ -116,9 +137,10 @@ def is_refresh_payload(payload: dict) -> bool:
 
 
 def decode_token(token: str):
+    key = get_secret_key()  # outside the try: a missing key is a config error, not a 401
     try:
         # Never log the payload or the token: both are bearer credentials.
-        return jwt.decode(token, secret_key, algorithms=[ALGORITHM])
+        return jwt.decode(token, key, algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Signature has expired")
     except jwt.InvalidTokenError:
