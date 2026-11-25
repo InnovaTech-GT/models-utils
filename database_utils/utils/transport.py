@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -79,7 +80,9 @@ def dial_host_refusal(host: str) -> Optional[str]:
     IP inside PROVISIONING_DIAL_DENY_CIDRS; and `localhost` / `*.localhost` /
     `*.internal` / `*.local`. RFC 1918, CGNAT and public addresses are allowed —
     customer devices live there behind SOCKS or the relay. Hostnames are NOT
-    resolved: over SOCKS the proxy resolves them."""
+    resolved: over SOCKS the proxy resolves them. Non-canonical IPv4 literals
+    ('127.1', '2130706433', '0x7f000001', '0177.0.0.1', '0') are parsed the
+    way glibc inet_aton/getaddrinfo would and judged as the address they mean."""
     h = (host or "").strip().lower()
     if h.startswith("[") and h.endswith("]"):
         h = h[1:-1]
@@ -89,7 +92,12 @@ def dial_host_refusal(host: str) -> Optional[str]:
         name = h.rstrip(".")
         if name == "localhost" or name.endswith(_WORKER_LOCAL_SUFFIXES):
             return Codes.DIAL_TARGET_BLOCKED
-        return None
+        try:
+            # inet_aton accepts the shorthand/decimal/hex/octal forms the
+            # resolver would turn into an address; a real hostname fails here.
+            ip = ipaddress.IPv4Address(socket.inet_aton(name))
+        except OSError:
+            return None
     deny = _deny_cidrs()
     for cand in [ip, *embedded_ipv4(ip)]:
         if (cand.is_loopback or cand.is_unspecified or cand.is_link_local

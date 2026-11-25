@@ -298,7 +298,9 @@ from database_utils.utils.transport import dial_host_refusal  # noqa: E402
 @pytest.mark.parametrize("host", ["127.0.0.1", "127.9.9.9", "0.0.0.0", "::1", "[::1]", "::",
                                   "::ffff:127.0.0.1", "169.254.169.254", "fe80::1", "224.0.0.5",
                                   "localhost", "LOCALHOST.", "x.localhost", "acs.railway.internal",
-                                  "postgres.railway.internal", "x.local"])
+                                  "postgres.railway.internal", "x.local",
+                                  # non-canonical IPv4 that getaddrinfo/inet_aton maps to 127/8 or 0.0.0.0
+                                  "127.1", "2130706433", "0x7f000001", "0177.0.0.1", "0", "169.254.43518"])
 def test_device_dial_refuses_worker_local_targets(db, host):
     co = _company_id(db)
     item = _item(db, co, mgmt_host=host)
