@@ -28,14 +28,15 @@ def _serials(query):
     return {next(iter(c.values())) for c in query["$and"][1]["$or"]}
 
 
-def test_queries_the_given_serial_and_its_upper_case_under_the_tenant_tag():
+def test_queries_the_stripped_serial_upper_and_lower_under_the_tenant_tag():
     client = _Client([{"_id": "dev-1"}])
-    assert find_device_id(client, "co", " gpon00c7af66") == "dev-1"
+    assert find_device_id(client, "co", " GPON00c7af66 ") == "dev-1"
     assert client.query["$and"][0] == {"_tags": tenant_tag("co")}
-    assert _serials(client.query) == {" gpon00c7af66", "GPON00C7AF66"}
+    assert _serials(client.query) == {"GPON00c7af66", "GPON00C7AF66", "gpon00c7af66"}
 
 
-def test_an_upper_case_serial_is_queried_once_and_a_miss_is_none():
+def test_an_upper_case_inventory_serial_also_asks_for_the_lower_case_inform():
     client = _Client([])
-    assert find_device_id(client, "co", "GPON1") is None
-    assert len(client.query["$and"][1]["$or"]) == 3  # one per serial path
+    assert find_device_id(client, "co", "GPON00C7AF66") is None
+    assert _serials(client.query) == {"GPON00C7AF66", "gpon00c7af66"}
+    assert len(client.query["$and"][1]["$or"]) == 6  # 2 forms x 3 serial paths

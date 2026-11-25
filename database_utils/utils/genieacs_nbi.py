@@ -75,8 +75,12 @@ def find_device_id(client: httpx.Client, company_id, serial: str) -> Optional[st
     chokepoint (canon C4): a device outside the tag never matches."""
     tag = tenant_tag(company_id)
     # Case-tolerant (doc 77 D11): inventory may hold "GPON00c7af66" while the
-    # ONU informs "GPON00C7AF66". Mongo matching is exact, so ask for both.
-    serials = list(dict.fromkeys([serial, serial.strip().upper()]))
+    # ONU informs "GPON00C7AF66" (or the reverse). Mongo matching is exact, so
+    # ask for the stripped original, its upper and its lower form.
+    # ponytail: a mixed-case inform against a differently-cased inventory serial
+    # still misses; switch to an anchored, escaped $regex with $options "i" if seen.
+    s = (serial or "").strip()
+    serials = list(dict.fromkeys([s, s.upper(), s.lower()]))
     serial_or = {"$or": [{path: s} for s in serials for path in _SERIAL_PATHS]}
     query = {"$and": [{"_tags": tag}, serial_or]}
     resp = client.get("/devices/", params={"query": json.dumps(query), "projection": "_id"})
