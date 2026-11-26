@@ -695,3 +695,46 @@ def test_filter_on_declared_secret_is_refused():
     PlaybookDefinition.model_validate(
         _v2(configuration=[_step("cfg", template="x {{ input.clave | upper }}")]))
 
+
+# --- onu_web (doc 77): request.action and request.hosts are required ---
+
+@pytest.mark.parametrize("request_", [
+    None,
+    {"hosts": ["10.0.0.1"]},
+    {"action": "factory_reset", "hosts": ["10.0.0.1"]},
+    {"action": "status"},
+    {"action": "status", "hosts": []},
+    {"action": "status", "hosts": "10.0.0.1"},
+    {"action": "status", "hosts": ["10.0.0.1", ""]},
+    {"action": "status", "hosts": ["  "]},
+    {"action": "status", "hosts": [10]},
+    {"action": "status", "hosts": [None]},
+    {"action": "migrate", "hosts": ["10.0.0.1"]},
+    {"action": "restore_backup", "hosts": ["10.0.0.1"]},
+    {"action": "migrate", "hosts": ["10.0.0.1"], "expect_serial": " "},
+    {"action": "migrate", "hosts": ["10.0.0.1"], "expect_serial": 123},
+    {"action": "status", "hosts": ["10.0.0.1"], "reboot_if_wifi_empty": True},
+])
+def test_onu_web_step_needs_an_action_and_hosts(request_):
+    step = {"name": "w", "driver": "onu_web", "template": "x"}
+    if request_ is not None:
+        step["request"] = request_
+    _err({"configuration": [step]}, "onu_web")
+
+
+@pytest.mark.parametrize("action", ["status", "migrate", "restore_backup"])
+def test_onu_web_step_accepts_each_action(action):
+    d = PlaybookDefinition.model_validate({"configuration": [
+        {"name": "w", "driver": "onu_web", "request": {
+            "action": action, "hosts": ["10.0.0.1", "{{device.ip}}"],
+            "expect_serial": "{{cpe.serial}}"}}]})
+    assert d.configuration[0].request["action"] == action
+
+
+@pytest.mark.parametrize("request_", [
+    {"action": "status", "hosts": ["10.0.0.1"]},
+    {"action": "status", "hosts": ["10.0.0.1"], "reboot_if_wifi_empty": False},
+])
+def test_onu_web_plain_status_needs_no_expect_serial(request_):
+    PlaybookDefinition.model_validate({"configuration": [
+        {"name": "w", "driver": "onu_web", "request": request_}]})

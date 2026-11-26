@@ -13,7 +13,8 @@ from database_utils.utils.playbook_drivers import (
 
 @pytest.mark.parametrize("tier,expected", [
     ("CORE", {"ssh", "telnet", "snmp", "ping", "http", "simulator"}),
-    ("EDGE", {"telnet", "tr069", "connection_request", "ping", "http", "simulator", "manual"}),
+    ("EDGE", {"telnet", "tr069", "connection_request", "onu_web", "ping", "http", "simulator",
+              "manual"}),
     ("CONSUMABLE", {"ping", "simulator"}),
     ("TOOL", {"ping", "simulator"}),
     ("OTHER", {"ping", "simulator"}),
@@ -116,3 +117,34 @@ def test_edge_telnet_enable_or_config_mode_is_mismatch():
 def test_tier_mismatch_entry_has_null_reason():
     d = {"configuration": [{"name": "x", "driver": "tr069", "template": "a"}]}
     assert mismatches(d, "CORE")[0]["reason"] is None
+
+
+# --- onu_web (doc 77): EDGE-only, a request dict with action + hosts ---
+
+def test_onu_web_is_edge_only_and_offered_in_the_editor():
+    assert "onu_web" in EDITOR_DRIVERS
+    assert "onu_web" in allowed_drivers("EDGE") and "onu_web" not in allowed_drivers("CORE")
+    d = {"configuration": [{"name": "m", "driver": "onu_web",
+                            "request": {"action": "status", "hosts": ["10.1.1.1"]}}]}
+    assert mismatches(d, "EDGE") == []
+    assert mismatches(d, "CORE")[0]["driver"] == "onu_web"
+
+
+def test_onu_web_is_a_network_request_driver_that_needs_undoing():
+    from database_utils.schemas.playbook import (
+        NETWORK_DRIVERS, NO_UNDO_DRIVERS, PLAYBOOK_DRIVERS, REQUEST_DRIVERS,
+    )
+    assert "onu_web" in PLAYBOOK_DRIVERS and "onu_web" in NETWORK_DRIVERS
+    assert "onu_web" in REQUEST_DRIVERS and "onu_web" not in NO_UNDO_DRIVERS
+
+
+def test_onu_web_request_renders_value_by_value():
+    from database_utils.schemas.playbook import PlaybookStep
+    from database_utils.utils.playbook_render import _render_step
+    step = PlaybookStep(name="s", driver="onu_web",
+                        request={"action": "status", "hosts": ["10.{{p}}.1.{{o}}"],
+                                 "expect_serial": "{{serial}}"})
+    rendered, problems = _render_step(step.model_dump(), {"p": "2", "o": "7", "serial": "AB"},
+                                      "onu_web")
+    assert rendered["hosts"] == ["10.2.1.7"] and rendered["expect_serial"] == "AB"
+    assert not problems

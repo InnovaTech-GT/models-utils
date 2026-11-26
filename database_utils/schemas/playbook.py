@@ -103,8 +103,13 @@ def normalize_purpose(v: str) -> str:
 # core_connectivity_check system playbooks (doc 25 §5.1).
 # connection_request: the worker summons a CPE to inform the ACS now (a
 # CWMP connection request sent from the tenant's network, not by the ACS).
+# onu_web (doc 77): the worker drives a Realtek ONU's web UI (status, the
+# fixed-IP -> PPPoE migrate, restore_backup) on hosts inside the tenant's
+# provisioning_settings.cpe_web_cidrs.
 PLAYBOOK_DRIVERS = {"simulator", "http", "ssh", "telnet", "snmp", "tr069", "ping", "manual",
-                    "connection_request"}
+                    "connection_request", "onu_web"}
+# The `request.action` values of an onu_web step (doc 77 §3).
+ONU_WEB_ACTIONS = ("status", "migrate", "restore_backup")
 _VAR_TYPES = {"TEXT", "NUMBER", "BOOLEAN"}
 MAX_INPUT_LENGTH = 64  # backend's SAFE_TEXT cap
 
@@ -174,11 +179,11 @@ CLI_DRIVERS = frozenset({"ssh", "telnet"})
 # A step's on_failure value for a best-effort step (doc 67 §4.5).
 WARN_STEP = "warn"
 # Drivers whose step reaches a real device over the network (doc 42 §4.5).
-NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069", "connection_request"})
+NETWORK_DRIVERS = frozenset({"ssh", "telnet", "http", "tr069", "connection_request", "onu_web"})
 # Drivers that change nothing that would need undoing (doc 42 §7.1).
 NO_UNDO_DRIVERS = frozenset({"simulator", "ping", "connection_request"})
 # Drivers whose step payload is a `request` dict, rendered value by value.
-REQUEST_DRIVERS = frozenset({"http", "tr069", "connection_request"})
+REQUEST_DRIVERS = frozenset({"http", "tr069", "connection_request", "onu_web"})
 
 # doc 42d: a step a person performs. Its timeout_seconds is the confirm
 # deadline, with its own range (the upper bound stays under the 1 h
@@ -498,7 +503,7 @@ class PlaybookStep(BaseModel):
     name: str
     driver: str
     template: Optional[str] = None            # command-style drivers
-    request: Optional[Dict[str, Any]] = None  # http / tr069 / connection_request drivers
+    request: Optional[Dict[str, Any]] = None  # http / tr069 / connection_request / onu_web drivers
     validation: Optional[PlaybookStepValidation] = None  # postcondition (canon C15)
     timeout_seconds: int = 30
     # Cycle 7 (doc 25 §4.1): step targeting for the CLI/ping drivers — an
@@ -554,6 +559,23 @@ class PlaybookStep(BaseModel):
         if self.driver in ("http", "connection_request"):
             if not self.request:
                 raise ValueError(f"step '{self.name}': {self.driver} driver requires 'request'")
+        elif self.driver == "onu_web":
+            req = self.request
+            if not isinstance(req, dict) or req.get("action") not in ONU_WEB_ACTIONS:
+                raise ValueError(f"step '{self.name}': onu_web driver requires 'request' with "
+                                 f"'action' one of {list(ONU_WEB_ACTIONS)}")
+            hosts = req.get("hosts")
+            if (not isinstance(hosts, list) or not hosts
+                    or not all(isinstance(h, str) and h.strip() for h in hosts)):
+                raise ValueError(f"step '{self.name}': onu_web 'request.hosts' must be a "
+                                 "non-empty list of non-blank strings")
+            # A write (or a status that may reboot) must be pinned to the ONU.
+            if ((req["action"] != "status" or req.get("reboot_if_wifi_empty"))
+                    and not (isinstance(req.get("expect_serial"), str)
+                             and req["expect_serial"].strip())):
+                raise ValueError(f"step '{self.name}': onu_web 'request.expect_serial' is "
+                                 "required for migrate, restore_backup and a status with "
+                                 "reboot_if_wifi_empty")
         elif self.driver == "tr069":
             if not self.request and not self.template:
                 raise ValueError(

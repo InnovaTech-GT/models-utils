@@ -3,7 +3,7 @@
 ## Description
 
 Alembic-managed schema migrations for all models in this repo — revisions in
-`alembic/versions/` (140 revisions, head: **`sec1_quantity_checks`** (6.39.0, security audit #68, additive: `ck_order_item_quantity_positive` + `ck_client_service_quantity_positive`), on `dm1_device_metrics` (6.38.0, doc 75, additive: `device_metric` + `device_metric_5m`/`_1h`/`_1d`) ← `tm2_drop_pppoe_username` ← `tm1_traffic_match` ← `sm1_snmp_traffic_metrics`) — plus
+`alembic/versions/` (141 revisions, head: **`ow1_onu_web`** (6.40.0, doc 77, additive: `device_credential.priority` + kind `CPE_WEB` — downgrade refuses while one exists —, `provisioning_settings.cpe_web_cidrs`, `onu_config_backup`) ← `sec1_quantity_checks` (6.39.0, security audit #68, additive: `ck_order_item_quantity_positive` + `ck_client_service_quantity_positive`) ← `dm1_device_metrics` (6.38.0, doc 75, additive: `device_metric` + `device_metric_5m`/`_1h`/`_1d`) ← `tm2_drop_pppoe_username` ← `tm1_traffic_match` ← `sm1_snmp_traffic_metrics`) — plus
 the idempotent seed scripts that run after every upgrade.
 
 Where each database is (2026-10-25): **production** (`main` `8394620`) and

@@ -91,6 +91,20 @@
     "expected": "AABBCCDDEEFF"
   },
   {
+    "template": "{{x | mac_add:1}}",
+    "variables": {
+      "x": "aa:bb:cc:dd:ee:ff"
+    },
+    "expected": "AABBCCDDEF00"
+  },
+  {
+    "template": "{{x | mac_add:-1 | mac:colon}}",
+    "variables": {
+      "x": "AABB.CCDD.EF00"
+    },
+    "expected": "AA:BB:CC:DD:EE:FF"
+  },
+  {
     "template": "{{x | trim | replace:\" \",\"_\" | upper}}",
     "variables": {
       "x": "  a b  "
@@ -262,6 +276,14 @@
       "acs.inform_password": "h"
     },
     "expected": "{{acs.inform_password | upper}}",
+    "error": true
+  },
+  {
+    "template": "{{x | mac_add:1}}",
+    "variables": {
+      "x": "FF:FF:FF:FF:FF:FF"
+    },
+    "expected": "{{x | mac_add:1}}",
     "error": true
   }
 ]

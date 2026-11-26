@@ -142,6 +142,21 @@ def _f_mac(s: str, style: str) -> str:
     return sep.join(up[i:i + 2] for i in range(0, 12, 2))
 
 
+def _f_mac_add(s: str, n: str) -> str:
+    """MAC + N (doc 77 D12): `{{cpe.mac | mac_add:1}}` is the ONU's WAN MAC.
+    Any separator in; out bare upper-case hex (the `mac:bare` shape, which
+    `mac` accepts), so chain `| mac:colon` for a separated form. Never wraps:
+    leaving 00:00:00:00:00:00..FF:FF:FF:FF:FF:FF is an error."""
+    delta = _int_arg("mac_add", n, -255, 255)
+    hex_digits = re.sub(r"[^0-9A-Fa-f]", "", s)
+    if len(hex_digits) != 12:
+        raise TemplateError(f"'{s}' is not a MAC address")
+    value = int(hex_digits, 16) + delta
+    if not 0 <= value < 1 << 48:
+        raise TemplateError(f"'mac_add:{delta}' overflows the MAC '{s}'")
+    return f"{value:012X}"
+
+
 def _f_alnum(s: str) -> str:
     """Keep [A-Za-z0-9_-]. The documented sanitizer for CRM-sourced text that
     reaches a device CLI, where a stray quote or newline is an injection."""
@@ -177,6 +192,7 @@ FILTERS: Dict[str, FilterSpec] = {
     "last": FilterSpec(_f_last, 1, 1, "last:4"),
     "pad_left": FilterSpec(_f_pad_left, 1, 2, 'pad_left:3,"0"'),
     "mac": FilterSpec(_f_mac, 1, 1, "mac:colon|dash|dot|bare"),
+    "mac_add": FilterSpec(_f_mac_add, 1, 1, "mac_add:1"),
     # `default` never reaches _apply — it is handled in the render loop because
     # it is the one filter with something to say about a MISSING value.
     "default": FilterSpec(None, 1, 1, 'default:"value"'),
