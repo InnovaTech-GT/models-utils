@@ -135,6 +135,55 @@ anything but a numeric dotted OID of 4+ arcs and at most 200 chars (`INVALID_OID
   (`results` + `adopted_count`/`error_count`) — the bulk response (per-row,
   never all-or-nothing)
 
+### Admin-set passwords need 8 characters (6.39.0, security audit #94)
+
+- `UserCreate.password`, `UserUpdate.password` and `SuperAdminCreate.password`
+  are `constr(min_length=8)` (was 6), matching invitation, reset and signup.
+  Existing 6- and 7-character passwords still log in (only the hash is
+  stored); UI copy should say "at least 8 characters".
+
+### Quantity and price bounds (6.39.0, security audit #68)
+
+- `OrderItemBase.quantity` / `OrderItemUpdate.quantity`, `ClientServiceCreate.quantity`
+  and `ClientServiceBillingUpdate.quantity`: `ge=1` (DB backstop: the
+  `sec1_quantity_checks` CHECKs).
+- `ServicePlanCreate` / `ServicePlanUpdate` refuse a negative `price`,
+  `price_cents` or `installation_price_cents` (`NEGATIVE_PRICE: ...`); zero
+  stays allowed (free plans). Not on `ServicePlanBase`, so `ServicePlanOut`
+  still reads a legacy negative row.
+
+### Inventory hardening (6.39.0, security audit #69, #70, #12/#13)
+
+- `is_safe_probe_command(cmd) -> bool`: one line of at most 100 characters, no
+  control characters and no `;` `[` `]` `{` `}` `$` `` ` `` `|` `>` (command
+  separators / substitution, and pipes/redirects such as IOS `| redirect`,
+  `| append`, Junos `| save` that write files), whose first word (lower-cased) is one of
+  `PROBE_COMMAND_VERBS = ("show", "display", "get")` (founder D7), or exactly
+  one bare word from `PROBE_COMMAND_BARE = ("help", "list")` (Fiberhome AN5516
+  has no show/display at its top level; CSR's OLT probes with `help`), or a
+  RouterOS path command (starts with `/`) whose last word is `print`.
+  `DeviceTypeCreate` / `DeviceTypeUpdate` refuse a `default_attributes`
+  whose `probe_command` fails it with `PROBE_COMMAND_UNSAFE: ...`. Not on
+  `DeviceTypeBase`, so `DeviceTypeOut` still reads an old row;
+  `connectivity.enqueue_connectivity_check` falls back to
+  `DEFAULT_PROBE_COMMAND` (and logs a warning) for a stored unsafe value.
+- `INVENTORY_MGMT_FIELDS = frozenset({"mgmt_host", "mgmt_port", "cli_protocol", "nat_port"})`:
+  the one list backend-erp uses to require `provisioning_settings.update` on a
+  PATCH / xlsx import that touches the dial target (founder D4; models-utils
+  adds no permission).
+- `EquipmentEventBase` holds every event field; `EquipmentEventCreate(Base)`
+  refuses `event_metadata` with a `swap` key (`RESERVED_METADATA_KEY: swap` —
+  only backend-erp's CPE swap writes it, building the row directly);
+  `EquipmentEventOut(Base)` reads real swap events unchanged.
+
+### ClientUpdate has no `company_id` (6.39.0, security audit #6)
+
+- `ClientUpdate.company_id` is removed: a client PATCH can never move the row to
+  another tenant. Pydantic's default `extra="ignore"` drops the key, so an old
+  caller that still sends it keeps working and the row stays put. backend-erp
+  `routers/clients.py` must drop its `client_in.company_id` branch in the same
+  pin bump (it would raise `AttributeError`).
+
 ### Client groups (6.29.0 `cg1`, doc 68 §1) — `client` schema changes
 
 - `ClientGroupColor = Literal["grey", "blue", "green", "yellow", "red"]` — a

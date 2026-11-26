@@ -57,8 +57,9 @@ CORE_CONNECTIVITY_PLAYBOOK_NAMES = frozenset({
 })
 
 # canon C7: seeded system playbooks are SaaS-verified and exempt from the
-# per-tenant dry-run gate. Matched by name: `playbook` has no is_system flag,
-# so a tenant playbook named like one is exempt too (docs/limitations.md).
+# per-tenant dry-run gate. Matched by name: `playbook` has no is_system flag.
+# Since 6.39.0 the API schemas refuse these names (is_reserved_playbook_name),
+# so only code-created rows carry them (docs/limitations.md).
 SYSTEM_PLAYBOOK_NAMES = frozenset({
     "cpe_reboot",
     "cpe_factory_reset",
@@ -70,6 +71,15 @@ SYSTEM_PLAYBOOK_NAMES = frozenset({
     "huawei_onu_reboot",
     "huawei_onu_deprovision",
 }) | CORE_CONNECTIVITY_PLAYBOOK_NAMES
+
+_RESERVED_LOWER = frozenset(n.lower() for n in SYSTEM_PLAYBOOK_NAMES)
+
+
+def is_reserved_playbook_name(name: str) -> bool:
+    """Security audit #95: a tenant can never create or rename a playbook to a
+    system name (trimmed, case-insensitive), so the name-keyed dry-run
+    exemption above can only ever cover rows that code created."""
+    return (name or "").strip().lower() in _RESERVED_LOWER
 
 
 def unsimulated_counts(db: Session, company_ids: Iterable[UUID]) -> Dict[UUID, int]:

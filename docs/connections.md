@@ -39,7 +39,7 @@ composed `develop` HEAD. See [deployment-production.md](deployment-production.md
 | Variable(s) | Where | Purpose |
 |---|---|---|
 | `DATABASE_URL` / `DB_URL` / `POSTGRES_USER`+`POSTGRES_PASSWORD`+`POSTGRES_HOST`+`POSTGRES_PORT`+`POSTGRES_DB` | `database.py`, `alembic/env.py` | DB connection (first match wins; import fails if none set) |
-| `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; prod sets 2592000), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60) | `utils/jwt_utils.py` | JWT signing/validation; fails fast if `SECRET_KEY` unset when `ENVIRONMENT=production`, dev fallback otherwise |
+| `SECRET_KEY`, `ENVIRONMENT`, `ACCESS_TOKEN_EXPIRE` (minutes, default 1440), `REFRESH_TOKEN_EXPIRE` (**seconds**, default 604800; prod sets 2592000), `MOBILE_ACCESS_TOKEN_EXPIRE` (minutes, default 60) | `utils/jwt_utils.py` | JWT signing/validation; fails fast if `SECRET_KEY` unset when `ENVIRONMENT=production`; outside `ENVIRONMENT=test` signing/verifying without `SECRET_KEY` raises (6.39.0) |
 | `CREDENTIALS_KEKS`, `CREDENTIALS_ACTIVE_KEK_ID` | `utils/crypto.py` | AES-256-GCM envelope encryption of device credentials (KEK ring + active KEK) |
 | `GENIEACS_NBI_URL`, `GENIEACS_NBI_USER`, `GENIEACS_NBI_PASSWORD`, `GENIEACS_NBI_TIMEOUT_SECONDS` (default 10, read at import) | `utils/genieacs_nbi.py` (6.9.0) | GenieACS NBI base URL, optional basic auth and client timeout; read only when a consumer calls `nbi_client()` |
 | `PROVISIONING_KILL_SWITCH` | `utils/provisioning_gates.py` | Global live-provisioning kill switch (`1`/`true`/`yes`) |

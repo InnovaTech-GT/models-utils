@@ -35,6 +35,11 @@ Subjects live in the module-level `_UPLINK_SUBJECTS` dict (es/en per kind,
 e.g. `"Confirma tu correo — Uplink"`); unknown locales fall back to Spanish.
 Payment/join-request emails are unchanged (English-only).
 
+`MockEmailService` never logs a raw invitation / confirmation / reset token
+(security audit #43): links go through `_redact_link`, which masks the
+`?token=` value (`redact_query`) and any `/validate/<token>` segment
+(`redact_path`) as `***`.
+
 **Generic email (6.23.0, doc 63-workflow-engine D14).** `send_generic(to_email,
 subject, html_body, from_name=None, reply_to=None) -> bool` (abstract; Mock
 logs, SMTP sends) carries a caller-built HTML body — the workflow engine's

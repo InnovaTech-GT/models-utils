@@ -8,7 +8,8 @@ import traceback
 
 from database_utils.utils.logging_utils import (
     log_with_context,
-    get_app_logger
+    get_app_logger,
+    redact_path,
 )
 
 # Get a logger for exception handlers
@@ -25,7 +26,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         f"HTTP Exception: {exc.status_code} - {exc.detail}",
         status_code=exc.status_code,
         detail=exc.detail,
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         client_ip=request.client.host if request.client else None,
     )
@@ -65,7 +66,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         exception_logger,
         'warning',
         f"Request validation error: {len(errors)} field(s) invalid",
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         validation_errors=errors,
         client_ip=request.client.host if request.client else None,
@@ -105,7 +106,7 @@ async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSON
         exception_logger,
         'warning',
         f"Database integrity error: {error_type}",
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         error_type=error_type,
         error_message=error_msg,
@@ -135,7 +136,7 @@ async def operational_error_handler(request: Request, exc: OperationalError) -> 
         exception_logger,
         'error',
         f"Database operational error: {error_msg}",
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         error_type='operational_error',
         error_message=error_msg,
@@ -165,7 +166,7 @@ async def data_error_handler(request: Request, exc: DataError) -> JSONResponse:
         exception_logger,
         'warning',
         f"Database data error: {error_msg}",
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         error_type='data_error',
         error_message=error_msg,
@@ -195,7 +196,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         exception_logger,
         'error',
         f"Unhandled exception: {error_type} - {error_msg}",
-        path=request.url.path,
+        path=redact_path(request.url.path),
         method=request.method,
         error_type=error_type,
         error_message=error_msg,

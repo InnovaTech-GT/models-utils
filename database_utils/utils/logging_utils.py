@@ -10,7 +10,7 @@ import json
 import sys
 import traceback
 import uuid
-from typing import Optional, Union
+from typing import Mapping, Optional, Union
 from contextvars import ContextVar
 
 from database_utils.utils.timezone_utils import now_gt
@@ -205,6 +205,27 @@ def clear_request_context() -> None:
     user_roles_context.set([])
     user_permissions_context.set(set())
     request_client_context.set(None)
+
+
+# Security audit #43: auth-erp's password_reset / invitations /
+# email_confirmation links carry a single-use token as the segment after
+# /validate/, and some flows pass one in the query string.
+_REDACTED = "***"
+_SECRET_QUERY_KEYS = frozenset({"token", "code", "signature", "key", "password"})
+
+
+def redact_path(path: str) -> str:
+    """Replace the segment after every `/validate/` with `***`."""
+    parts = (path or "").split("/")
+    for i in range(len(parts) - 1):
+        if parts[i] == "validate" and parts[i + 1]:
+            parts[i + 1] = _REDACTED
+    return "/".join(parts)
+
+
+def redact_query(params: Mapping[str, str]) -> dict:
+    """Mask the values of token-like query keys (case-insensitive)."""
+    return {k: (_REDACTED if k.lower() in _SECRET_QUERY_KEYS else v) for k, v in params.items()}
 
 
 def log_with_context(logger: logging.Logger, level: str, message: str, **kwargs) -> None:

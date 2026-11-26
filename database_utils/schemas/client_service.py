@@ -57,7 +57,7 @@ class ClientServiceCreate(ClientServiceBase):
     recurrence_end: Optional[datetime] = None
     enable_billing: bool = True
     bill_immediately: bool = True
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1)  # audit #68; ck_client_service_quantity_positive
 
 
 class ClientServiceUpdate(BaseModel):
@@ -86,7 +86,7 @@ class ClientServiceBillingUpdate(BaseModel):
     recurrence: Optional[RecurrenceEnum] = None
     recurrence_end: Optional[datetime] = None
     next_generation_date: Optional[datetime] = None
-    quantity: Optional[int] = None
+    quantity: Optional[int] = Field(default=None, ge=1)  # audit #68
 
 
 class ServiceNetworkRun(BaseModel):

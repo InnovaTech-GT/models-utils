@@ -29,9 +29,11 @@ def handle_exceptions(func: Callable[..., T]) -> Callable[..., T]:
                 f"kwargs={sorted(kwargs)}"
             )
             logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
-            # Convert generic exceptions to HTTPException
+            # Convert generic exceptions to HTTPException. The detail is a
+            # constant (security audit #90): exception text (DSNs, SQL,
+            # secrets) stays in the server log above, never in the response.
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Internal server error: {str(e)}"
+                detail="Internal server error",
             )
     return wrapper

@@ -149,7 +149,6 @@ class ClientUpdate(BaseModel):
     contact: Optional[str] = None
     observations: Optional[str] = None
     dpi: Optional[str] = None
-    company_id: Optional[UUID] = None
     advisor_id: Optional[UUID] = None
     assigned_technician_id: Optional[UUID] = None
     latitude: Optional[float] = None
