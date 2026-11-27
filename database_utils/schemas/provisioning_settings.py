@@ -26,6 +26,7 @@ from uuid import UUID
 from datetime import datetime
 
 from database_utils.models.isp import DIAL_TARGETS, PROXY_KINDS
+from database_utils.utils.cpe_web import normalize_cidrs
 from database_utils.utils.edge_telnet import edge_mgmt_network_ok
 
 
@@ -50,6 +51,14 @@ class ProvisioningSettingsUpdate(BaseModel):
     acs_auth_required: Optional[bool] = None
     # doc 67: ONU management range for EDGE telnet; "" / null clears it (feature off).
     edge_mgmt_cidr: Optional[str] = None
+    # doc 77: comma-separated CIDRs the onu_web driver may reach; "" / null
+    # clears it (the driver then refuses every host).
+    cpe_web_cidrs: Optional[str] = None
+
+    @field_validator("cpe_web_cidrs")
+    @classmethod
+    def validate_cpe_web_cidrs(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_cidrs(v)
 
     @field_validator("edge_mgmt_cidr")
     @classmethod
@@ -129,6 +138,7 @@ class ProvisioningSettingsOut(BaseModel):
     proxy_address: Optional[str] = None
     gateway_host: Optional[str] = None
     edge_mgmt_cidr: Optional[str] = None
+    cpe_web_cidrs: Optional[str] = None
     # Read-only (see the module docstring).
     acs_base_url: Optional[str] = None
     acs_auth_required: bool = False

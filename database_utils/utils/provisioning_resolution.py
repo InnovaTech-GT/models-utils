@@ -80,6 +80,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from database_utils.models.isp import (
+    CANONICAL_PLAYBOOK_PURPOSES,
     PURPOSE_ACTIVATION,
     PURPOSE_CPE_SWAP,
     ClientService,
@@ -811,7 +812,9 @@ def resolve_provisioning(
     4. a node whose category is_passive contributes nothing but stays on `path`
     5. every other node resolves node override -> device-type default -> none
     6. an ACTIVE node with no playbook for `purpose` is reported
-       PLAYBOOK_NOT_BOUND — fatal for ACTIVATION, non-fatal otherwise
+       PLAYBOOK_NOT_BOUND — fatal for ACTIVATION, non-fatal otherwise; a
+       custom (non-canonical) purpose skips the node, and refuses a path with
+       no bound device at all (RESOLUTION_FAILED / NO_PLAYBOOKS_BOUND, doc 77)
     7. every step playbook's `computed` block and every resolver-owned token it
        renders must have a value, and (other than for ACTIVATION) every port
        fact it reads must match the last live activation — else
@@ -873,6 +876,17 @@ def resolve_provisioning(
         for n in path
         if not n.is_passive and n.playbook_id is None
     ]
+
+    # doc 77 D7: a custom purpose runs on the devices that have it bound and
+    # skips the rest (PLAYBOOK_NOT_BOUND is never fatal for it, below) — but a
+    # plan with nothing to run is refused, never queued as an empty run.
+    custom = purpose not in CANONICAL_PLAYBOOK_PURPOSES
+    if custom and not steps:
+        detail = f"No device on this service's path has a {purpose} playbook bound"
+        raise ResolutionError(
+            "RESOLUTION_FAILED", detail,
+            errors=[{"code": "NO_PLAYBOOKS_BOUND", "detail": detail}, *errors],
+        )
 
     # Every playbook on the path must be active and owned by this company. An
     # inactive playbook is a deliberate operator action ("stop running this")
@@ -974,11 +988,12 @@ def resolve_provisioning(
     device_variables = {n.item_id: build_device_frame(n, "device") for n in steps}
 
     # PLAYBOOK_NOT_BOUND is fatal for ACTIVATION unconditionally, and for other
-    # purposes only when some playbook on the path actually reads a device
+    # canonical purposes only when some playbook on the path actually reads a device
     # variable — the same amendment-4 rule that used to govern unresolved chain
     # positions. Refusing to suspend a service because an unrelated OLT lacks a
     # suspend playbook would be worse than suspending what we can.
-    if errors:
+    # A custom purpose (doc 77 D7) skips its unbound devices outright.
+    if errors and not custom:
         fatal = purpose == PURPOSE_ACTIVATION or any(
             _playbook_references_device_variables(playbooks[n.playbook_id])
             for n in steps
